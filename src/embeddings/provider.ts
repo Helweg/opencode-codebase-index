@@ -1,4 +1,4 @@
-import { EmbeddingProvider, EmbeddingModelInfo } from "../config/schema.js";
+import { EmbeddingModelInfo } from "../config/schema.js";
 import { ProviderCredentials } from "./detector.js";
 
 export interface EmbeddingResult {

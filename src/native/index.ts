@@ -1,5 +1,30 @@
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const native = require("../../native/codebase-index-native.node");
+import * as path from "path";
+import * as os from "os";
+
+function getNativeBinding() {
+  const platform = os.platform();
+  const arch = os.arch();
+
+  let bindingPath: string;
+  
+  if (platform === "darwin" && arch === "arm64") {
+    bindingPath = "codebase-index-native.darwin-arm64.node";
+  } else if (platform === "darwin" && arch === "x64") {
+    bindingPath = "codebase-index-native.darwin-x64.node";
+  } else if (platform === "linux" && arch === "x64") {
+    bindingPath = "codebase-index-native.linux-x64-gnu.node";
+  } else if (platform === "linux" && arch === "arm64") {
+    bindingPath = "codebase-index-native.linux-arm64-gnu.node";
+  } else if (platform === "win32" && arch === "x64") {
+    bindingPath = "codebase-index-native.win32-x64-msvc.node";
+  } else {
+    throw new Error(`Unsupported platform: ${platform}-${arch}`);
+  }
+
+  return require(path.join(__dirname, "../../native", bindingPath));
+}
+
+const native = getNativeBinding();
 
 export interface FileInput {
   path: string;

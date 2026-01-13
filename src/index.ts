@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 
 import { parseConfig } from "./config/schema.js";
 import { Indexer } from "./indexer/index.js";
-import { FileWatcher, createWatcherWithIndexer } from "./watcher/index.js";
+import { createWatcherWithIndexer } from "./watcher/index.js";
 import {
   codebase_search,
   index_codebase,
@@ -10,19 +10,16 @@ import {
   initializeTools,
 } from "./tools/index.js";
 
-let watcher: FileWatcher | null = null;
-
-const plugin: Plugin = async ({ project, directory }) => {
+const plugin: Plugin = async ({ directory }) => {
   const projectRoot = directory;
-  const projectConfig = project.config?.["codebaseIndex"] ?? {};
-  const config = parseConfig(projectConfig);
+  const config = parseConfig({});
 
   initializeTools(projectRoot, config);
 
   const indexer = new Indexer(projectRoot, config);
 
   if (config.indexing.watchFiles) {
-    watcher = createWatcherWithIndexer(indexer, projectRoot, config);
+    createWatcherWithIndexer(indexer, projectRoot, config);
   }
 
   return {

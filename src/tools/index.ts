@@ -1,7 +1,7 @@
-import { tool, type ToolContext as OpencodeToolContext } from "@opencode-ai/plugin";
+import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
 import { Indexer, IndexStats } from "../indexer/index.js";
-import { CodebaseIndexConfig, parseConfig } from "../config/schema.js";
+import { CodebaseIndexConfig } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
 
 let sharedIndexer: Indexer | null = null;
@@ -19,7 +19,7 @@ function getIndexer(): Indexer {
   return sharedIndexer;
 }
 
-export const codebase_search = tool({
+export const codebase_search: ToolDefinition = tool({
   description:
     "Search the codebase using natural language. Find code by describing what it does, not just keywords. Use this when you need to find relevant code snippets, functions, classes, or patterns.",
   args: {
@@ -52,7 +52,7 @@ export const codebase_search = tool({
   },
 });
 
-export const index_codebase = tool({
+export const index_codebase: ToolDefinition = tool({
   description:
     "Index the codebase for semantic search. Creates vector embeddings of code chunks. Run this before using codebase_search, or to update the index after changes.",
   args: {
@@ -84,7 +84,7 @@ export const index_codebase = tool({
   },
 });
 
-export const index_status = tool({
+export const index_status: ToolDefinition = tool({
   description:
     "Check the status of the codebase index. Shows whether the codebase is indexed, how many chunks are stored, and the embedding provider being used.",
   args: {},

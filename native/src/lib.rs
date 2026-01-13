@@ -8,7 +8,6 @@ mod types;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub use chunker::*;

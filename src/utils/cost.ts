@@ -1,4 +1,4 @@
-import { EmbeddingModelInfo, getDefaultModelForProvider } from "../config/schema.js";
+import { EmbeddingModelInfo } from "../config/schema.js";
 import { getProviderDisplayName, DetectedProvider } from "../embeddings/detector.js";
 
 export interface CostEstimate {

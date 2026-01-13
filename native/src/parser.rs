@@ -29,15 +29,8 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Python => tree_sitter_python::language(),
         Language::Rust => tree_sitter_rust::language(),
         Language::Go => tree_sitter_go::language(),
-        Language::Java => tree_sitter_java::language(),
-        Language::C => tree_sitter_c::language(),
-        Language::Cpp => tree_sitter_cpp::language(),
         Language::Json => tree_sitter_json::language(),
-        Language::Toml => tree_sitter_toml::language(),
-        Language::Yaml => tree_sitter_yaml::language(),
-        Language::Bash => tree_sitter_bash::language(),
-        Language::Markdown => tree_sitter_markdown::language(),
-        Language::Unknown => return Ok(chunk_by_lines(content, &language)),
+        _ => return Ok(chunk_by_lines(content, &language)),
     };
 
     parser.set_language(ts_language)?;
@@ -172,25 +165,6 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
                     | "method_declaration"
                     | "type_declaration"
                     | "type_spec"
-            )
-        }
-        Language::Java => {
-            matches!(
-                node_type,
-                "method_declaration"
-                    | "class_declaration"
-                    | "interface_declaration"
-                    | "enum_declaration"
-                    | "constructor_declaration"
-            )
-        }
-        Language::C | Language::Cpp => {
-            matches!(
-                node_type,
-                "function_definition"
-                    | "struct_specifier"
-                    | "class_specifier"
-                    | "enum_specifier"
             )
         }
         _ => false,

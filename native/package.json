@@ -1,0 +1,13 @@
+{
+  "name": "codebase-index-native",
+  "version": "0.1.0",
+  "napi": {
+    "name": "codebase-index-native",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin"
+      ]
+    }
+  }
+}

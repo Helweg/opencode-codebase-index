@@ -17,7 +17,6 @@ import {
   createEmbeddingText,
   generateChunkId,
   ChunkMetadata,
-  ParsedFile,
   hashContent,
 } from "../native/index.js";
 
@@ -70,7 +69,7 @@ export class Indexer {
   }
 
   async initialize(): Promise<void> {
-    this.detectedProvider = await detectEmbeddingProvider(this.config);
+    this.detectedProvider = await detectEmbeddingProvider(this.config.embeddingProvider);
     if (!this.detectedProvider) {
       throw new Error(
         "No embedding provider available. Configure GitHub, OpenAI, Google, or Ollama."
