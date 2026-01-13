@@ -1,0 +1,73 @@
+{
+  "name": "opencode-codebase-index",
+  "version": "0.1.0",
+  "description": "Semantic codebase indexing and search for OpenCode - find code by meaning, not just keywords",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "author": "Kenneth",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/username/opencode-codebase-index"
+  },
+  "keywords": [
+    "opencode",
+    "semantic-search",
+    "codebase-indexing",
+    "vector-search",
+    "embeddings",
+    "tree-sitter",
+    "ai-coding"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "npm run build:ts && npm run build:native",
+    "build:ts": "tsup",
+    "build:native": "cd native && cargo build --release && napi build --release --platform",
+    "build:native:all": "cd native && napi build --release --platform --target x86_64-apple-darwin --target aarch64-apple-darwin --target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu --target x86_64-pc-windows-msvc",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "native/*.node",
+    "skill"
+  ],
+  "napi": {
+    "name": "codebase-index-native",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl"
+      ]
+    }
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "ignore": "^5.3.1",
+    "p-queue": "^8.0.1",
+    "p-retry": "^6.2.0",
+    "tiktoken": "^1.0.15",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4",
+    "@opencode-ai/plugin": "^1.0.0",
+    "@types/node": "^20.14.0",
+    "eslint": "^9.0.0",
+    "tsup": "^8.1.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.0.0"
+  }
+}

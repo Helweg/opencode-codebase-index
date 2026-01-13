@@ -1,0 +1,60 @@
+[package]
+name = "codebase-index-native"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Native Rust core for opencode-codebase-index: tree-sitter parsing and vector search"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# NAPI-RS for Node.js bindings
+napi = { version = "2.16", default-features = false, features = ["napi9", "async", "serde-json"] }
+napi-derive = "2.16"
+
+# Tree-sitter for code parsing
+tree-sitter = "0.22"
+tree-sitter-typescript = "0.21"
+tree-sitter-javascript = "0.21"
+tree-sitter-python = "0.21"
+tree-sitter-rust = "0.21"
+tree-sitter-go = "0.21"
+tree-sitter-java = "0.21"
+tree-sitter-c = "0.21"
+tree-sitter-cpp = "0.22"
+tree-sitter-json = "0.21"
+tree-sitter-toml = "0.21"
+tree-sitter-yaml = "0.6"
+tree-sitter-bash = "0.21"
+tree-sitter-markdown = "0.2"
+
+# Vector search
+usearch = "2.12"
+
+# Hashing
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Parallelism
+rayon = "1.10"
+
+# File handling
+walkdir = "2.5"
+ignore = "0.4"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+[build-dependencies]
+napi-build = "2.1"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+strip = true
