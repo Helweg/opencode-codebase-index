@@ -2,12 +2,13 @@
   "name": "codebase-index-native",
   "version": "0.1.0",
   "napi": {
-    "name": "codebase-index-native",
-    "triples": {
-      "defaults": true,
-      "additional": [
-        "aarch64-apple-darwin"
-      ]
-    }
+    "binaryName": "codebase-index-native",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc"
+    ]
   }
 }

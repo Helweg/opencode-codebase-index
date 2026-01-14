@@ -15,7 +15,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Setup Rust
@@ -25,7 +25,10 @@ jobs:
         run: npm ci
 
       - name: Build native module
-        run: npm run build:native
+        working-directory: native
+        run: |
+          cargo build --release
+          npx napi build --release --platform
 
       - name: Build TypeScript
         run: npm run build:ts
@@ -44,7 +47,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
