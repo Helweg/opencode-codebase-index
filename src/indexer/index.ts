@@ -283,7 +283,8 @@ export class Indexer {
 
   async search(
     query: string,
-    limit?: number
+    limit?: number,
+    options?: { hybridWeight?: number }
   ): Promise<
     Array<{
       filePath: string;
@@ -303,11 +304,17 @@ export class Indexer {
       return [];
     }
 
-    const { embedding } = await this.provider!.embed(query);
     const maxResults = limit ?? this.config.search.maxResults;
-    const results = this.store!.search(embedding, maxResults);
+    const hybridWeight = options?.hybridWeight ?? 0.3;
 
-    const filtered = results.filter(
+    const { embedding } = await this.provider!.embed(query);
+    const semanticResults = this.store!.search(embedding, maxResults * 2);
+
+    const keywordResults = await this.keywordSearch(query, maxResults * 2);
+
+    const combined = this.fuseResults(semanticResults, keywordResults, hybridWeight, maxResults);
+
+    const filtered = combined.filter(
       (r) => r.score >= this.config.search.minScore
     );
 
@@ -342,6 +349,120 @@ export class Indexer {
     );
   }
 
+  private async keywordSearch(
+    query: string,
+    limit: number
+  ): Promise<Array<{ id: string; score: number; metadata: ChunkMetadata }>> {
+    const allMetadata = this.store!.getAllMetadata();
+    const queryTokens = this.tokenize(query);
+    
+    if (queryTokens.length === 0) {
+      return [];
+    }
+
+    const fileContentsCache = new Map<string, string>();
+    const results: Array<{ id: string; score: number; metadata: ChunkMetadata }> = [];
+
+    for (const { key, metadata } of allMetadata) {
+      let fileContent = fileContentsCache.get(metadata.filePath);
+      if (fileContent === undefined) {
+        try {
+          fileContent = await fs.promises.readFile(metadata.filePath, "utf-8");
+          fileContentsCache.set(metadata.filePath, fileContent);
+        } catch {
+          continue;
+        }
+      }
+
+      const lines = fileContent.split("\n");
+      const chunkContent = lines
+        .slice(metadata.startLine - 1, metadata.endLine)
+        .join("\n")
+        .toLowerCase();
+
+      const chunkTokens = this.tokenize(chunkContent);
+      const score = this.calculateBM25Score(queryTokens, chunkTokens);
+      
+      if (score > 0) {
+        results.push({ id: key, score, metadata });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, limit);
+  }
+
+  private tokenize(text: string): string[] {
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 2);
+  }
+
+  private calculateBM25Score(queryTokens: string[], docTokens: string[]): number {
+    const k1 = 1.2;
+    const b = 0.75;
+    const avgDocLength = 100;
+    const docLength = docTokens.length;
+
+    const termFreq = new Map<string, number>();
+    for (const token of docTokens) {
+      termFreq.set(token, (termFreq.get(token) || 0) + 1);
+    }
+
+    let score = 0;
+    for (const term of queryTokens) {
+      const tf = termFreq.get(term) || 0;
+      if (tf === 0) continue;
+
+      const numerator = tf * (k1 + 1);
+      const denominator = tf + k1 * (1 - b + b * (docLength / avgDocLength));
+      score += numerator / denominator;
+    }
+
+    const maxPossibleScore = queryTokens.length * (k1 + 1);
+    return maxPossibleScore > 0 ? score / maxPossibleScore : 0;
+  }
+
+  private fuseResults(
+    semanticResults: Array<{ id: string; score: number; metadata: ChunkMetadata }>,
+    keywordResults: Array<{ id: string; score: number; metadata: ChunkMetadata }>,
+    keywordWeight: number,
+    limit: number
+  ): Array<{ id: string; score: number; metadata: ChunkMetadata }> {
+    const semanticWeight = 1 - keywordWeight;
+    const fusedScores = new Map<string, { score: number; metadata: ChunkMetadata }>();
+
+    for (const r of semanticResults) {
+      fusedScores.set(r.id, {
+        score: r.score * semanticWeight,
+        metadata: r.metadata,
+      });
+    }
+
+    for (const r of keywordResults) {
+      const existing = fusedScores.get(r.id);
+      if (existing) {
+        existing.score += r.score * keywordWeight;
+      } else {
+        fusedScores.set(r.id, {
+          score: r.score * keywordWeight,
+          metadata: r.metadata,
+        });
+      }
+    }
+
+    const results = Array.from(fusedScores.entries()).map(([id, data]) => ({
+      id,
+      score: data.score,
+      metadata: data.metadata,
+    }));
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, limit);
+  }
+
   async getStatus(): Promise<{
     indexed: boolean;
     vectorCount: number;
@@ -374,6 +495,46 @@ export class Indexer {
     if (fs.existsSync(hashIndexPath)) {
       await fs.promises.unlink(hashIndexPath);
     }
+  }
+
+  async healthCheck(): Promise<{ removed: number; filePaths: string[] }> {
+    if (!this.store) {
+      await this.initialize();
+    }
+
+    const allMetadata = this.store!.getAllMetadata();
+    const filePathsToChunkKeys = new Map<string, string[]>();
+
+    for (const { key, metadata } of allMetadata) {
+      const existing = filePathsToChunkKeys.get(metadata.filePath) || [];
+      existing.push(key);
+      filePathsToChunkKeys.set(metadata.filePath, existing);
+    }
+
+    const removedFilePaths: string[] = [];
+    let removedCount = 0;
+
+    for (const [filePath, chunkKeys] of filePathsToChunkKeys) {
+      if (!fs.existsSync(filePath)) {
+        for (const key of chunkKeys) {
+          this.store!.remove(key);
+          removedCount++;
+        }
+        removedFilePaths.push(filePath);
+      }
+    }
+
+    if (removedCount > 0) {
+      this.store!.save();
+
+      const hashes = await this.loadHashIndex();
+      for (const filePath of removedFilePaths) {
+        hashes.delete(filePath);
+      }
+      await this.saveHashIndex(hashes);
+    }
+
+    return { removed: removedCount, filePaths: removedFilePaths };
   }
 
   private async loadHashIndex(): Promise<Map<string, string>> {

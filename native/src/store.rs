@@ -81,6 +81,11 @@ impl VectorStoreInner {
         let id = self.stored.next_id;
         self.stored.next_id += 1;
 
+        if self.index.capacity() <= self.index.size() {
+            let new_capacity = std::cmp::max(self.index.capacity() * 2, 1024);
+            self.index.reserve(new_capacity)?;
+        }
+
         self.index.add(id, vector)?;
 
         self.stored.id_to_key.insert(id, key.to_string());
@@ -206,6 +211,18 @@ impl VectorStoreInner {
         }
 
         Ok(())
+    }
+
+    pub fn get_all_keys(&self) -> Vec<String> {
+        self.stored.key_to_id.keys().cloned().collect()
+    }
+
+    pub fn get_all_metadata(&self) -> Vec<(String, String)> {
+        self.stored
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 }
 

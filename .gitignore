@@ -40,3 +40,6 @@ native/index.js
 # Package manager locks (keep one)
 yarn.lock
 pnpm-lock.yaml
+
+# Symlinks to cache
+opencode-codebase-index

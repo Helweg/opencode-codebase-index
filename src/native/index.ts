@@ -1,27 +1,43 @@
 import * as path from "path";
 import * as os from "os";
+import { fileURLToPath } from "url";
+import { createRequire } from "module";
 
 function getNativeBinding() {
   const platform = os.platform();
   const arch = os.arch();
 
-  let bindingPath: string;
+  let bindingName: string;
   
   if (platform === "darwin" && arch === "arm64") {
-    bindingPath = "codebase-index-native.darwin-arm64.node";
+    bindingName = "codebase-index-native.darwin-arm64.node";
   } else if (platform === "darwin" && arch === "x64") {
-    bindingPath = "codebase-index-native.darwin-x64.node";
+    bindingName = "codebase-index-native.darwin-x64.node";
   } else if (platform === "linux" && arch === "x64") {
-    bindingPath = "codebase-index-native.linux-x64-gnu.node";
+    bindingName = "codebase-index-native.linux-x64-gnu.node";
   } else if (platform === "linux" && arch === "arm64") {
-    bindingPath = "codebase-index-native.linux-arm64-gnu.node";
+    bindingName = "codebase-index-native.linux-arm64-gnu.node";
   } else if (platform === "win32" && arch === "x64") {
-    bindingPath = "codebase-index-native.win32-x64-msvc.node";
+    bindingName = "codebase-index-native.win32-x64-msvc.node";
   } else {
     throw new Error(`Unsupported platform: ${platform}-${arch}`);
   }
 
-  return require(path.join(__dirname, "../../native", bindingPath));
+  // Get the directory of this module - works in both ESM and bundled contexts
+  // @ts-ignore - import.meta.url is available in ESM
+  const currentFileUrl = typeof import.meta !== 'undefined' ? import.meta.url : __filename;
+  const currentDir = typeof currentFileUrl === 'string' && currentFileUrl.startsWith('file:') 
+    ? path.dirname(fileURLToPath(currentFileUrl))
+    : __dirname;
+  
+  // The native module is in the 'native' folder at package root
+  // From dist/index.js, we go up one level to package root, then into native/
+  const packageRoot = path.resolve(currentDir, '..');
+  const nativePath = path.join(packageRoot, 'native', bindingName);
+  
+  // Use createRequire to load .node files in ESM context
+  const require = createRequire(currentFileUrl);
+  return require(nativePath);
 }
 
 const native = getNativeBinding();
@@ -182,22 +198,115 @@ export class VectorStore {
   getDimensions(): number {
     return this.dimensions;
   }
+
+  getAllKeys(): string[] {
+    return this.inner.getAllKeys();
+  }
+
+  getAllMetadata(): Array<{ key: string; metadata: ChunkMetadata }> {
+    const results = this.inner.getAllMetadata();
+    return results.map((r: { key: string; metadata: string }) => ({
+      key: r.key,
+      metadata: JSON.parse(r.metadata) as ChunkMetadata,
+    }));
+  }
 }
 
 export function createEmbeddingText(chunk: CodeChunk, filePath: string): string {
   const parts: string[] = [];
-
-  if (chunk.name) {
-    parts.push(`${chunk.chunkType} ${chunk.name}`);
-  } else {
-    parts.push(chunk.chunkType);
-  }
-
+  
   const fileName = filePath.split("/").pop() || filePath;
-  parts.push(`in ${fileName}`);
+  const dirPath = filePath.split("/").slice(-3, -1).join("/");
+  
+  const langDescriptors: Record<string, string> = {
+    typescript: "TypeScript",
+    javascript: "JavaScript", 
+    python: "Python",
+    rust: "Rust",
+    go: "Go",
+    java: "Java",
+  };
+  
+  const typeDescriptors: Record<string, string> = {
+    function_declaration: "function",
+    function: "function",
+    arrow_function: "arrow function",
+    method_definition: "method",
+    class_declaration: "class",
+    interface_declaration: "interface",
+    type_alias_declaration: "type alias",
+    enum_declaration: "enum",
+    export_statement: "export",
+    lexical_declaration: "variable declaration",
+    function_definition: "function",
+    class_definition: "class",
+    function_item: "function",
+    impl_item: "implementation",
+    struct_item: "struct",
+    enum_item: "enum",
+    trait_item: "trait",
+  };
+
+  const lang = langDescriptors[chunk.language] || chunk.language;
+  const typeDesc = typeDescriptors[chunk.chunkType] || chunk.chunkType;
+  
+  if (chunk.name) {
+    parts.push(`${lang} ${typeDesc} named "${chunk.name}"`);
+  } else {
+    parts.push(`${lang} ${typeDesc}`);
+  }
+  
+  if (dirPath) {
+    parts.push(`in ${dirPath}/${fileName}`);
+  } else {
+    parts.push(`in ${fileName}`);
+  }
+  
+  const semanticHints = extractSemanticHints(chunk.name || "", chunk.content);
+  if (semanticHints.length > 0) {
+    parts.push(`Purpose: ${semanticHints.join(", ")}`);
+  }
+  
+  parts.push("");
   parts.push(chunk.content);
 
   return parts.join("\n");
+}
+
+function extractSemanticHints(name: string, content: string): string[] {
+  const hints: string[] = [];
+  const combined = `${name} ${content}`.toLowerCase();
+  
+  const patterns: Array<[RegExp, string]> = [
+    [/auth|login|logout|signin|signout|credential/i, "authentication"],
+    [/password|hash|bcrypt|argon/i, "password handling"],
+    [/token|jwt|bearer|oauth/i, "token management"],
+    [/user|account|profile|member/i, "user management"],
+    [/permission|role|access|authorize/i, "authorization"],
+    [/validate|verify|check|assert/i, "validation"],
+    [/error|exception|throw|catch/i, "error handling"],
+    [/log|debug|trace|info|warn/i, "logging"],
+    [/cache|memoize|store/i, "caching"],
+    [/fetch|request|response|api|http/i, "HTTP/API"],
+    [/database|db|query|sql|mongo/i, "database"],
+    [/file|read|write|stream|path/i, "file operations"],
+    [/parse|serialize|json|xml/i, "data parsing"],
+    [/encrypt|decrypt|crypto|secret/i, "encryption"],
+    [/test|spec|mock|stub|expect/i, "testing"],
+    [/config|setting|option|env/i, "configuration"],
+    [/route|endpoint|handler|controller/i, "routing"],
+    [/render|component|view|template/i, "UI rendering"],
+    [/state|redux|store|dispatch/i, "state management"],
+    [/hook|effect|memo|callback/i, "React hooks"],
+  ];
+  
+  for (const [pattern, hint] of patterns) {
+    if (pattern.test(combined) && !hints.includes(hint)) {
+      hints.push(hint);
+    }
+  }
+  
+  return hints.slice(0, 5);
 }
 
 export function generateChunkId(filePath: string, chunk: CodeChunk): string {

@@ -1,4 +1,5 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
+import { z } from "zod";
 
 import { Indexer, IndexStats } from "../indexer/index.js";
 import { CodebaseIndexConfig } from "../config/schema.js";
@@ -23,10 +24,10 @@ export const codebase_search: ToolDefinition = tool({
   description:
     "Search the codebase using natural language. Find code by describing what it does, not just keywords. Use this when you need to find relevant code snippets, functions, classes, or patterns.",
   args: {
-    query: tool.schema
+    query: z
       .string()
       .describe("Natural language description of what code you're looking for"),
-    limit: tool.schema
+    limit: z
       .number()
       .optional()
       .default(10)
@@ -56,12 +57,12 @@ export const index_codebase: ToolDefinition = tool({
   description:
     "Index the codebase for semantic search. Creates vector embeddings of code chunks. Run this before using codebase_search, or to update the index after changes.",
   args: {
-    force: tool.schema
+    force: z
       .boolean()
       .optional()
       .default(false)
       .describe("Force reindex even if already indexed"),
-    estimateOnly: tool.schema
+    estimateOnly: z
       .boolean()
       .optional()
       .default(false)

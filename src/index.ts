@@ -1,4 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import * as fs from "fs";
+import * as path from "path";
 
 import { parseConfig } from "./config/schema.js";
 import { Indexer } from "./indexer/index.js";
@@ -10,9 +12,22 @@ import {
   initializeTools,
 } from "./tools/index.js";
 
+function loadPluginConfig(projectRoot: string): unknown {
+  const configPath = path.join(projectRoot, ".opencode", "codebase-index.json");
+  try {
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, "utf-8");
+      return JSON.parse(content);
+    }
+  } catch {
+  }
+  return {};
+}
+
 const plugin: Plugin = async ({ directory }) => {
   const projectRoot = directory;
-  const config = parseConfig({});
+  const rawConfig = loadPluginConfig(projectRoot);
+  const config = parseConfig(rawConfig);
 
   initializeTools(projectRoot, config);
 

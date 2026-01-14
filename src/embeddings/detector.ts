@@ -7,6 +7,9 @@ export interface ProviderCredentials {
   provider: EmbeddingProvider;
   apiKey?: string;
   baseUrl?: string;
+  refreshToken?: string;
+  accessToken?: string;
+  tokenExpires?: number;
 }
 
 export interface DetectedProvider {
@@ -16,6 +19,7 @@ export interface DetectedProvider {
 }
 
 const EMBEDDING_CAPABLE_PROVIDERS: EmbeddingProvider[] = [
+  "github-copilot",
   "github",
   "openai",
   "google",
@@ -60,6 +64,8 @@ async function getProviderCredentials(
   provider: EmbeddingProvider
 ): Promise<ProviderCredentials | null> {
   switch (provider) {
+    case "github-copilot":
+      return getGitHubCopilotCredentials();
     case "github":
       return getGitHubCredentials();
     case "openai":
@@ -70,6 +76,45 @@ async function getProviderCredentials(
       return getOllamaCredentials();
     default:
       return null;
+  }
+}
+
+interface OpenCodeAuth {
+  type: "oauth";
+  refresh: string;
+  access: string;
+  expires: number;
+  enterpriseUrl?: string;
+}
+
+function getGitHubCopilotCredentials(): ProviderCredentials | null {
+  const authPath = path.join(os.homedir(), ".local", "share", "opencode", "auth.json");
+  
+  try {
+    if (!fs.existsSync(authPath)) {
+      return null;
+    }
+    
+    const authData = JSON.parse(fs.readFileSync(authPath, "utf-8")) as Record<string, OpenCodeAuth>;
+    const copilotAuth = authData["github-copilot"] || authData["github-copilot-enterprise"];
+    
+    if (!copilotAuth || copilotAuth.type !== "oauth") {
+      return null;
+    }
+    
+    const baseUrl = copilotAuth.enterpriseUrl
+      ? `https://copilot-api.${copilotAuth.enterpriseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}`
+      : "https://api.githubcopilot.com";
+    
+    return {
+      provider: "github-copilot",
+      baseUrl,
+      refreshToken: copilotAuth.refresh,
+      accessToken: copilotAuth.access,
+      tokenExpires: copilotAuth.expires,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -186,6 +231,8 @@ async function getOllamaCredentials(): Promise<ProviderCredentials | null> {
 
 export function getProviderDisplayName(provider: EmbeddingProvider): string {
   switch (provider) {
+    case "github-copilot":
+      return "GitHub Copilot";
     case "github":
       return "GitHub (Azure OpenAI)";
     case "openai":

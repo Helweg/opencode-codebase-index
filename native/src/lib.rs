@@ -115,6 +115,20 @@ impl VectorStore {
             .clear()
             .map_err(|e| Error::from_reason(e.to_string()))
     }
+
+    #[napi]
+    pub fn get_all_keys(&self) -> Vec<String> {
+        self.inner.get_all_keys()
+    }
+
+    #[napi]
+    pub fn get_all_metadata(&self) -> Vec<KeyMetadataPair> {
+        self.inner
+            .get_all_metadata()
+            .into_iter()
+            .map(|(key, metadata)| KeyMetadataPair { key, metadata })
+            .collect()
+    }
 }
 
 #[napi(object)]
@@ -144,5 +158,11 @@ pub struct CodeChunk {
 pub struct SearchResult {
     pub id: String,
     pub score: f64,
+    pub metadata: String,
+}
+
+#[napi(object)]
+pub struct KeyMetadataPair {
+    pub key: String,
     pub metadata: String,
 }

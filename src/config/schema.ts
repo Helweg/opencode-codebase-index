@@ -3,6 +3,7 @@ import { z } from "zod";
 export const EmbeddingProviderSchema = z.enum([
   "auto",
   "github",
+  "github-copilot",
   "openai",
   "google",
   "ollama",
@@ -45,9 +46,9 @@ export const CodebaseIndexConfigSchema = z.object({
   embeddingModel: z.string().default("auto"),
   scope: IndexScopeSchema.default("project"),
   
-  indexing: IndexingConfigSchema.default({}),
-  search: SearchConfigSchema.default({}),
-  storage: StorageConfigSchema.default({}),
+  indexing: IndexingConfigSchema.optional(),
+  search: SearchConfigSchema.optional(),
+  storage: StorageConfigSchema.optional(),
 
   include: z.array(z.string()).default([
     "**/*.{ts,tsx,js,jsx,mjs,cjs}",
@@ -81,8 +82,44 @@ export const CodebaseIndexConfigSchema = z.object({
 
 export type CodebaseIndexConfig = z.infer<typeof CodebaseIndexConfigSchema>;
 
-export function parseConfig(raw: unknown): CodebaseIndexConfig {
-  return CodebaseIndexConfigSchema.parse(raw ?? {});
+function getDefaultIndexingConfig(): IndexingConfig {
+  return {
+    autoIndex: false,
+    watchFiles: true,
+    confirmBeforeIndex: true,
+    maxFileSize: 1048576,
+    batchSize: 50,
+    retries: 3,
+    retryDelayMs: 1000,
+  };
+}
+
+function getDefaultSearchConfig(): SearchConfig {
+  return {
+    maxResults: 20,
+    minScore: 0.5,
+    includeContext: true,
+  };
+}
+
+function getDefaultStorageConfig(): StorageConfig {
+  return {
+    location: "project",
+  };
+}
+
+export function parseConfig(raw: unknown): CodebaseIndexConfig & {
+  indexing: IndexingConfig;
+  search: SearchConfig;
+  storage: StorageConfig;
+} {
+  const parsed = CodebaseIndexConfigSchema.parse(raw ?? {});
+  return {
+    ...parsed,
+    indexing: parsed.indexing ?? getDefaultIndexingConfig(),
+    search: parsed.search ?? getDefaultSearchConfig(),
+    storage: parsed.storage ?? getDefaultStorageConfig(),
+  };
 }
 
 export function getDefaultConfig(): CodebaseIndexConfig {
@@ -111,6 +148,13 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelInfo> = {
     dimensions: 3072,
     maxTokens: 8191,
     costPer1MTokens: 0.13,
+  },
+  "github-copilot/text-embedding-3-small": {
+    provider: "github-copilot",
+    model: "text-embedding-3-small",
+    dimensions: 1536,
+    maxTokens: 8191,
+    costPer1MTokens: 0.00, // Free with Copilot subscription
   },
   "openai/text-embedding-3-small": {
     provider: "openai",
@@ -153,6 +197,8 @@ export function getDefaultModelForProvider(provider: EmbeddingProvider): Embeddi
   switch (provider) {
     case "github":
       return EMBEDDING_MODELS["github/text-embedding-3-small"];
+    case "github-copilot":
+      return EMBEDDING_MODELS["github-copilot/text-embedding-3-small"];
     case "openai":
       return EMBEDDING_MODELS["openai/text-embedding-3-small"];
     case "google":

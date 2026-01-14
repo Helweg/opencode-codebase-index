@@ -2,8 +2,16 @@
   "name": "opencode-codebase-index",
   "version": "0.1.0",
   "description": "Semantic codebase indexing and search for OpenCode - find code by meaning, not just keywords",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
   "license": "MIT",
   "author": "Kenneth",
   "repository": {
@@ -60,7 +68,7 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
-    "@opencode-ai/plugin": "^1.0.0",
+    "@opencode-ai/plugin": "^1.1.17",
     "@types/node": "^20.14.0",
     "eslint": "^9.0.0",
     "tsup": "^8.1.0",
