@@ -9,6 +9,7 @@ import {
   codebase_search,
   index_codebase,
   index_status,
+  index_health_check,
   initializeTools,
 } from "./tools/index.js";
 
@@ -42,6 +43,7 @@ const plugin: Plugin = async ({ directory }) => {
       codebase_search,
       index_codebase,
       index_status,
+      index_health_check,
     },
   };
 };

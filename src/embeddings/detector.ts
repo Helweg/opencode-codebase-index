@@ -20,11 +20,39 @@ export interface DetectedProvider {
 
 const EMBEDDING_CAPABLE_PROVIDERS: EmbeddingProvider[] = [
   "github-copilot",
-  "github",
   "openai",
   "google",
   "ollama",
 ];
+
+interface OpenCodeAuthOAuth {
+  type: "oauth";
+  refresh: string;
+  access: string;
+  expires: number;
+  enterpriseUrl?: string;
+}
+
+interface OpenCodeAuthAPI {
+  type: "api";
+  key: string;
+}
+
+type OpenCodeAuth = OpenCodeAuthOAuth | OpenCodeAuthAPI;
+
+function getOpenCodeAuthPath(): string {
+  return path.join(os.homedir(), ".local", "share", "opencode", "auth.json");
+}
+
+function loadOpenCodeAuth(): Record<string, OpenCodeAuth> {
+  const authPath = getOpenCodeAuthPath();
+  try {
+    if (fs.existsSync(authPath)) {
+      return JSON.parse(fs.readFileSync(authPath, "utf-8"));
+    }
+  } catch {}
+  return {};
+}
 
 export async function detectEmbeddingProvider(
   preferredProvider?: EmbeddingProvider
@@ -55,8 +83,7 @@ export async function detectEmbeddingProvider(
   }
 
   throw new Error(
-    `No embedding-capable provider found. Please configure one of: ${EMBEDDING_CAPABLE_PROVIDERS.join(", ")}. ` +
-      `Set GITHUB_TOKEN, OPENAI_API_KEY, GOOGLE_API_KEY, or ensure Ollama is running.`
+    `No embedding-capable provider found. Please authenticate with OpenCode using one of: ${EMBEDDING_CAPABLE_PROVIDERS.join(", ")}.`
   );
 }
 
@@ -66,8 +93,6 @@ async function getProviderCredentials(
   switch (provider) {
     case "github-copilot":
       return getGitHubCopilotCredentials();
-    case "github":
-      return getGitHubCredentials();
     case "openai":
       return getOpenAICredentials();
     case "google":
@@ -79,99 +104,35 @@ async function getProviderCredentials(
   }
 }
 
-interface OpenCodeAuth {
-  type: "oauth";
-  refresh: string;
-  access: string;
-  expires: number;
-  enterpriseUrl?: string;
-}
-
 function getGitHubCopilotCredentials(): ProviderCredentials | null {
-  const authPath = path.join(os.homedir(), ".local", "share", "opencode", "auth.json");
-  
-  try {
-    if (!fs.existsSync(authPath)) {
-      return null;
-    }
-    
-    const authData = JSON.parse(fs.readFileSync(authPath, "utf-8")) as Record<string, OpenCodeAuth>;
-    const copilotAuth = authData["github-copilot"] || authData["github-copilot-enterprise"];
-    
-    if (!copilotAuth || copilotAuth.type !== "oauth") {
-      return null;
-    }
-    
-    const baseUrl = copilotAuth.enterpriseUrl
-      ? `https://copilot-api.${copilotAuth.enterpriseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}`
-      : "https://api.githubcopilot.com";
-    
-    return {
-      provider: "github-copilot",
-      baseUrl,
-      refreshToken: copilotAuth.refresh,
-      accessToken: copilotAuth.access,
-      tokenExpires: copilotAuth.expires,
-    };
-  } catch {
+  const authData = loadOpenCodeAuth();
+  const copilotAuth = authData["github-copilot"] || authData["github-copilot-enterprise"];
+
+  if (!copilotAuth || copilotAuth.type !== "oauth") {
     return null;
   }
-}
 
-function getGitHubCredentials(): ProviderCredentials | null {
-  const token =
-    process.env.GITHUB_TOKEN ||
-    process.env.GH_TOKEN ||
-    readGitHubTokenFromConfig();
+  const baseUrl = (copilotAuth as OpenCodeAuthOAuth).enterpriseUrl
+    ? `https://copilot-api.${(copilotAuth as OpenCodeAuthOAuth).enterpriseUrl!.replace(/^https?:\/\//, "").replace(/\/$/, "")}`
+    : "https://api.githubcopilot.com";
 
-  if (token) {
-    return {
-      provider: "github",
-      apiKey: token,
-      baseUrl: "https://models.inference.ai.azure.com",
-    };
-  }
-
-  return null;
-}
-
-function readGitHubTokenFromConfig(): string | null {
-  const configPaths = [
-    path.join(os.homedir(), ".config", "gh", "hosts.yml"),
-    path.join(os.homedir(), ".config", "github-copilot", "hosts.json"),
-  ];
-
-  for (const configPath of configPaths) {
-    try {
-      if (fs.existsSync(configPath)) {
-        const content = fs.readFileSync(configPath, "utf-8");
-        
-        if (configPath.endsWith(".yml")) {
-          const match = content.match(/oauth_token:\s*(.+)/);
-          if (match) return match[1].trim();
-        }
-        
-        if (configPath.endsWith(".json")) {
-          const data = JSON.parse(content);
-          const host = data["github.com"];
-          if (host?.oauth_token) return host.oauth_token;
-        }
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
+  return {
+    provider: "github-copilot",
+    baseUrl,
+    refreshToken: copilotAuth.refresh,
+    accessToken: copilotAuth.access,
+    tokenExpires: copilotAuth.expires,
+  };
 }
 
 function getOpenAICredentials(): ProviderCredentials | null {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const authData = loadOpenCodeAuth();
+  const openaiAuth = authData["openai"];
 
-  if (apiKey) {
+  if (openaiAuth?.type === "api") {
     return {
       provider: "openai",
-      apiKey,
+      apiKey: openaiAuth.key,
       baseUrl: "https://api.openai.com/v1",
     };
   }
@@ -180,12 +141,13 @@ function getOpenAICredentials(): ProviderCredentials | null {
 }
 
 function getGoogleCredentials(): ProviderCredentials | null {
-  const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+  const authData = loadOpenCodeAuth();
+  const googleAuth = authData["google"] || authData["google-generative-ai"];
 
-  if (apiKey) {
+  if (googleAuth?.type === "api") {
     return {
       provider: "google",
-      apiKey,
+      apiKey: googleAuth.key,
       baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     };
   }
@@ -233,8 +195,6 @@ export function getProviderDisplayName(provider: EmbeddingProvider): string {
   switch (provider) {
     case "github-copilot":
       return "GitHub Copilot";
-    case "github":
-      return "GitHub (Azure OpenAI)";
     case "openai":
       return "OpenAI";
     case "google":

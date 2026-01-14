@@ -41,6 +41,10 @@ Create or update the semantic index. Run before first search.
 
 Check if the codebase is indexed and ready for search.
 
+### `index_health_check`
+
+Remove stale entries from deleted files. Run this to clean up the index after files have been deleted.
+
 ## Configuration
 
 Optional configuration in `opencode.json`:
@@ -66,11 +70,11 @@ Optional configuration in `opencode.json`:
 
 ### Embedding Providers
 
-Auto-detected in order of priority:
+Uses OpenCode's authentication. Auto-detected in order of priority:
 
-1. **GitHub** - Uses Azure OpenAI via `GITHUB_TOKEN`
-2. **OpenAI** - Uses `OPENAI_API_KEY`
-3. **Google** - Uses `GOOGLE_API_KEY` or `GEMINI_API_KEY`
+1. **GitHub Copilot** - Uses Copilot API
+2. **OpenAI** - Uses OpenAI API
+3. **Google** - Uses Gemini API
 4. **Ollama** - Local, requires `nomic-embed-text` or similar model
 
 ## Requirements

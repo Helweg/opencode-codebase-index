@@ -2,7 +2,6 @@ import { z } from "zod";
 
 export const EmbeddingProviderSchema = z.enum([
   "auto",
-  "github",
   "github-copilot",
   "openai",
   "google",
@@ -135,26 +134,12 @@ export interface EmbeddingModelInfo {
 }
 
 export const EMBEDDING_MODELS: Record<string, EmbeddingModelInfo> = {
-  "github/text-embedding-3-small": {
-    provider: "github",
-    model: "text-embedding-3-small",
-    dimensions: 1536,
-    maxTokens: 8191,
-    costPer1MTokens: 0.02,
-  },
-  "github/text-embedding-3-large": {
-    provider: "github",
-    model: "text-embedding-3-large",
-    dimensions: 3072,
-    maxTokens: 8191,
-    costPer1MTokens: 0.13,
-  },
   "github-copilot/text-embedding-3-small": {
     provider: "github-copilot",
     model: "text-embedding-3-small",
     dimensions: 1536,
     maxTokens: 8191,
-    costPer1MTokens: 0.00, // Free with Copilot subscription
+    costPer1MTokens: 0.00,
   },
   "openai/text-embedding-3-small": {
     provider: "openai",
@@ -195,8 +180,6 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelInfo> = {
 
 export function getDefaultModelForProvider(provider: EmbeddingProvider): EmbeddingModelInfo {
   switch (provider) {
-    case "github":
-      return EMBEDDING_MODELS["github/text-embedding-3-small"];
     case "github-copilot":
       return EMBEDDING_MODELS["github-copilot/text-embedding-3-small"];
     case "openai":

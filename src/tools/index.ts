@@ -96,6 +96,31 @@ export const index_status: ToolDefinition = tool({
   },
 });
 
+export const index_health_check: ToolDefinition = tool({
+  description:
+    "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
+  args: {},
+  async execute(args, ctx) {
+    const indexer = getIndexer();
+    const result = await indexer.healthCheck();
+
+    if (result.removed === 0) {
+      return "Index is healthy. No stale entries found.";
+    }
+
+    const lines = [
+      `Health check complete:`,
+      `  Removed stale entries: ${result.removed}`,
+    ];
+
+    if (result.filePaths.length > 0) {
+      lines.push(`  Cleaned paths: ${result.filePaths.join(", ")}`);
+    }
+
+    return lines.join("\n");
+  },
+});
+
 function formatIndexStats(stats: IndexStats): string {
   const lines = [
     `Indexing complete:`,
