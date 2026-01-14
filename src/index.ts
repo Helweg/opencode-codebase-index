@@ -34,6 +34,12 @@ const plugin: Plugin = async ({ directory }) => {
 
   const indexer = new Indexer(projectRoot, config);
 
+  if (config.indexing.autoIndex) {
+    indexer.initialize().then(() => {
+      indexer.index().catch(() => {});
+    }).catch(() => {});
+  }
+
   if (config.indexing.watchFiles) {
     createWatcherWithIndexer(indexer, projectRoot, config);
   }

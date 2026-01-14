@@ -91,6 +91,7 @@ Optional configuration in `.opencode/codebase-index.json`:
   "embeddingProvider": "auto",
   "scope": "project",
   "indexing": {
+    "autoIndex": false,
     "watchFiles": true,
     "maxFileSize": 1048576
   },
@@ -100,6 +101,16 @@ Optional configuration in `.opencode/codebase-index.json`:
   }
 }
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `embeddingProvider` | `"auto"` | `auto`, `github-copilot`, `openai`, `google`, `ollama` |
+| `scope` | `"project"` | `project` (local) or `global` (shared) |
+| `indexing.autoIndex` | `false` | Auto-index on plugin load |
+| `indexing.watchFiles` | `true` | Watch for file changes and re-index |
+| `indexing.maxFileSize` | `1048576` | Max file size in bytes (1MB) |
+| `search.maxResults` | `20` | Max results to return |
+| `search.minScore` | `0.1` | Minimum similarity score |
 
 ### Embedding Providers
 

@@ -17,9 +17,7 @@ export type IndexScope = z.infer<typeof IndexScopeSchema>;
 export const IndexingConfigSchema = z.object({
   autoIndex: z.boolean().default(false),
   watchFiles: z.boolean().default(true),
-  confirmBeforeIndex: z.boolean().default(true),
   maxFileSize: z.number().default(1048576),
-  batchSize: z.number().default(10),
   retries: z.number().default(3),
   retryDelayMs: z.number().default(1000),
 });
@@ -34,12 +32,6 @@ export const SearchConfigSchema = z.object({
 
 export type SearchConfig = z.infer<typeof SearchConfigSchema>;
 
-export const StorageConfigSchema = z.object({
-  location: IndexScopeSchema.default("project"),
-});
-
-export type StorageConfig = z.infer<typeof StorageConfigSchema>;
-
 export const CodebaseIndexConfigSchema = z.object({
   embeddingProvider: EmbeddingProviderSchema.default("auto"),
   embeddingModel: z.string().default("auto"),
@@ -47,7 +39,6 @@ export const CodebaseIndexConfigSchema = z.object({
   
   indexing: IndexingConfigSchema.optional(),
   search: SearchConfigSchema.optional(),
-  storage: StorageConfigSchema.optional(),
 
   include: z.array(z.string()).default([
     "**/*.{ts,tsx,js,jsx,mjs,cjs}",
@@ -85,9 +76,7 @@ function getDefaultIndexingConfig(): IndexingConfig {
   return {
     autoIndex: false,
     watchFiles: true,
-    confirmBeforeIndex: true,
     maxFileSize: 1048576,
-    batchSize: 10,
     retries: 3,
     retryDelayMs: 1000,
   };
@@ -101,23 +90,15 @@ function getDefaultSearchConfig(): SearchConfig {
   };
 }
 
-function getDefaultStorageConfig(): StorageConfig {
-  return {
-    location: "project",
-  };
-}
-
 export function parseConfig(raw: unknown): CodebaseIndexConfig & {
   indexing: IndexingConfig;
   search: SearchConfig;
-  storage: StorageConfig;
 } {
   const parsed = CodebaseIndexConfigSchema.parse(raw ?? {});
   return {
     ...parsed,
     indexing: parsed.indexing ?? getDefaultIndexingConfig(),
     search: parsed.search ?? getDefaultSearchConfig(),
-    storage: parsed.storage ?? getDefaultStorageConfig(),
   };
 }
 

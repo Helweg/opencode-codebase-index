@@ -133,11 +133,12 @@ export function createWatcherWithIndexer(
   const watcher = new FileWatcher(projectRoot, config);
 
   watcher.start(async (changes) => {
-    const hasChanges = changes.some(
+    const hasAddOrChange = changes.some(
       (c) => c.type === "add" || c.type === "change"
     );
+    const hasDelete = changes.some((c) => c.type === "unlink");
 
-    if (hasChanges) {
+    if (hasAddOrChange || hasDelete) {
       await indexer.index();
     }
   });
