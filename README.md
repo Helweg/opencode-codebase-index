@@ -66,6 +66,22 @@ Check if the codebase is indexed and ready for search.
 
 Remove stale entries from deleted files.
 
+## Slash Commands
+
+Copy the commands from `commands/` to your project's `.opencode/command/` directory:
+
+```bash
+cp -r node_modules/opencode-codebase-index/commands/* .opencode/command/
+```
+
+Available commands:
+
+| Command | Description |
+|---------|-------------|
+| `/search <query>` | Semantic search for code by meaning |
+| `/index` | Create or update the semantic index |
+| `/find <query>` | Hybrid search (semantic + grep) |
+
 ## Configuration
 
 Optional configuration in `.opencode/codebase-index.json`:

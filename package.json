@@ -45,7 +45,8 @@
   "files": [
     "dist",
     "native/*.node",
-    "skill"
+    "skill",
+    "commands"
   ],
   "napi": {
     "name": "codebase-index-native",
