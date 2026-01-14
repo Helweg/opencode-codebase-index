@@ -4,12 +4,14 @@ import * as path from "path";
 interface InvertedIndexData {
   termToChunks: Record<string, string[]>;
   chunkTokens: Record<string, Record<string, number>>;
+  avgDocLength: number;
 }
 
 export class InvertedIndex {
   private indexPath: string;
   private termToChunks: Map<string, Set<string>> = new Map();
   private chunkTokens: Map<string, Map<string, number>> = new Map();
+  private totalTokenCount = 0;
 
   constructor(indexPath: string) {
     this.indexPath = path.join(indexPath, "inverted-index.json");
@@ -29,11 +31,16 @@ export class InvertedIndex {
       }
 
       for (const [chunkId, tokens] of Object.entries(data.chunkTokens)) {
-        this.chunkTokens.set(chunkId, new Map(Object.entries(tokens)));
+        const tokenMap = new Map(Object.entries(tokens).map(([k, v]) => [k, v as number]));
+        this.chunkTokens.set(chunkId, tokenMap);
+        for (const count of tokenMap.values()) {
+          this.totalTokenCount += count;
+        }
       }
     } catch {
       this.termToChunks.clear();
       this.chunkTokens.clear();
+      this.totalTokenCount = 0;
     }
   }
 
@@ -41,6 +48,7 @@ export class InvertedIndex {
     const data: InvertedIndexData = {
       termToChunks: {},
       chunkTokens: {},
+      avgDocLength: this.getAvgDocLength(),
     };
 
     for (const [term, chunkIds] of this.termToChunks) {
@@ -67,13 +75,15 @@ export class InvertedIndex {
     }
 
     this.chunkTokens.set(chunkId, termFreq);
+    this.totalTokenCount += tokens.length;
   }
 
   removeChunk(chunkId: string): void {
     const tokens = this.chunkTokens.get(chunkId);
     if (!tokens) return;
 
-    for (const token of tokens.keys()) {
+    for (const [token, count] of tokens) {
+      this.totalTokenCount -= count;
       const chunks = this.termToChunks.get(token);
       if (chunks) {
         chunks.delete(chunkId);
@@ -105,7 +115,8 @@ export class InvertedIndex {
     const scores = new Map<string, number>();
     const k1 = 1.2;
     const b = 0.75;
-    const avgDocLength = 100;
+    const N = this.chunkTokens.size;
+    const avgDocLength = this.getAvgDocLength();
 
     for (const chunkId of candidateChunks) {
       const termFreq = this.chunkTokens.get(chunkId);
@@ -118,13 +129,19 @@ export class InvertedIndex {
         const tf = termFreq.get(term) || 0;
         if (tf === 0) continue;
 
-        const numerator = tf * (k1 + 1);
-        const denominator = tf + k1 * (1 - b + b * (docLength / avgDocLength));
-        score += numerator / denominator;
+        const df = this.termToChunks.get(term)?.size || 0;
+        const idf = Math.log((N - df + 0.5) / (df + 0.5) + 1);
+
+        const tfNorm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (docLength / avgDocLength)));
+        score += idf * tfNorm;
       }
 
-      const maxPossibleScore = queryTokens.length * (k1 + 1);
-      scores.set(chunkId, maxPossibleScore > 0 ? score / maxPossibleScore : 0);
+      scores.set(chunkId, score);
+    }
+
+    const maxScore = Math.max(...scores.values(), 1);
+    for (const [chunkId, score] of scores) {
+      scores.set(chunkId, score / maxScore);
     }
 
     return scores;
@@ -137,6 +154,16 @@ export class InvertedIndex {
   clear(): void {
     this.termToChunks.clear();
     this.chunkTokens.clear();
+    this.totalTokenCount = 0;
+  }
+
+  getDocumentCount(): number {
+    return this.chunkTokens.size;
+  }
+
+  private getAvgDocLength(): number {
+    const count = this.chunkTokens.size;
+    return count > 0 ? this.totalTokenCount / count : 100;
   }
 
   private tokenize(text: string): string[] {

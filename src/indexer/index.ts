@@ -331,7 +331,12 @@ export class Indexer {
   async search(
     query: string,
     limit?: number,
-    options?: { hybridWeight?: number }
+    options?: {
+      hybridWeight?: number;
+      fileType?: string;
+      directory?: string;
+      chunkType?: string;
+    }
   ): Promise<
     Array<{
       filePath: string;
@@ -355,15 +360,32 @@ export class Indexer {
     const hybridWeight = options?.hybridWeight ?? 0.3;
 
     const { embedding } = await this.provider!.embed(query);
-    const semanticResults = this.store!.search(embedding, maxResults * 2);
+    const semanticResults = this.store!.search(embedding, maxResults * 4);
 
-    const keywordResults = await this.keywordSearch(query, maxResults * 2);
+    const keywordResults = await this.keywordSearch(query, maxResults * 4);
 
-    const combined = this.fuseResults(semanticResults, keywordResults, hybridWeight, maxResults);
+    const combined = this.fuseResults(semanticResults, keywordResults, hybridWeight, maxResults * 4);
 
-    const filtered = combined.filter(
-      (r) => r.score >= this.config.search.minScore
-    );
+    const filtered = combined.filter((r) => {
+      if (r.score < this.config.search.minScore) return false;
+
+      if (options?.fileType) {
+        const ext = r.metadata.filePath.split(".").pop()?.toLowerCase();
+        if (ext !== options.fileType.toLowerCase().replace(/^\./, "")) return false;
+      }
+
+      if (options?.directory) {
+        const normalizedDir = options.directory.replace(/^\/|\/$/g, "");
+        if (!r.metadata.filePath.includes(`/${normalizedDir}/`) && 
+            !r.metadata.filePath.includes(`${normalizedDir}/`)) return false;
+      }
+
+      if (options?.chunkType) {
+        if (r.metadata.chunkType !== options.chunkType) return false;
+      }
+
+      return true;
+    }).slice(0, maxResults);
 
     return Promise.all(
       filtered.map(async (r) => {

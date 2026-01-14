@@ -32,10 +32,26 @@ export const codebase_search: ToolDefinition = tool({
       .optional()
       .default(10)
       .describe("Maximum number of results to return"),
+    fileType: z
+      .string()
+      .optional()
+      .describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
+    directory: z
+      .string()
+      .optional()
+      .describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
+    chunkType: z
+      .enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"])
+      .optional()
+      .describe("Filter by code chunk type"),
   },
   async execute(args, ctx) {
     const indexer = getIndexer();
-    const results = await indexer.search(args.query, args.limit);
+    const results = await indexer.search(args.query, args.limit, {
+      fileType: args.fileType,
+      directory: args.directory,
+      chunkType: args.chunkType,
+    });
 
     if (results.length === 0) {
       return "No matching code found. Try a different query or run index_codebase first.";
