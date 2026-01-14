@@ -28,6 +28,8 @@ export const SearchConfigSchema = z.object({
   maxResults: z.number().default(20),
   minScore: z.number().default(0.1),
   includeContext: z.boolean().default(true),
+  hybridWeight: z.number().min(0).max(1).default(0.5),
+  contextLines: z.number().min(0).max(50).default(0),
 });
 
 export type SearchConfig = z.infer<typeof SearchConfigSchema>;
@@ -87,6 +89,8 @@ function getDefaultSearchConfig(): SearchConfig {
     maxResults: 20,
     minScore: 0.1,
     includeContext: true,
+    hybridWeight: 0.5,
+    contextLines: 0,
   };
 }
 

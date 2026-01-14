@@ -9,7 +9,7 @@ import {
   createEmbeddingProvider,
   EmbeddingProviderInterface,
 } from "../embeddings/provider.js";
-import { collectFiles } from "../utils/files.js";
+import { collectFiles, SkippedFile } from "../utils/files.js";
 import { createCostEstimate, CostEstimate } from "../utils/cost.js";
 import {
   VectorStore,
@@ -32,6 +32,8 @@ export interface IndexStats {
   durationMs: number;
   existingChunks: number;
   removedChunks: number;
+  skippedFiles: SkippedFile[];
+  parseFailures: string[];
 }
 
 export interface IndexProgress {
@@ -131,7 +133,7 @@ export class Indexer {
       await this.initialize();
     }
 
-    const files = await collectFiles(
+    const { files } = await collectFiles(
       this.projectRoot,
       this.config.include,
       this.config.exclude,
@@ -156,6 +158,8 @@ export class Indexer {
       durationMs: 0,
       existingChunks: 0,
       removedChunks: 0,
+      skippedFiles: [],
+      parseFailures: [],
     };
 
     onProgress?.({
@@ -168,7 +172,7 @@ export class Indexer {
 
     this.loadFileHashCache();
 
-    const files = await collectFiles(
+    const { files, skipped } = await collectFiles(
       this.projectRoot,
       this.config.include,
       this.config.exclude,
@@ -176,6 +180,7 @@ export class Indexer {
     );
 
     stats.totalFiles = files.length;
+    stats.skippedFiles = skipped;
 
     const changedFiles: Array<{ path: string; content: string; hash: string }> = [];
     const unchangedFilePaths = new Set<string>();
@@ -228,6 +233,11 @@ export class Indexer {
 
     for (const parsed of parsedFiles) {
       currentFilePaths.add(parsed.path);
+      
+      if (parsed.chunks.length === 0) {
+        const relativePath = path.relative(this.projectRoot, parsed.path);
+        stats.parseFailures.push(relativePath);
+      }
       
       for (const chunk of parsed.chunks) {
         const id = generateChunkId(parsed.path, chunk);
@@ -392,6 +402,7 @@ export class Indexer {
       fileType?: string;
       directory?: string;
       chunkType?: string;
+      contextLines?: number;
     }
   ): Promise<
     Array<{
@@ -413,7 +424,7 @@ export class Indexer {
     }
 
     const maxResults = limit ?? this.config.search.maxResults;
-    const hybridWeight = options?.hybridWeight ?? 0.5;
+    const hybridWeight = options?.hybridWeight ?? this.config.search.hybridWeight;
 
     const { embedding } = await this.provider!.embed(query);
     const semanticResults = this.store!.search(embedding, maxResults * 4);
@@ -446,6 +457,9 @@ export class Indexer {
     return Promise.all(
       filtered.map(async (r) => {
         let content = "";
+        let contextStartLine = r.metadata.startLine;
+        let contextEndLine = r.metadata.endLine;
+        
         if (this.config.search.includeContext) {
           try {
             const fileContent = await fs.promises.readFile(
@@ -453,8 +467,13 @@ export class Indexer {
               "utf-8"
             );
             const lines = fileContent.split("\n");
+            const contextLines = options?.contextLines ?? this.config.search.contextLines;
+            
+            contextStartLine = Math.max(1, r.metadata.startLine - contextLines);
+            contextEndLine = Math.min(lines.length, r.metadata.endLine + contextLines);
+            
             content = lines
-              .slice(r.metadata.startLine - 1, r.metadata.endLine)
+              .slice(contextStartLine - 1, contextEndLine)
               .join("\n");
           } catch {
             content = "[File not accessible]";
@@ -463,8 +482,8 @@ export class Indexer {
 
         return {
           filePath: r.metadata.filePath,
-          startLine: r.metadata.startLine,
-          endLine: r.metadata.endLine,
+          startLine: contextStartLine,
+          endLine: contextEndLine,
           content,
           score: r.score,
           chunkType: r.metadata.chunkType,

@@ -2,6 +2,16 @@ import ignore, { Ignore } from "ignore";
 import * as fs from "fs";
 import * as path from "path";
 
+export interface SkippedFile {
+  path: string;
+  reason: "too_large" | "excluded" | "gitignore" | "no_match";
+}
+
+export interface CollectFilesResult {
+  files: Array<{ path: string; size: number }>;
+  skipped: SkippedFile[];
+}
+
 export function createIgnoreFilter(projectRoot: string): Ignore {
   const ig = ignore();
 
@@ -76,7 +86,8 @@ export async function* walkDirectory(
   includePatterns: string[],
   excludePatterns: string[],
   ignoreFilter: Ignore,
-  maxFileSize: number
+  maxFileSize: number,
+  skipped: SkippedFile[]
 ): AsyncGenerator<{ path: string; size: number }> {
   const entries = await fs.promises.readdir(dir, { withFileTypes: true });
 
@@ -85,6 +96,9 @@ export async function* walkDirectory(
     const relativePath = path.relative(projectRoot, fullPath);
 
     if (ignoreFilter.ignores(relativePath)) {
+      if (entry.isFile()) {
+        skipped.push({ path: relativePath, reason: "gitignore" });
+      }
       continue;
     }
 
@@ -95,24 +109,33 @@ export async function* walkDirectory(
         includePatterns,
         excludePatterns,
         ignoreFilter,
-        maxFileSize
+        maxFileSize,
+        skipped
       );
     } else if (entry.isFile()) {
       const stat = await fs.promises.stat(fullPath);
 
       if (stat.size > maxFileSize) {
+        skipped.push({ path: relativePath, reason: "too_large" });
         continue;
       }
 
-      if (
-        shouldIncludeFile(
-          fullPath,
-          projectRoot,
-          includePatterns,
-          excludePatterns,
-          ignoreFilter
-        )
-      ) {
+      for (const pattern of excludePatterns) {
+        if (matchGlob(relativePath, pattern)) {
+          skipped.push({ path: relativePath, reason: "excluded" });
+          continue;
+        }
+      }
+
+      let matched = false;
+      for (const pattern of includePatterns) {
+        if (matchGlob(relativePath, pattern)) {
+          matched = true;
+          break;
+        }
+      }
+
+      if (matched) {
         yield { path: fullPath, size: stat.size };
       }
     }
@@ -124,9 +147,10 @@ export async function collectFiles(
   includePatterns: string[],
   excludePatterns: string[],
   maxFileSize: number
-): Promise<Array<{ path: string; size: number }>> {
+): Promise<CollectFilesResult> {
   const ignoreFilter = createIgnoreFilter(projectRoot);
   const files: Array<{ path: string; size: number }> = [];
+  const skipped: SkippedFile[] = [];
 
   for await (const file of walkDirectory(
     projectRoot,
@@ -134,10 +158,11 @@ export async function collectFiles(
     includePatterns,
     excludePatterns,
     ignoreFilter,
-    maxFileSize
+    maxFileSize,
+    skipped
   )) {
     files.push(file);
   }
 
-  return files;
+  return { files, skipped };
 }

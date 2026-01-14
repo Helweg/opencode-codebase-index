@@ -44,6 +44,10 @@ export const codebase_search: ToolDefinition = tool({
       .enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"])
       .optional()
       .describe("Filter by code chunk type"),
+    contextLines: z
+      .number()
+      .optional()
+      .describe("Number of extra lines to include before/after each match (default: 0)"),
   },
   async execute(args, ctx) {
     const indexer = getIndexer();
@@ -51,6 +55,7 @@ export const codebase_search: ToolDefinition = tool({
       fileType: args.fileType,
       directory: args.directory,
       chunkType: args.chunkType,
+      contextLines: args.contextLines,
     });
 
     if (results.length === 0) {
@@ -83,6 +88,11 @@ export const index_codebase: ToolDefinition = tool({
       .optional()
       .default(false)
       .describe("Only show cost estimate without indexing"),
+    verbose: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Show detailed info about skipped files and parsing failures"),
   },
   async execute(args, ctx) {
     const indexer = getIndexer();
@@ -97,7 +107,7 @@ export const index_codebase: ToolDefinition = tool({
     }
 
     const stats = await indexer.index();
-    return formatIndexStats(stats);
+    return formatIndexStats(stats, args.verbose);
   },
 });
 
@@ -137,32 +147,55 @@ export const index_health_check: ToolDefinition = tool({
   },
 });
 
-function formatIndexStats(stats: IndexStats): string {
+function formatIndexStats(stats: IndexStats, verbose: boolean = false): string {
+  const lines: string[] = [];
+  
   if (stats.indexedChunks === 0 && stats.removedChunks === 0) {
-    return `Indexed. ${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`;
+    lines.push(`Indexed. ${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`);
+  } else if (stats.indexedChunks === 0) {
+    lines.push(`Indexed. ${stats.totalFiles} files, removed ${stats.removedChunks} stale chunks, ${stats.existingChunks} chunks remain.`);
+  } else {
+    let main = `Indexed. ${stats.totalFiles} files processed, ${stats.indexedChunks} new chunks embedded.`;
+    if (stats.existingChunks > 0) {
+      main += ` ${stats.existingChunks} unchanged chunks skipped.`;
+    }
+    lines.push(main);
+
+    if (stats.removedChunks > 0) {
+      lines.push(`Removed ${stats.removedChunks} stale chunks.`);
+    }
+
+    if (stats.failedChunks > 0) {
+      lines.push(`Failed: ${stats.failedChunks} chunks.`);
+    }
+
+    lines.push(`Tokens: ${stats.tokensUsed.toLocaleString()}, Duration: ${(stats.durationMs / 1000).toFixed(1)}s`);
   }
 
-  if (stats.indexedChunks === 0) {
-    return `Indexed. ${stats.totalFiles} files, removed ${stats.removedChunks} stale chunks, ${stats.existingChunks} chunks remain.`;
+  if (verbose) {
+    if (stats.skippedFiles.length > 0) {
+      const tooLarge = stats.skippedFiles.filter(f => f.reason === "too_large");
+      const excluded = stats.skippedFiles.filter(f => f.reason === "excluded");
+      const gitignored = stats.skippedFiles.filter(f => f.reason === "gitignore");
+      
+      lines.push("");
+      lines.push(`Skipped files: ${stats.skippedFiles.length}`);
+      if (tooLarge.length > 0) {
+        lines.push(`  Too large (${tooLarge.length}): ${tooLarge.slice(0, 5).map(f => f.path).join(", ")}${tooLarge.length > 5 ? "..." : ""}`);
+      }
+      if (excluded.length > 0) {
+        lines.push(`  Excluded (${excluded.length}): ${excluded.slice(0, 5).map(f => f.path).join(", ")}${excluded.length > 5 ? "..." : ""}`);
+      }
+      if (gitignored.length > 0) {
+        lines.push(`  Gitignored (${gitignored.length}): ${gitignored.slice(0, 5).map(f => f.path).join(", ")}${gitignored.length > 5 ? "..." : ""}`);
+      }
+    }
+
+    if (stats.parseFailures.length > 0) {
+      lines.push("");
+      lines.push(`Files with no extractable chunks (${stats.parseFailures.length}): ${stats.parseFailures.slice(0, 10).join(", ")}${stats.parseFailures.length > 10 ? "..." : ""}`);
+    }
   }
-
-  const lines = [
-    `Indexed. ${stats.totalFiles} files processed, ${stats.indexedChunks} new chunks embedded.`,
-  ];
-
-  if (stats.existingChunks > 0) {
-    lines[0] += ` ${stats.existingChunks} unchanged chunks skipped.`;
-  }
-
-  if (stats.removedChunks > 0) {
-    lines.push(`Removed ${stats.removedChunks} stale chunks.`);
-  }
-
-  if (stats.failedChunks > 0) {
-    lines.push(`Failed: ${stats.failedChunks} chunks.`);
-  }
-
-  lines.push(`Tokens: ${stats.tokensUsed.toLocaleString()}, Duration: ${(stats.durationMs / 1000).toFixed(1)}s`);
 
   return lines.join("\n");
 }

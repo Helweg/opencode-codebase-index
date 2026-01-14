@@ -99,7 +99,9 @@ Optional configuration in `.opencode/codebase-index.json`:
   },
   "search": {
     "maxResults": 20,
-    "minScore": 0.1
+    "minScore": 0.1,
+    "hybridWeight": 0.5,
+    "contextLines": 0
   }
 }
 ```
@@ -113,6 +115,8 @@ Optional configuration in `.opencode/codebase-index.json`:
 | `indexing.maxFileSize` | `1048576`   | Max file size in bytes (1MB)                                     |
 | `search.maxResults`    | `20`        | Max results to return                                            |
 | `search.minScore`      | `0.1`       | Minimum similarity score                                         |
+| `search.hybridWeight`  | `0.5`       | Keyword vs semantic balance (0=semantic only, 1=keyword only)    |
+| `search.contextLines`  | `0`         | Extra lines to include before/after each match                   |
 
 ### Embedding Providers
 
