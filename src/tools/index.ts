@@ -1,15 +1,15 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
-import { z } from "zod";
 
 import { Indexer, IndexStats } from "../indexer/index.js";
-import { CodebaseIndexConfig } from "../config/schema.js";
+import { ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
 
-let sharedIndexer: Indexer | null = null;
-let sharedConfig: CodebaseIndexConfig | null = null;
+// Use Zod from plugin to ensure version compatibility
+const z = tool.schema;
 
-export function initializeTools(projectRoot: string, config: CodebaseIndexConfig): void {
-  sharedConfig = config;
+let sharedIndexer: Indexer | null = null;
+
+export function initializeTools(projectRoot: string, config: ParsedCodebaseIndexConfig): void {
   sharedIndexer = new Indexer(projectRoot, config);
 }
 
@@ -49,7 +49,7 @@ export const codebase_search: ToolDefinition = tool({
       .optional()
       .describe("Number of extra lines to include before/after each match (default: 0)"),
   },
-  async execute(args, ctx) {
+  async execute(args) {
     const indexer = getIndexer();
     const results = await indexer.search(args.query, args.limit, {
       fileType: args.fileType,
@@ -94,7 +94,7 @@ export const index_codebase: ToolDefinition = tool({
       .default(false)
       .describe("Show detailed info about skipped files and parsing failures"),
   },
-  async execute(args, ctx) {
+  async execute(args) {
     const indexer = getIndexer();
 
     if (args.estimateOnly) {
@@ -115,7 +115,7 @@ export const index_status: ToolDefinition = tool({
   description:
     "Check the status of the codebase index. Shows whether the codebase is indexed, how many chunks are stored, and the embedding provider being used.",
   args: {},
-  async execute(args, ctx) {
+  async execute() {
     const indexer = getIndexer();
     const status = await indexer.getStatus();
     return formatStatus(status);
@@ -126,7 +126,7 @@ export const index_health_check: ToolDefinition = tool({
   description:
     "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
   args: {},
-  async execute(args, ctx) {
+  async execute() {
     const indexer = getIndexer();
     const result = await indexer.healthCheck();
 

@@ -94,10 +94,12 @@ function getDefaultSearchConfig(): SearchConfig {
   };
 }
 
-export function parseConfig(raw: unknown): CodebaseIndexConfig & {
+export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
   indexing: IndexingConfig;
   search: SearchConfig;
-} {
+};
+
+export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   const parsed = CodebaseIndexConfigSchema.parse(raw ?? {});
   return {
     ...parsed,

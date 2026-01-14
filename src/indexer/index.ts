@@ -3,7 +3,7 @@ import * as path from "path";
 import PQueue from "p-queue";
 import pRetry from "p-retry";
 
-import { CodebaseIndexConfig } from "../config/schema.js";
+import { ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { detectEmbeddingProvider, DetectedProvider } from "../embeddings/detector.js";
 import {
   createEmbeddingProvider,
@@ -55,7 +55,7 @@ interface PendingChunk {
 }
 
 export class Indexer {
-  private config: CodebaseIndexConfig;
+  private config: ParsedCodebaseIndexConfig;
   private projectRoot: string;
   private indexPath: string;
   private store: VectorStore | null = null;
@@ -65,7 +65,7 @@ export class Indexer {
   private fileHashCache: Map<string, string> = new Map();
   private fileHashCachePath: string = "";
 
-  constructor(projectRoot: string, config: CodebaseIndexConfig) {
+  constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
     this.config = config;
     this.indexPath = this.getIndexPath();
@@ -128,10 +128,25 @@ export class Indexer {
     this.invertedIndex.load();
   }
 
-  async estimateCost(): Promise<CostEstimate> {
-    if (!this.detectedProvider) {
+  private async ensureInitialized(): Promise<{
+    store: VectorStore;
+    provider: EmbeddingProviderInterface;
+    invertedIndex: InvertedIndex;
+    detectedProvider: DetectedProvider;
+  }> {
+    if (!this.store || !this.provider || !this.invertedIndex || !this.detectedProvider) {
       await this.initialize();
     }
+    return {
+      store: this.store!,
+      provider: this.provider!,
+      invertedIndex: this.invertedIndex!,
+      detectedProvider: this.detectedProvider!,
+    };
+  }
+
+  async estimateCost(): Promise<CostEstimate> {
+    const { detectedProvider } = await this.ensureInitialized();
 
     const { files } = await collectFiles(
       this.projectRoot,
@@ -140,13 +155,11 @@ export class Indexer {
       this.config.indexing.maxFileSize
     );
 
-    return createCostEstimate(files, this.detectedProvider!);
+    return createCostEstimate(files, detectedProvider);
   }
 
   async index(onProgress?: ProgressCallback): Promise<IndexStats> {
-    if (!this.store || !this.provider) {
-      await this.initialize();
-    }
+    const { store, provider, invertedIndex } = await this.ensureInitialized();
 
     const startTime = Date.now();
     const stats: IndexStats = {
@@ -210,7 +223,7 @@ export class Indexer {
     
     const existingChunks = new Map<string, string>();
     const existingChunksByFile = new Map<string, Set<string>>();
-    for (const { key, metadata } of this.store!.getAllMetadata()) {
+    for (const { key, metadata } of store.getAllMetadata()) {
       existingChunks.set(key, metadata.hash);
       const fileChunks = existingChunksByFile.get(metadata.filePath) || new Set();
       fileChunks.add(key);
@@ -266,8 +279,8 @@ export class Indexer {
     let removedCount = 0;
     for (const [chunkId, _hash] of existingChunks) {
       if (!currentChunkIds.has(chunkId)) {
-        this.store!.remove(chunkId);
-        this.invertedIndex!.removeChunk(chunkId);
+        store.remove(chunkId);
+        invertedIndex.removeChunk(chunkId);
         removedCount++;
       }
     }
@@ -291,8 +304,8 @@ export class Indexer {
     }
 
     if (pendingChunks.length === 0) {
-      this.store!.save();
-      this.invertedIndex!.save();
+      store.save();
+      invertedIndex.save();
       this.fileHashCache = currentFileHashes;
       this.saveFileHashCache();
       stats.durationMs = Date.now() - startTime;
@@ -323,7 +336,7 @@ export class Indexer {
           const result = await pRetry(
             async () => {
               const texts = batch.map((c) => c.text);
-              return this.provider!.embedBatch(texts);
+              return provider.embedBatch(texts);
             },
             {
               retries: this.config.indexing.retries,
@@ -342,11 +355,11 @@ export class Indexer {
             metadata: chunk.metadata,
           }));
 
-          this.store!.addBatch(items);
+          store.addBatch(items);
           
           for (const chunk of batch) {
-            this.invertedIndex!.removeChunk(chunk.id);
-            this.invertedIndex!.addChunk(chunk.id, chunk.content);
+            invertedIndex.removeChunk(chunk.id);
+            invertedIndex.addChunk(chunk.id, chunk.content);
           }
           
           stats.indexedChunks += batch.length;
@@ -376,8 +389,8 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
-    this.store!.save();
-    this.invertedIndex!.save();
+    store.save();
+    invertedIndex.save();
     this.fileHashCache = currentFileHashes;
     this.saveFileHashCache();
 
@@ -415,19 +428,17 @@ export class Indexer {
       name?: string;
     }>
   > {
-    if (!this.store || !this.provider) {
-      await this.initialize();
-    }
+    const { store, provider } = await this.ensureInitialized();
 
-    if (this.store!.count() === 0) {
+    if (store.count() === 0) {
       return [];
     }
 
     const maxResults = limit ?? this.config.search.maxResults;
     const hybridWeight = options?.hybridWeight ?? this.config.search.hybridWeight;
 
-    const { embedding } = await this.provider!.embed(query);
-    const semanticResults = this.store!.search(embedding, maxResults * 4);
+    const { embedding } = await provider.embed(query);
+    const semanticResults = store.search(embedding, maxResults * 4);
 
     const keywordResults = await this.keywordSearch(query, maxResults * 4);
 
@@ -497,13 +508,14 @@ export class Indexer {
     query: string,
     limit: number
   ): Promise<Array<{ id: string; score: number; metadata: ChunkMetadata }>> {
-    const scores = this.invertedIndex!.search(query);
+    const { store, invertedIndex } = await this.ensureInitialized();
+    const scores = invertedIndex.search(query);
     
     if (scores.size === 0) {
       return [];
     }
 
-    const allMetadata = this.store!.getAllMetadata();
+    const allMetadata = store.getAllMetadata();
     const metadataMap = new Map<string, ChunkMetadata>();
     for (const { key, metadata } of allMetadata) {
       metadataMap.set(key, metadata);
@@ -566,36 +578,30 @@ export class Indexer {
     model: string;
     indexPath: string;
   }> {
-    if (!this.store) {
-      await this.initialize();
-    }
+    const { store, detectedProvider } = await this.ensureInitialized();
 
     return {
-      indexed: this.store!.count() > 0,
-      vectorCount: this.store!.count(),
-      provider: this.detectedProvider?.provider ?? "unknown",
-      model: this.detectedProvider?.modelInfo.model ?? "unknown",
+      indexed: store.count() > 0,
+      vectorCount: store.count(),
+      provider: detectedProvider.provider,
+      model: detectedProvider.modelInfo.model,
       indexPath: this.indexPath,
     };
   }
 
   async clearIndex(): Promise<void> {
-    if (!this.store) {
-      await this.initialize();
-    }
+    const { store, invertedIndex } = await this.ensureInitialized();
 
-    this.store!.clear();
-    this.store!.save();
-    this.invertedIndex!.clear();
-    this.invertedIndex!.save();
+    store.clear();
+    store.save();
+    invertedIndex.clear();
+    invertedIndex.save();
   }
 
   async healthCheck(): Promise<{ removed: number; filePaths: string[] }> {
-    if (!this.store) {
-      await this.initialize();
-    }
+    const { store, invertedIndex } = await this.ensureInitialized();
 
-    const allMetadata = this.store!.getAllMetadata();
+    const allMetadata = store.getAllMetadata();
     const filePathsToChunkKeys = new Map<string, string[]>();
 
     for (const { key, metadata } of allMetadata) {
@@ -610,8 +616,8 @@ export class Indexer {
     for (const [filePath, chunkKeys] of filePathsToChunkKeys) {
       if (!fs.existsSync(filePath)) {
         for (const key of chunkKeys) {
-          this.store!.remove(key);
-          this.invertedIndex!.removeChunk(key);
+          store.remove(key);
+          invertedIndex.removeChunk(key);
           removedCount++;
         }
         removedFilePaths.push(filePath);
@@ -619,8 +625,8 @@ export class Indexer {
     }
 
     if (removedCount > 0) {
-      this.store!.save();
-      this.invertedIndex!.save();
+      store.save();
+      invertedIndex.save();
     }
 
     return { removed: removedCount, filePaths: removedFilePaths };
