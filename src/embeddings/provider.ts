@@ -99,6 +99,7 @@ class GitHubCopilotEmbeddingProvider implements EmbeddingProviderInterface {
         fs.writeFileSync(authPath, JSON.stringify(authData, null, 2));
       }
     } catch {
+      // Ignore token cache write errors
     }
   }
 

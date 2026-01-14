@@ -277,7 +277,7 @@ export class Indexer {
     }
 
     let removedCount = 0;
-    for (const [chunkId, _hash] of existingChunks) {
+    for (const [chunkId] of existingChunks) {
       if (!currentChunkIds.has(chunkId)) {
         store.remove(chunkId);
         invertedIndex.removeChunk(chunkId);
@@ -343,7 +343,7 @@ export class Indexer {
               minTimeout: this.config.indexing.retryDelayMs,
               onFailedAttempt: (error) => {
                 console.error(
-                  `Embedding batch failed (attempt ${error.attemptNumber}): ${error.message}`
+                  `Embedding batch failed (attempt ${error.attemptNumber}): ${String(error)}`
                 );
               },
             }

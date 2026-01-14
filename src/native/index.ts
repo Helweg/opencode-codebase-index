@@ -24,7 +24,6 @@ function getNativeBinding() {
   }
 
   // Get the directory of this module - works in both ESM and bundled contexts
-  // @ts-ignore - import.meta.url is available in ESM
   const currentFileUrl = typeof import.meta !== 'undefined' ? import.meta.url : __filename;
   const currentDir = typeof currentFileUrl === 'string' && currentFileUrl.startsWith('file:') 
     ? path.dirname(fileURLToPath(currentFileUrl))

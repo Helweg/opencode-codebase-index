@@ -50,7 +50,9 @@ function loadOpenCodeAuth(): Record<string, OpenCodeAuth> {
     if (fs.existsSync(authPath)) {
       return JSON.parse(fs.readFileSync(authPath, "utf-8"));
     }
-  } catch {}
+  } catch {
+    // Ignore auth file read errors
+  }
   return {};
 }
 

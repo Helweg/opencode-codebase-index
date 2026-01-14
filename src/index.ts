@@ -21,6 +21,7 @@ function loadPluginConfig(projectRoot: string): unknown {
       return JSON.parse(content);
     }
   } catch {
+    // Ignore config file read errors, use defaults
   }
   return {};
 }
