@@ -32,7 +32,11 @@ function getNativeBinding() {
   
   // The native module is in the 'native' folder at package root
   // From dist/index.js, we go up one level to package root, then into native/
-  const packageRoot = path.resolve(currentDir, '..');
+  // From src/native/index.ts (dev/test), we go up two levels to package root
+  const isDevMode = currentDir.includes('/src/native');
+  const packageRoot = isDevMode 
+    ? path.resolve(currentDir, '../..') 
+    : path.resolve(currentDir, '..');
   const nativePath = path.join(packageRoot, 'native', bindingName);
   
   // Use createRequire to load .node files in ESM context

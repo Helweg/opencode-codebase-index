@@ -153,6 +153,8 @@ Index stored in `.opencode/index/` within your project.
 ```bash
 npm run build        # Full build (TS + Rust)
 npm run build:ts     # TypeScript only
+npm run test         # Run tests
+npm run typecheck    # TypeScript type checking
 ```
 
 ## Local Development
@@ -190,6 +192,8 @@ echo 'export { default } from "$HOME/.cache/opencode/node_modules/opencode-codeb
 7. Push to your fork: `git push origin feature/my-feature`
 8. Open a pull request
 
+CI will automatically run tests and type checking on your PR.
+
 ### Project Structure
 
 ```
@@ -200,11 +204,14 @@ echo 'export { default } from "$HOME/.cache/opencode/node_modules/opencode-codeb
 │   ├── indexer/          # Core indexing logic
 │   ├── tools/            # OpenCode tool definitions
 │   ├── utils/            # File collection, cost estimation
+│   ├── native/           # Rust native module wrapper
 │   └── watcher/          # File change watcher
 ├── native/
 │   └── src/              # Rust native module (tree-sitter, usearch)
+├── tests/                # Unit tests (vitest)
 ├── commands/             # Slash command definitions
-└── skill/                # Agent skill guidance
+├── skill/                # Agent skill guidance
+└── .github/workflows/    # CI/CD (test, build, publish)
 ```
 
 ### Native Module
