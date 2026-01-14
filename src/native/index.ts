@@ -313,3 +313,7 @@ export function generateChunkId(filePath: string, chunk: CodeChunk): string {
   const hash = hashContent(`${filePath}:${chunk.startLine}:${chunk.endLine}:${chunk.content}`);
   return `chunk_${hash.slice(0, 16)}`;
 }
+
+export function generateChunkHash(chunk: CodeChunk): string {
+  return hashContent(chunk.content);
+}
