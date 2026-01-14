@@ -30,6 +30,8 @@ export interface IndexStats {
   failedChunks: number;
   tokensUsed: number;
   durationMs: number;
+  existingChunks: number;
+  removedChunks: number;
 }
 
 export interface IndexProgress {
@@ -152,6 +154,8 @@ export class Indexer {
       failedChunks: 0,
       tokensUsed: 0,
       durationMs: 0,
+      existingChunks: 0,
+      removedChunks: 0,
     };
 
     onProgress?.({
@@ -259,6 +263,8 @@ export class Indexer {
     }
 
     stats.totalChunks = pendingChunks.length;
+    stats.existingChunks = currentChunkIds.size - pendingChunks.length;
+    stats.removedChunks = removedCount;
 
     if (pendingChunks.length === 0 && removedCount === 0) {
       this.fileHashCache = currentFileHashes;

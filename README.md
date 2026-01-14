@@ -4,12 +4,12 @@ Semantic codebase indexing and search for OpenCode. Find code by meaning, not ju
 
 ## When to Use
 
-| Scenario | Tool | Why |
-|----------|------|-----|
-| Don't know function/class names | `codebase_search` | Natural language → code |
-| Exploring unfamiliar codebase | `codebase_search` | Finds related code by meaning |
-| Know exact identifier | `grep` | Faster, finds all occurrences |
-| Need ALL matches | `grep` | Semantic returns top N only |
+| Scenario                        | Tool                | Why                           |
+| ------------------------------- | ------------------- | ----------------------------- |
+| Don't know function/class names | `codebase_search` | Natural language → code      |
+| Exploring unfamiliar codebase   | `codebase_search` | Finds related code by meaning |
+| Know exact identifier           | `grep`            | Faster, finds all occurrences |
+| Need ALL matches                | `grep`            | Semantic returns top N only   |
 
 **Best workflow:** Semantic search for discovery → grep for precision.
 
@@ -23,7 +23,7 @@ Add to your `opencode.json`:
 
 ```json
 {
-  "plugins": ["opencode-codebase-index"]
+  "plugin": ["opencode-codebase-index"]
 }
 ```
 
@@ -40,11 +40,13 @@ Search code by describing what it does. Returns focused results (5-10 files).
 ```
 
 **Good queries describe behavior:**
+
 - "function that validates email addresses"
 - "middleware that checks JWT tokens"
 - "error handling for payment failures"
 
 **Use grep instead for:**
+
 - Exact names: `validateEmail`, `UserService`
 - Keywords: `TODO`, `FIXME`
 - Literals: `401`, `error`
@@ -53,10 +55,10 @@ Search code by describing what it does. Returns focused results (5-10 files).
 
 Create or update the semantic index. Incremental indexing is fast (~50ms when nothing changed).
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `force` | boolean | false | Reindex from scratch |
-| `estimateOnly` | boolean | false | Show cost estimate only |
+| Parameter        | Type    | Default | Description             |
+| ---------------- | ------- | ------- | ----------------------- |
+| `force`        | boolean | false   | Reindex from scratch    |
+| `estimateOnly` | boolean | false   | Show cost estimate only |
 
 ### `index_status`
 
@@ -76,11 +78,11 @@ cp -r node_modules/opencode-codebase-index/commands/* .opencode/command/
 
 Available commands:
 
-| Command | Description |
-|---------|-------------|
+| Command             | Description                         |
+| ------------------- | ----------------------------------- |
 | `/search <query>` | Semantic search for code by meaning |
-| `/index` | Create or update the semantic index |
-| `/find <query>` | Hybrid search (semantic + grep) |
+| `/index`          | Create or update the semantic index |
+| `/find <query>`   | Hybrid search (semantic + grep)     |
 
 ## Configuration
 
@@ -102,15 +104,15 @@ Optional configuration in `.opencode/codebase-index.json`:
 }
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `embeddingProvider` | `"auto"` | `auto`, `github-copilot`, `openai`, `google`, `ollama` |
-| `scope` | `"project"` | `project` (local) or `global` (shared) |
-| `indexing.autoIndex` | `false` | Auto-index on plugin load |
-| `indexing.watchFiles` | `true` | Watch for file changes and re-index |
-| `indexing.maxFileSize` | `1048576` | Max file size in bytes (1MB) |
-| `search.maxResults` | `20` | Max results to return |
-| `search.minScore` | `0.1` | Minimum similarity score |
+| Option                   | Default       | Description                                                      |
+| ------------------------ | ------------- | ---------------------------------------------------------------- |
+| `embeddingProvider`    | `"auto"`    | `auto`, `github-copilot`, `openai`, `google`, `ollama` |
+| `scope`                | `"project"` | `project` (local) or `global` (shared)                       |
+| `indexing.autoIndex`   | `false`     | Auto-index on plugin load                                        |
+| `indexing.watchFiles`  | `true`      | Watch for file changes and re-index                              |
+| `indexing.maxFileSize` | `1048576`   | Max file size in bytes (1MB)                                     |
+| `search.maxResults`    | `20`        | Max results to return                                            |
+| `search.minScore`      | `0.1`       | Minimum similarity score                                         |
 
 ### Embedding Providers
 
@@ -148,6 +150,72 @@ Index stored in `.opencode/index/` within your project.
 npm run build        # Full build (TS + Rust)
 npm run build:ts     # TypeScript only
 ```
+
+## Local Development
+
+To test the plugin locally without publishing to npm:
+
+1. Build the plugin:
+```bash
+npm run build
+```
+
+2. Deploy to OpenCode's plugin cache:
+```bash
+rm -rf ~/.cache/opencode/node_modules/opencode-codebase-index
+mkdir -p ~/.cache/opencode/node_modules/opencode-codebase-index
+cp -R dist native commands skill package.json ~/.cache/opencode/node_modules/opencode-codebase-index/
+```
+
+3. Create a loader in your test project:
+```bash
+mkdir -p .opencode/plugin
+echo 'export { default } from "$HOME/.cache/opencode/node_modules/opencode-codebase-index/dist/index.js"' > .opencode/plugin/codebase-index.ts
+```
+
+4. Run `opencode` in your test project.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Make your changes
+4. Run the build: `npm run build`
+5. Test locally using the steps above
+6. Commit your changes: `git commit -m "feat: add my feature"`
+7. Push to your fork: `git push origin feature/my-feature`
+8. Open a pull request
+
+### Project Structure
+
+```
+├── src/
+│   ├── index.ts          # Plugin entry point
+│   ├── config/           # Configuration schema
+│   ├── embeddings/       # Embedding provider detection and API
+│   ├── indexer/          # Core indexing logic
+│   ├── tools/            # OpenCode tool definitions
+│   ├── utils/            # File collection, cost estimation
+│   └── watcher/          # File change watcher
+├── native/
+│   └── src/              # Rust native module (tree-sitter, usearch)
+├── commands/             # Slash command definitions
+└── skill/                # Agent skill guidance
+```
+
+### Native Module
+
+The Rust native module handles:
+- Tree-sitter parsing for semantic chunking
+- xxHash for fast file hashing
+- usearch for vector storage and similarity search
+
+To rebuild the native module:
+```bash
+npm run build:native
+```
+
+Requires Rust toolchain installed.
 
 ## License
 

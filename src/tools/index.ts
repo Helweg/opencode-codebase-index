@@ -138,18 +138,31 @@ export const index_health_check: ToolDefinition = tool({
 });
 
 function formatIndexStats(stats: IndexStats): string {
-  const lines = [
-    `Indexing complete:`,
-    `  Files processed: ${stats.totalFiles}`,
-    `  Chunks indexed: ${stats.indexedChunks}`,
-  ];
-
-  if (stats.failedChunks > 0) {
-    lines.push(`  Chunks failed: ${stats.failedChunks}`);
+  if (stats.indexedChunks === 0 && stats.removedChunks === 0) {
+    return `Indexed. ${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`;
   }
 
-  lines.push(`  Tokens used: ${stats.tokensUsed.toLocaleString()}`);
-  lines.push(`  Duration: ${(stats.durationMs / 1000).toFixed(1)}s`);
+  if (stats.indexedChunks === 0) {
+    return `Indexed. ${stats.totalFiles} files, removed ${stats.removedChunks} stale chunks, ${stats.existingChunks} chunks remain.`;
+  }
+
+  const lines = [
+    `Indexed. ${stats.totalFiles} files processed, ${stats.indexedChunks} new chunks embedded.`,
+  ];
+
+  if (stats.existingChunks > 0) {
+    lines[0] += ` ${stats.existingChunks} unchanged chunks skipped.`;
+  }
+
+  if (stats.removedChunks > 0) {
+    lines.push(`Removed ${stats.removedChunks} stale chunks.`);
+  }
+
+  if (stats.failedChunks > 0) {
+    lines.push(`Failed: ${stats.failedChunks} chunks.`);
+  }
+
+  lines.push(`Tokens: ${stats.tokensUsed.toLocaleString()}, Duration: ${(stats.durationMs / 1000).toFixed(1)}s`);
 
   return lines.join("\n");
 }
