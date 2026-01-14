@@ -49,15 +49,14 @@
     "commands"
   ],
   "napi": {
-    "name": "codebase-index-native",
-    "triples": {
-      "defaults": true,
-      "additional": [
-        "aarch64-apple-darwin",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-unknown-linux-musl"
-      ]
-    }
+    "binaryName": "codebase-index-native",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc"
+    ]
   },
   "dependencies": {
     "chokidar": "^5.0.0",
