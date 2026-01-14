@@ -111,9 +111,9 @@ export function parseFiles(files: FileInput[]): ParsedFile[] {
 function mapChunk(c: any): CodeChunk {
   return {
     content: c.content,
-    startLine: c.start_line,
-    endLine: c.end_line,
-    chunkType: c.chunk_type as ChunkType,
+    startLine: c.startLine ?? c.start_line,
+    endLine: c.endLine ?? c.end_line,
+    chunkType: (c.chunkType ?? c.chunk_type) as ChunkType,
     name: c.name ?? undefined,
     language: c.language,
   };
@@ -212,6 +212,15 @@ export class VectorStore {
   }
 }
 
+// Token estimation: ~4 chars per token for code (conservative)
+const CHARS_PER_TOKEN = 4;
+const MAX_BATCH_TOKENS = 7500; // Leave buffer under 8192 API limit
+const MAX_SINGLE_CHUNK_TOKENS = 2000; // Truncate individual chunks beyond this
+
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
 export function createEmbeddingText(chunk: CodeChunk, filePath: string): string {
   const parts: string[] = [];
   
@@ -251,7 +260,7 @@ export function createEmbeddingText(chunk: CodeChunk, filePath: string): string 
   const typeDesc = typeDescriptors[chunk.chunkType] || chunk.chunkType;
   
   if (chunk.name) {
-    parts.push(`${lang} ${typeDesc} named "${chunk.name}"`);
+    parts.push(`${lang} ${typeDesc} "${chunk.name}"`);
   } else {
     parts.push(`${lang} ${typeDesc}`);
   }
@@ -268,14 +277,53 @@ export function createEmbeddingText(chunk: CodeChunk, filePath: string): string 
   }
   
   parts.push("");
-  parts.push(chunk.content);
+  
+  let content = chunk.content;
+  const headerLength = parts.join("\n").length;
+  const maxContentChars = (MAX_SINGLE_CHUNK_TOKENS * CHARS_PER_TOKEN) - headerLength;
+  
+  if (content.length > maxContentChars) {
+    content = content.slice(0, maxContentChars) + "\n... [truncated]";
+  }
+  
+  parts.push(content);
 
   return parts.join("\n");
+}
+
+export function createDynamicBatches(chunks: Array<{ text: string; [key: string]: any }>): Array<Array<{ text: string; [key: string]: any }>> {
+  const batches: Array<Array<{ text: string; [key: string]: any }>> = [];
+  let currentBatch: Array<{ text: string; [key: string]: any }> = [];
+  let currentTokens = 0;
+  
+  for (const chunk of chunks) {
+    const chunkTokens = estimateTokens(chunk.text);
+    
+    if (currentBatch.length > 0 && currentTokens + chunkTokens > MAX_BATCH_TOKENS) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentTokens = 0;
+    }
+    
+    currentBatch.push(chunk);
+    currentTokens += chunkTokens;
+  }
+  
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+  
+  return batches;
 }
 
 function extractSemanticHints(name: string, content: string): string[] {
   const hints: string[] = [];
   const combined = `${name} ${content}`.toLowerCase();
+  
+  const signature = extractFunctionSignature(content);
+  if (signature) {
+    hints.push(signature);
+  }
   
   const patterns: Array<[RegExp, string]> = [
     [/auth|login|logout|signin|signout|credential/i, "authentication"],
@@ -291,10 +339,10 @@ function extractSemanticHints(name: string, content: string): string[] {
     [/database|db|query|sql|mongo/i, "database"],
     [/file|read|write|stream|path/i, "file operations"],
     [/parse|serialize|json|xml/i, "data parsing"],
-    [/encrypt|decrypt|crypto|secret/i, "encryption"],
+    [/encrypt|decrypt|crypto|secret|cipher|cryptographic/i, "encryption/cryptography"],
     [/test|spec|mock|stub|expect/i, "testing"],
     [/config|setting|option|env/i, "configuration"],
-    [/route|endpoint|handler|controller/i, "routing"],
+    [/route|endpoint|handler|controller|middleware/i, "routing/middleware"],
     [/render|component|view|template/i, "UI rendering"],
     [/state|redux|store|dispatch/i, "state management"],
     [/hook|effect|memo|callback/i, "React hooks"],
@@ -306,7 +354,74 @@ function extractSemanticHints(name: string, content: string): string[] {
     }
   }
   
-  return hints.slice(0, 5);
+  return hints.slice(0, 6);
+}
+
+function extractFunctionSignature(content: string): string | null {
+  const tsJsPatterns = [
+    /(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*(?:<[^>]+>)?\s*\(([^)]*)\)\s*(?::\s*([^{]+))?/,
+    /(?:export\s+)?const\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(?:async\s+)?\(([^)]*)\)\s*(?::\s*([^=>{]+))?\s*=>/,
+    /(?:export\s+)?const\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(?:async\s+)?function\s*\(([^)]*)\)/,
+  ];
+  
+  const pyPatterns = [
+    /def\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?:/,
+    /async\s+def\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?:/,
+  ];
+  
+  const goPatterns = [
+    /func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(([^)]*)\)\s*(?:\(([^)]+)\)|([^{\n]+))?/,
+  ];
+  
+  const rustPatterns = [
+    /(?:pub\s+)?(?:async\s+)?fn\s+(\w+)\s*(?:<[^>]+>)?\s*\(([^)]*)\)\s*(?:->\s*([^{]+))?/,
+  ];
+  
+  for (const pattern of [...tsJsPatterns, ...pyPatterns, ...goPatterns, ...rustPatterns]) {
+    const match = content.match(pattern);
+    if (match) {
+      const funcName = match[1];
+      const params = match[2]?.trim() || "";
+      const returnType = (match[3] || match[4])?.trim();
+      
+      const paramNames = extractParamNames(params);
+      
+      let sig = `${funcName}(${paramNames.join(", ")})`;
+      if (returnType && returnType.length < 50) {
+        sig += ` -> ${returnType.replace(/\s+/g, " ").trim()}`;
+      }
+      
+      if (sig.length < 100) {
+        return sig;
+      }
+    }
+  }
+  
+  return null;
+}
+
+function extractParamNames(params: string): string[] {
+  if (!params.trim()) return [];
+  
+  const names: string[] = [];
+  const parts = params.split(",");
+  
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    
+    const tsMatch = trimmed.match(/^(\w+)\s*[?:]?/);
+    const pyMatch = trimmed.match(/^(\w+)\s*(?::|=)/);
+    const goMatch = trimmed.match(/^(\w+)\s+\w/);
+    const rustMatch = trimmed.match(/^(\w+)\s*:/);
+    
+    const match = tsMatch || pyMatch || goMatch || rustMatch;
+    if (match && match[1] !== "self" && match[1] !== "this") {
+      names.push(match[1]);
+    }
+  }
+  
+  return names.slice(0, 5);
 }
 
 export function generateChunkId(filePath: string, chunk: CodeChunk): string {

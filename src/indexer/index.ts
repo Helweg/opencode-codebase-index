@@ -18,6 +18,8 @@ import {
   generateChunkId,
   generateChunkHash,
   ChunkMetadata,
+  createDynamicBatches,
+  hashFile,
 } from "../native/index.js";
 import { InvertedIndex } from "./inverted-index.js";
 
@@ -56,11 +58,14 @@ export class Indexer {
   private invertedIndex: InvertedIndex | null = null;
   private provider: EmbeddingProviderInterface | null = null;
   private detectedProvider: DetectedProvider | null = null;
+  private fileHashCache: Map<string, string> = new Map();
+  private fileHashCachePath: string = "";
 
   constructor(projectRoot: string, config: CodebaseIndexConfig) {
     this.projectRoot = projectRoot;
     this.config = config;
     this.indexPath = this.getIndexPath();
+    this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
   }
 
   private getIndexPath(): string {
@@ -69,6 +74,26 @@ export class Indexer {
       return path.join(homeDir, ".opencode", "global-index");
     }
     return path.join(this.projectRoot, ".opencode", "index");
+  }
+
+  private loadFileHashCache(): void {
+    try {
+      if (fs.existsSync(this.fileHashCachePath)) {
+        const data = fs.readFileSync(this.fileHashCachePath, "utf-8");
+        const parsed = JSON.parse(data);
+        this.fileHashCache = new Map(Object.entries(parsed));
+      }
+    } catch {
+      this.fileHashCache = new Map();
+    }
+  }
+
+  private saveFileHashCache(): void {
+    const obj: Record<string, string> = {};
+    for (const [k, v] of this.fileHashCache) {
+      obj[k] = v;
+    }
+    fs.writeFileSync(this.fileHashCachePath, JSON.stringify(obj));
   }
 
   async initialize(): Promise<void> {
@@ -137,6 +162,8 @@ export class Indexer {
       totalChunks: 0,
     });
 
+    this.loadFileHashCache();
+
     const files = await collectFiles(
       this.projectRoot,
       this.config.include,
@@ -146,6 +173,22 @@ export class Indexer {
 
     stats.totalFiles = files.length;
 
+    const changedFiles: Array<{ path: string; content: string; hash: string }> = [];
+    const unchangedFilePaths = new Set<string>();
+    const currentFileHashes = new Map<string, string>();
+
+    for (const f of files) {
+      const currentHash = hashFile(f.path);
+      currentFileHashes.set(f.path, currentHash);
+      
+      if (this.fileHashCache.get(f.path) === currentHash) {
+        unchangedFilePaths.add(f.path);
+      } else {
+        const content = await fs.promises.readFile(f.path, "utf-8");
+        changedFiles.push({ path: f.path, content, hash: currentHash });
+      }
+    }
+
     onProgress?.({
       phase: "parsing",
       filesProcessed: 0,
@@ -154,14 +197,7 @@ export class Indexer {
       totalChunks: 0,
     });
 
-    const fileContents = await Promise.all(
-      files.map(async (f) => ({
-        path: f.path,
-        content: await fs.promises.readFile(f.path, "utf-8"),
-      }))
-    );
-
-    const parsedFiles = parseFiles(fileContents);
+    const parsedFiles = parseFiles(changedFiles);
     
     const existingChunks = new Map<string, string>();
     const existingChunksByFile = new Map<string, Set<string>>();
@@ -175,6 +211,16 @@ export class Indexer {
     const currentChunkIds = new Set<string>();
     const currentFilePaths = new Set<string>();
     const pendingChunks: PendingChunk[] = [];
+
+    for (const filePath of unchangedFilePaths) {
+      currentFilePaths.add(filePath);
+      const fileChunks = existingChunksByFile.get(filePath);
+      if (fileChunks) {
+        for (const chunkId of fileChunks) {
+          currentChunkIds.add(chunkId);
+        }
+      }
+    }
 
     for (const parsed of parsedFiles) {
       currentFilePaths.add(parsed.path);
@@ -215,6 +261,8 @@ export class Indexer {
     stats.totalChunks = pendingChunks.length;
 
     if (pendingChunks.length === 0 && removedCount === 0) {
+      this.fileHashCache = currentFileHashes;
+      this.saveFileHashCache();
       stats.durationMs = Date.now() - startTime;
       onProgress?.({
         phase: "complete",
@@ -229,6 +277,8 @@ export class Indexer {
     if (pendingChunks.length === 0) {
       this.store!.save();
       this.invertedIndex!.save();
+      this.fileHashCache = currentFileHashes;
+      this.saveFileHashCache();
       stats.durationMs = Date.now() - startTime;
       onProgress?.({
         phase: "complete",
@@ -248,12 +298,10 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
-    const queue = new PQueue({ concurrency: 1 });
-    const batchSize = this.config.indexing.batchSize;
+    const queue = new PQueue({ concurrency: 3 });
+    const dynamicBatches = createDynamicBatches(pendingChunks);
 
-    for (let i = 0; i < pendingChunks.length; i += batchSize) {
-      const batch = pendingChunks.slice(i, i + batchSize);
-
+    for (const batch of dynamicBatches) {
       queue.add(async () => {
         try {
           const result = await pRetry(
@@ -314,6 +362,8 @@ export class Indexer {
 
     this.store!.save();
     this.invertedIndex!.save();
+    this.fileHashCache = currentFileHashes;
+    this.saveFileHashCache();
 
     stats.durationMs = Date.now() - startTime;
 
@@ -357,7 +407,7 @@ export class Indexer {
     }
 
     const maxResults = limit ?? this.config.search.maxResults;
-    const hybridWeight = options?.hybridWeight ?? 0.3;
+    const hybridWeight = options?.hybridWeight ?? 0.5;
 
     const { embedding } = await this.provider!.embed(query);
     const semanticResults = this.store!.search(embedding, maxResults * 4);

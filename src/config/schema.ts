@@ -19,7 +19,7 @@ export const IndexingConfigSchema = z.object({
   watchFiles: z.boolean().default(true),
   confirmBeforeIndex: z.boolean().default(true),
   maxFileSize: z.number().default(1048576),
-  batchSize: z.number().default(50),
+  batchSize: z.number().default(10),
   retries: z.number().default(3),
   retryDelayMs: z.number().default(1000),
 });
@@ -28,7 +28,7 @@ export type IndexingConfig = z.infer<typeof IndexingConfigSchema>;
 
 export const SearchConfigSchema = z.object({
   maxResults: z.number().default(20),
-  minScore: z.number().default(0.5),
+  minScore: z.number().default(0.1),
   includeContext: z.boolean().default(true),
 });
 
@@ -75,7 +75,7 @@ export const CodebaseIndexConfigSchema = z.object({
     "**/coverage/**",
     "**/.next/**",
     "**/.nuxt/**",
-    "**/.opencode/index/**",
+    "**/.opencode/**",
   ]),
 });
 
@@ -87,7 +87,7 @@ function getDefaultIndexingConfig(): IndexingConfig {
     watchFiles: true,
     confirmBeforeIndex: true,
     maxFileSize: 1048576,
-    batchSize: 50,
+    batchSize: 10,
     retries: 3,
     retryDelayMs: 1000,
   };
@@ -96,7 +96,7 @@ function getDefaultIndexingConfig(): IndexingConfig {
 function getDefaultSearchConfig(): SearchConfig {
   return {
     maxResults: 20,
-    minScore: 0.5,
+    minScore: 0.1,
     includeContext: true,
   };
 }

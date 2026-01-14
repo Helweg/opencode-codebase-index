@@ -16,7 +16,7 @@ export function createIgnoreFilter(projectRoot: string): Ignore {
     "__pycache__",
     "target",
     "vendor",
-    ".opencode/index",
+    ".opencode",
   ];
 
   ig.add(defaultIgnores);

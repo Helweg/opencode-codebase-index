@@ -22,11 +22,11 @@ function getIndexer(): Indexer {
 
 export const codebase_search: ToolDefinition = tool({
   description:
-    "Search the codebase using natural language. Find code by describing what it does, not just keywords. Use this when you need to find relevant code snippets, functions, classes, or patterns.",
+    "Search codebase by MEANING, not keywords. Use when you don't know exact function/class names. Returns focused results (5-10 files). For known identifiers like 'validateToken' or 'UserService', use grep instead - it's faster and finds all occurrences. Best for: 'find authentication logic', 'code that handles payments', 'error middleware'.",
   args: {
     query: z
       .string()
-      .describe("Natural language description of what code you're looking for"),
+      .describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
     limit: z
       .number()
       .optional()
@@ -71,7 +71,7 @@ export const codebase_search: ToolDefinition = tool({
 
 export const index_codebase: ToolDefinition = tool({
   description:
-    "Index the codebase for semantic search. Creates vector embeddings of code chunks. Run this before using codebase_search, or to update the index after changes.",
+    "Index the codebase for semantic search. Creates vector embeddings of code chunks. Incremental - only re-indexes changed files (~50ms when nothing changed). Run before first codebase_search.",
   args: {
     force: z
       .boolean()
