@@ -1,7 +1,6 @@
 import * as path from "path";
 import * as os from "os";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
 
 function getNativeBinding() {
   const platform = os.platform();
