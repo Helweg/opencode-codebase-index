@@ -8,6 +8,8 @@ export interface IndexingConfig {
   autoIndex: boolean;
   watchFiles: boolean;
   maxFileSize: number;
+  maxChunksPerFile: number;
+  semanticOnly: boolean;
   retries: number;
   retryDelayMs: number;
 }
@@ -69,6 +71,8 @@ function getDefaultIndexingConfig(): IndexingConfig {
     autoIndex: false,
     watchFiles: true,
     maxFileSize: 1048576,
+    maxChunksPerFile: 100,
+    semanticOnly: false,
     retries: 3,
     retryDelayMs: 1000,
   };
@@ -109,6 +113,8 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     autoIndex: typeof rawIndexing.autoIndex === "boolean" ? rawIndexing.autoIndex : defaultIndexing.autoIndex,
     watchFiles: typeof rawIndexing.watchFiles === "boolean" ? rawIndexing.watchFiles : defaultIndexing.watchFiles,
     maxFileSize: typeof rawIndexing.maxFileSize === "number" ? rawIndexing.maxFileSize : defaultIndexing.maxFileSize,
+    maxChunksPerFile: typeof rawIndexing.maxChunksPerFile === "number" ? Math.max(1, rawIndexing.maxChunksPerFile) : defaultIndexing.maxChunksPerFile,
+    semanticOnly: typeof rawIndexing.semanticOnly === "boolean" ? rawIndexing.semanticOnly : defaultIndexing.semanticOnly,
     retries: typeof rawIndexing.retries === "number" ? rawIndexing.retries : defaultIndexing.retries,
     retryDelayMs: typeof rawIndexing.retryDelayMs === "number" ? rawIndexing.retryDelayMs : defaultIndexing.retryDelayMs,
   };

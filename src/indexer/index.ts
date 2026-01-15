@@ -296,12 +296,22 @@ export class Indexer {
         stats.parseFailures.push(relativePath);
       }
       
+      let fileChunkCount = 0;
       for (const chunk of parsed.chunks) {
+        if (fileChunkCount >= this.config.indexing.maxChunksPerFile) {
+          break;
+        }
+        
+        if (this.config.indexing.semanticOnly && chunk.chunkType === "block") {
+          continue;
+        }
+        
         const id = generateChunkId(parsed.path, chunk);
         const contentHash = generateChunkHash(chunk);
         currentChunkIds.add(id);
 
         if (existingChunks.get(id) === contentHash) {
+          fileChunkCount++;
           continue;
         }
 
@@ -317,6 +327,7 @@ export class Indexer {
         };
 
         pendingChunks.push({ id, text, content: chunk.content, metadata });
+        fileChunkCount++;
       }
     }
 
