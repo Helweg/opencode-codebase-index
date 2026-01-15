@@ -68,6 +68,32 @@ src/api/checkout.ts:89      (Route handler for /pay)
 
 **Rule of thumb**: Semantic search for discovery → grep for precision.
 
+## 📊 Real-World Comparison
+
+We tested the same query on the [Express.js](https://github.com/expressjs/express) codebase (169 files):
+
+> *"find the middleware that handles routing"*
+
+| Metric | Without Plugin | With Plugin |
+|--------|----------------|-------------|
+| **Tokens used** | 58,715 (46%) | 21,671 (17%) |
+| **Token savings** | — | **63% fewer tokens** |
+| **Search approach** | Grep + glob + AST + explore agents | `codebase_search` + grep + explore agents |
+| **Answer quality** | ✅ Found external router package | ✅ Found external router package |
+
+### Key Takeaways
+
+1. **Significant token savings**: The plugin reduced token usage by 63% for the same quality answer
+2. **Complements existing tools**: The plugin doesn't replace grep/explore agents—it provides a faster initial signal that reduces exploration overhead
+3. **Same answer quality**: Both approaches found that Express 5.x delegates routing to the external `router` npm package
+
+### When the Plugin Helps Most
+
+- **Conceptual queries**: "Where is the authentication logic?" (no keywords to grep for)
+- **Unfamiliar codebases**: You don't know what to search for yet
+- **Cost-sensitive workflows**: 63% fewer tokens adds up over many queries
+- **Large codebases**: Semantic search scales better than exhaustive grep
+
 ## 🛠️ How It Works
 
 ```mermaid
