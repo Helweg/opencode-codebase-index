@@ -2,6 +2,7 @@
 
 mod chunker;
 mod hasher;
+mod inverted_index;
 mod parser;
 mod store;
 mod types;
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 
 pub use chunker::*;
 pub use hasher::*;
+pub use inverted_index::*;
 pub use parser::*;
 pub use store::*;
 pub use types::*;
@@ -165,4 +167,74 @@ pub struct SearchResult {
 pub struct KeyMetadataPair {
     pub key: String,
     pub metadata: String,
+}
+
+#[napi(object)]
+pub struct KeywordSearchResult {
+    pub chunk_id: String,
+    pub score: f64,
+}
+
+#[napi]
+pub struct InvertedIndex {
+    inner: inverted_index::InvertedIndexInner,
+}
+
+#[napi]
+impl InvertedIndex {
+    #[napi(constructor)]
+    pub fn new(index_path: String) -> Self {
+        let inner = inverted_index::InvertedIndexInner::new(PathBuf::from(index_path));
+        Self { inner }
+    }
+
+    #[napi]
+    pub fn load(&mut self) -> Result<()> {
+        self.inner
+            .load()
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn save(&self) -> Result<()> {
+        self.inner
+            .save()
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn add_chunk(&mut self, chunk_id: String, content: String) {
+        self.inner.add_chunk(&chunk_id, &content);
+    }
+
+    #[napi]
+    pub fn remove_chunk(&mut self, chunk_id: String) -> bool {
+        self.inner.remove_chunk(&chunk_id)
+    }
+
+    #[napi]
+    pub fn search(&self, query: String, limit: Option<u32>) -> Vec<KeywordSearchResult> {
+        let results = self.inner.search(&query);
+        let limit = limit.unwrap_or(100) as usize;
+        results
+            .into_iter()
+            .take(limit)
+            .map(|(chunk_id, score)| KeywordSearchResult { chunk_id, score })
+            .collect()
+    }
+
+    #[napi]
+    pub fn has_chunk(&self, chunk_id: String) -> bool {
+        self.inner.has_chunk(&chunk_id)
+    }
+
+    #[napi]
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    #[napi]
+    pub fn document_count(&self) -> u32 {
+        self.inner.document_count() as u32
+    }
 }

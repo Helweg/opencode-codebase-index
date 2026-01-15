@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { InvertedIndex } from "../src/indexer/inverted-index.js";
+import { InvertedIndex } from "../src/native/index.js";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
 describe("InvertedIndex", () => {
   let tempDir: string;
+  let indexPath: string;
   let index: InvertedIndex;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "inverted-index-test-"));
-    index = new InvertedIndex(tempDir);
+    indexPath = path.join(tempDir, "inverted-index.json");
+    index = new InvertedIndex(indexPath);
   });
 
   afterEach(() => {
@@ -89,7 +91,7 @@ describe("InvertedIndex", () => {
       index.addChunk("chunk2", "database connection");
       index.save();
 
-      const newIndex = new InvertedIndex(tempDir);
+      const newIndex = new InvertedIndex(indexPath);
       newIndex.load();
 
       const results = newIndex.search("authentication");
@@ -98,7 +100,7 @@ describe("InvertedIndex", () => {
     });
 
     it("should handle loading empty index", () => {
-      const newIndex = new InvertedIndex(tempDir);
+      const newIndex = new InvertedIndex(indexPath);
       expect(() => newIndex.load()).not.toThrow();
       expect(newIndex.getDocumentCount()).toBe(0);
     });

@@ -13,6 +13,7 @@ import { collectFiles, SkippedFile } from "../utils/files.js";
 import { createCostEstimate, CostEstimate } from "../utils/cost.js";
 import {
   VectorStore,
+  InvertedIndex,
   parseFiles,
   createEmbeddingText,
   generateChunkId,
@@ -21,7 +22,6 @@ import {
   createDynamicBatches,
   hashFile,
 } from "../native/index.js";
-import { InvertedIndex } from "./inverted-index.js";
 
 export interface IndexStats {
   totalFiles: number;
@@ -124,7 +124,8 @@ export class Indexer {
       this.store.load();
     }
 
-    this.invertedIndex = new InvertedIndex(this.indexPath);
+    const invertedIndexPath = path.join(this.indexPath, "inverted-index.json");
+    this.invertedIndex = new InvertedIndex(invertedIndexPath);
     this.invertedIndex.load();
   }
 

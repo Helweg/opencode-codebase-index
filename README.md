@@ -72,19 +72,10 @@ src/api/checkout.ts:89      (Route handler for /pay)
 
 We tested the query *"find the error handling middleware"* across multiple open-source codebases:
 
-```mermaid
-xychart-beta
-    title "Token Usage: Without vs With Plugin"
-    x-axis ["axios (170 files)", "express (670 files)"]
-    y-axis "Tokens Used" 0 --> 130000
-    bar [126051, 21727]
-    bar [3377, 2458]
-```
-
 | Codebase | Files | Without Plugin | With Plugin | Savings |
 |----------|-------|----------------|-------------|---------|
-| [axios](https://github.com/axios/axios) | 170 | 126,051 | 3,377 | **97%** |
-| [express](https://github.com/expressjs/express) | 670 | 21,727 | 2,458 | **89%** |
+| [axios](https://github.com/axios/axios) | 170 | 126,051 tokens | 3,377 tokens | **97%** |
+| [express](https://github.com/expressjs/express) | 670 | 21,727 tokens | 2,458 tokens | **89%** |
 
 ### Key Takeaways
 
