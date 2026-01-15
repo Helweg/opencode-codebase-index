@@ -68,30 +68,36 @@ src/api/checkout.ts:89      (Route handler for /pay)
 
 **Rule of thumb**: Semantic search for discovery → grep for precision.
 
-## 📊 Real-World Comparison
+## 📊 Token Usage Benchmarks
 
-We tested the same query on the [Express.js](https://github.com/expressjs/express) codebase (169 files) using [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) (Sisyphus agent):
+We tested the query *"find the error handling middleware"* across multiple open-source codebases:
 
-> *"find the middleware that handles routing"*
+```mermaid
+xychart-beta
+    title "Token Usage: Without vs With Plugin"
+    x-axis ["axios (170 files)", "express (670 files)"]
+    y-axis "Tokens Used" 0 --> 130000
+    bar [126051, 21727]
+    bar [3377, 2458]
+```
 
-| Metric | Without Plugin | With Plugin |
-|--------|----------------|-------------|
-| **Tokens used** | 58,715 (46%) | 21,671 (17%) |
-| **Token savings** | — | **63% fewer tokens** |
-| **Search approach** | Grep + glob + AST + explore agents | `codebase_search` + grep + explore agents |
-| **Answer quality** | ✅ Found external router package | ✅ Found external router package |
+| Codebase | Files | Without Plugin | With Plugin | Savings |
+|----------|-------|----------------|-------------|---------|
+| [axios](https://github.com/axios/axios) | 170 | 126,051 | 3,377 | **97%** |
+| [express](https://github.com/expressjs/express) | 670 | 21,727 | 2,458 | **89%** |
 
 ### Key Takeaways
 
-1. **Significant token savings**: The plugin reduced token usage by 63% for the same quality answer
-2. **Complements existing tools**: The plugin doesn't replace grep/explore agents—it provides a faster initial signal that reduces exploration overhead
-3. **Same answer quality**: Both approaches found that Express 5.x delegates routing to the external `router` npm package
+1. **Massive token savings**: 89-97% reduction across tested codebases
+2. **Scales with complexity**: Without the plugin, the agent explores more files; with it, semantic search provides immediate context
+3. **Complements existing tools**: The plugin doesn't replace grep/explore—it provides a faster initial signal that reduces exploration overhead
+4. **Same answer quality**: Both approaches found the relevant error handling code
 
 ### When the Plugin Helps Most
 
 - **Conceptual queries**: "Where is the authentication logic?" (no keywords to grep for)
 - **Unfamiliar codebases**: You don't know what to search for yet
-- **Cost-sensitive workflows**: 63% fewer tokens adds up over many queries
+- **Cost-sensitive workflows**: 89-97% fewer tokens adds up significantly
 - **Large codebases**: Semantic search scales better than exhaustive grep
 
 ## 🛠️ How It Works
