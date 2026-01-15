@@ -15,9 +15,9 @@ export default defineConfig({
     "p-queue",
     "p-retry",
     "tiktoken",
+    "zod",
   ],
   external: [
-    "zod",
     "@opencode-ai/plugin",
     /^node:/,
     "fs",
