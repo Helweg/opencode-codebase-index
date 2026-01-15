@@ -1,8 +1,5 @@
 import { EmbeddingModelInfo } from "../config/schema.js";
 import { ProviderCredentials } from "./detector.js";
-import { readFileSync, writeFileSync } from "fs";
-import * as path from "path";
-import * as os from "os";
 
 export interface EmbeddingResult {
   embedding: number[];
@@ -38,69 +35,17 @@ export function createEmbeddingProvider(
   }
 }
 
-const COPILOT_HEADERS = {
-  "User-Agent": "GitHubCopilotChat/0.35.0",
-  "Editor-Version": "vscode/1.107.0",
-  "Editor-Plugin-Version": "copilot-chat/0.35.0",
-  "Copilot-Integration-Id": "vscode-chat",
-  "Openai-Intent": "conversation-edits",
-};
-
 class GitHubCopilotEmbeddingProvider implements EmbeddingProviderInterface {
-  private accessToken: string;
-  private tokenExpires: number;
-
   constructor(
     private credentials: ProviderCredentials,
     private modelInfo: EmbeddingModelInfo
-  ) {
-    this.accessToken = credentials.accessToken || "";
-    this.tokenExpires = credentials.tokenExpires || 0;
-  }
+  ) {}
 
-  private async ensureValidToken(): Promise<string> {
-    if (this.accessToken && this.tokenExpires > Date.now()) {
-      return this.accessToken;
-    }
-
+  private getToken(): string {
     if (!this.credentials.refreshToken) {
-      throw new Error("No refresh token available for GitHub Copilot");
+      throw new Error("No OAuth token available for GitHub");
     }
-
-    const response = await fetch("https://api.github.com/copilot_internal/v2/token", {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${this.credentials.refreshToken}`,
-        ...COPILOT_HEADERS,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Token refresh failed: ${response.status}`);
-    }
-
-    const tokenData = await response.json() as { token: string; expires_at: number };
-    this.accessToken = tokenData.token;
-    this.tokenExpires = tokenData.expires_at * 1000 - 5 * 60 * 1000;
-
-    this.persistToken(tokenData.token, this.tokenExpires);
-
-    return this.accessToken;
-  }
-
-  private persistToken(token: string, expires: number): void {
-    try {
-      const authPath = path.join(os.homedir(), ".local", "share", "opencode", "auth.json");
-      const authData = JSON.parse(readFileSync(authPath, "utf-8"));
-      
-      if (authData["github-copilot"]) {
-        authData["github-copilot"].access = token;
-        authData["github-copilot"].expires = expires;
-        writeFileSync(authPath, JSON.stringify(authData, null, 2));
-      }
-    } catch {
-      // Ignore token cache write errors
-    }
+    return this.credentials.refreshToken;
   }
 
   async embed(text: string): Promise<EmbeddingResult> {
@@ -112,17 +57,18 @@ class GitHubCopilotEmbeddingProvider implements EmbeddingProviderInterface {
   }
 
   async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
-    const token = await this.ensureValidToken();
+    const token = this.getToken();
 
-    const response = await fetch(`${this.credentials.baseUrl}/embeddings`, {
+    const response = await fetch(`${this.credentials.baseUrl}/inference/embeddings`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        ...COPILOT_HEADERS,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
       },
       body: JSON.stringify({
-        model: this.modelInfo.model,
+        model: `openai/${this.modelInfo.model}`,
         input: texts,
       }),
     });
