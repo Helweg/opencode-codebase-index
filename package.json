@@ -1,6 +1,6 @@
 {
   "name": "opencode-codebase-index",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Semantic codebase indexing and search for OpenCode - find code by meaning, not just keywords",
   "type": "module",
   "main": "dist/index.js",
@@ -75,7 +75,7 @@
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.53.0",
     "vitest": "^4.0.17",
-    "zod": "^4.3.5"
+    "zod": "^3.24.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "^1.0.0"
