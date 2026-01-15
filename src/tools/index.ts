@@ -4,7 +4,6 @@ import { Indexer, IndexStats } from "../indexer/index.js";
 import { ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
 
-// Use Zod from plugin to ensure version compatibility
 const z = tool.schema;
 
 let sharedIndexer: Indexer | null = null;
@@ -24,34 +23,16 @@ export const codebase_search: ToolDefinition = tool({
   description:
     "Search codebase by MEANING, not keywords. Use when you don't know exact function/class names. Returns focused results (5-10 files). For known identifiers like 'validateToken' or 'UserService', use grep instead - it's faster and finds all occurrences. Best for: 'find authentication logic', 'code that handles payments', 'error middleware'.",
   args: {
-    query: z
-      .string()
-      .describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
-    limit: z
-      .number()
-      .optional()
-      .default(10)
-      .describe("Maximum number of results to return"),
-    fileType: z
-      .string()
-      .optional()
-      .describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
-    directory: z
-      .string()
-      .optional()
-      .describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-    chunkType: z
-      .enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"])
-      .optional()
-      .describe("Filter by code chunk type"),
-    contextLines: z
-      .number()
-      .optional()
-      .describe("Number of extra lines to include before/after each match (default: 0)"),
+    query: z.string().describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
+    limit: z.number().optional().default(10).describe("Maximum number of results to return"),
+    fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
+    directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
+    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
+    contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
   },
   async execute(args) {
     const indexer = getIndexer();
-    const results = await indexer.search(args.query, args.limit, {
+    const results = await indexer.search(args.query, args.limit ?? 10, {
       fileType: args.fileType,
       directory: args.directory,
       chunkType: args.chunkType,
@@ -78,21 +59,9 @@ export const index_codebase: ToolDefinition = tool({
   description:
     "Index the codebase for semantic search. Creates vector embeddings of code chunks. Incremental - only re-indexes changed files (~50ms when nothing changed). Run before first codebase_search.",
   args: {
-    force: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe("Force reindex even if already indexed"),
-    estimateOnly: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe("Only show cost estimate without indexing"),
-    verbose: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe("Show detailed info about skipped files and parsing failures"),
+    force: z.boolean().optional().default(false).describe("Force reindex even if already indexed"),
+    estimateOnly: z.boolean().optional().default(false).describe("Only show cost estimate without indexing"),
+    verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
   },
   async execute(args) {
     const indexer = getIndexer();
@@ -107,7 +76,7 @@ export const index_codebase: ToolDefinition = tool({
     }
 
     const stats = await indexer.index();
-    return formatIndexStats(stats, args.verbose);
+    return formatIndexStats(stats, args.verbose ?? false);
   },
 });
 

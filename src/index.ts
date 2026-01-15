@@ -56,26 +56,3 @@ const plugin: Plugin = async ({ directory }) => {
 };
 
 export default plugin;
-
-export { Indexer } from "./indexer/index.js";
-export { FileWatcher } from "./watcher/index.js";
-export * from "./config/schema.js";
-export {
-  VectorStore,
-  parseFile,
-  parseFiles,
-  hashContent,
-  hashFile,
-  createEmbeddingText,
-  createDynamicBatches,
-  generateChunkId,
-  generateChunkHash,
-  type FileInput,
-  type CodeChunk,
-  type ChunkType,
-  type ParsedFile,
-  type SearchResult,
-  type ChunkMetadata,
-} from "./native/index.js";
-export * from "./embeddings/index.js";
-export * from "./utils/index.js";

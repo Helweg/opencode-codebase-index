@@ -1,78 +1,68 @@
-import { z } from "zod";
+// Config schema without zod dependency to avoid version conflicts with OpenCode SDK
 
-export const EmbeddingProviderSchema = z.enum([
-  "auto",
-  "github-copilot",
-  "openai",
-  "google",
-  "ollama",
-]);
+export type EmbeddingProvider = "auto" | "github-copilot" | "openai" | "google" | "ollama";
 
-export type EmbeddingProvider = z.infer<typeof EmbeddingProviderSchema>;
+export type IndexScope = "project" | "global";
 
-export const IndexScopeSchema = z.enum(["project", "global"]);
+export interface IndexingConfig {
+  autoIndex: boolean;
+  watchFiles: boolean;
+  maxFileSize: number;
+  retries: number;
+  retryDelayMs: number;
+}
 
-export type IndexScope = z.infer<typeof IndexScopeSchema>;
+export interface SearchConfig {
+  maxResults: number;
+  minScore: number;
+  includeContext: boolean;
+  hybridWeight: number;
+  contextLines: number;
+}
 
-export const IndexingConfigSchema = z.object({
-  autoIndex: z.boolean().default(false),
-  watchFiles: z.boolean().default(true),
-  maxFileSize: z.number().default(1048576),
-  retries: z.number().default(3),
-  retryDelayMs: z.number().default(1000),
-});
+export interface CodebaseIndexConfig {
+  embeddingProvider: EmbeddingProvider;
+  embeddingModel: string;
+  scope: IndexScope;
+  indexing?: Partial<IndexingConfig>;
+  search?: Partial<SearchConfig>;
+  include: string[];
+  exclude: string[];
+}
 
-export type IndexingConfig = z.infer<typeof IndexingConfigSchema>;
+export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
+  indexing: IndexingConfig;
+  search: SearchConfig;
+};
 
-export const SearchConfigSchema = z.object({
-  maxResults: z.number().default(20),
-  minScore: z.number().default(0.1),
-  includeContext: z.boolean().default(true),
-  hybridWeight: z.number().min(0).max(1).default(0.5),
-  contextLines: z.number().min(0).max(50).default(0),
-});
+const DEFAULT_INCLUDE = [
+  "**/*.{ts,tsx,js,jsx,mjs,cjs}",
+  "**/*.{py,pyi}",
+  "**/*.{go,rs,java,kt,scala}",
+  "**/*.{c,cpp,cc,h,hpp}",
+  "**/*.{rb,php,swift}",
+  "**/*.{vue,svelte,astro}",
+  "**/*.{sql,graphql,proto}",
+  "**/*.{yaml,yml,toml}",
+  "**/*.{md,mdx}",
+  "**/*.{sh,bash,zsh}",
+];
 
-export type SearchConfig = z.infer<typeof SearchConfigSchema>;
-
-export const CodebaseIndexConfigSchema = z.object({
-  embeddingProvider: EmbeddingProviderSchema.default("auto"),
-  embeddingModel: z.string().default("auto"),
-  scope: IndexScopeSchema.default("project"),
-  
-  indexing: IndexingConfigSchema.optional(),
-  search: SearchConfigSchema.optional(),
-
-  include: z.array(z.string()).default([
-    "**/*.{ts,tsx,js,jsx,mjs,cjs}",
-    "**/*.{py,pyi}",
-    "**/*.{go,rs,java,kt,scala}",
-    "**/*.{c,cpp,cc,h,hpp}",
-    "**/*.{rb,php,swift}",
-    "**/*.{vue,svelte,astro}",
-    "**/*.{sql,graphql,proto}",
-    "**/*.{yaml,yml,toml}",
-    "**/*.{md,mdx}",
-    "**/*.{sh,bash,zsh}",
-  ]),
-
-  exclude: z.array(z.string()).default([
-    "**/node_modules/**",
-    "**/.git/**",
-    "**/dist/**",
-    "**/build/**",
-    "**/*.min.js",
-    "**/*.bundle.js",
-    "**/vendor/**",
-    "**/__pycache__/**",
-    "**/target/**",
-    "**/coverage/**",
-    "**/.next/**",
-    "**/.nuxt/**",
-    "**/.opencode/**",
-  ]),
-});
-
-export type CodebaseIndexConfig = z.infer<typeof CodebaseIndexConfigSchema>;
+const DEFAULT_EXCLUDE = [
+  "**/node_modules/**",
+  "**/.git/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/*.min.js",
+  "**/*.bundle.js",
+  "**/vendor/**",
+  "**/__pycache__/**",
+  "**/target/**",
+  "**/coverage/**",
+  "**/.next/**",
+  "**/.nuxt/**",
+  "**/.opencode/**",
+];
 
 function getDefaultIndexingConfig(): IndexingConfig {
   return {
@@ -94,22 +84,63 @@ function getDefaultSearchConfig(): SearchConfig {
   };
 }
 
-export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
-  indexing: IndexingConfig;
-  search: SearchConfig;
-};
+const VALID_PROVIDERS: EmbeddingProvider[] = ["auto", "github-copilot", "openai", "google", "ollama"];
+const VALID_SCOPES: IndexScope[] = ["project", "global"];
+
+function isValidProvider(value: unknown): value is EmbeddingProvider {
+  return typeof value === "string" && VALID_PROVIDERS.includes(value as EmbeddingProvider);
+}
+
+function isValidScope(value: unknown): value is IndexScope {
+  return typeof value === "string" && VALID_SCOPES.includes(value as IndexScope);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string");
+}
 
 export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
-  const parsed = CodebaseIndexConfigSchema.parse(raw ?? {});
+  const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  
+  const defaultIndexing = getDefaultIndexingConfig();
+  const defaultSearch = getDefaultSearchConfig();
+  const rawIndexing = (input.indexing && typeof input.indexing === "object" ? input.indexing : {}) as Record<string, unknown>;
+  const indexing: IndexingConfig = {
+    autoIndex: typeof rawIndexing.autoIndex === "boolean" ? rawIndexing.autoIndex : defaultIndexing.autoIndex,
+    watchFiles: typeof rawIndexing.watchFiles === "boolean" ? rawIndexing.watchFiles : defaultIndexing.watchFiles,
+    maxFileSize: typeof rawIndexing.maxFileSize === "number" ? rawIndexing.maxFileSize : defaultIndexing.maxFileSize,
+    retries: typeof rawIndexing.retries === "number" ? rawIndexing.retries : defaultIndexing.retries,
+    retryDelayMs: typeof rawIndexing.retryDelayMs === "number" ? rawIndexing.retryDelayMs : defaultIndexing.retryDelayMs,
+  };
+  
+  const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;
+  const search: SearchConfig = {
+    maxResults: typeof rawSearch.maxResults === "number" ? rawSearch.maxResults : defaultSearch.maxResults,
+    minScore: typeof rawSearch.minScore === "number" ? rawSearch.minScore : defaultSearch.minScore,
+    includeContext: typeof rawSearch.includeContext === "boolean" ? rawSearch.includeContext : defaultSearch.includeContext,
+    hybridWeight: typeof rawSearch.hybridWeight === "number" ? Math.min(1, Math.max(0, rawSearch.hybridWeight)) : defaultSearch.hybridWeight,
+    contextLines: typeof rawSearch.contextLines === "number" ? Math.min(50, Math.max(0, rawSearch.contextLines)) : defaultSearch.contextLines,
+  };
+  
   return {
-    ...parsed,
-    indexing: parsed.indexing ?? getDefaultIndexingConfig(),
-    search: parsed.search ?? getDefaultSearchConfig(),
+    embeddingProvider: isValidProvider(input.embeddingProvider) ? input.embeddingProvider : "auto",
+    embeddingModel: typeof input.embeddingModel === "string" ? input.embeddingModel : "auto",
+    scope: isValidScope(input.scope) ? input.scope : "project",
+    include: isStringArray(input.include) ? input.include : DEFAULT_INCLUDE,
+    exclude: isStringArray(input.exclude) ? input.exclude : DEFAULT_EXCLUDE,
+    indexing,
+    search,
   };
 }
 
 export function getDefaultConfig(): CodebaseIndexConfig {
-  return CodebaseIndexConfigSchema.parse({});
+  return {
+    embeddingProvider: "auto",
+    embeddingModel: "auto",
+    scope: "project",
+    include: DEFAULT_INCLUDE,
+    exclude: DEFAULT_EXCLUDE,
+  };
 }
 
 export interface EmbeddingModelInfo {
@@ -176,6 +207,6 @@ export function getDefaultModelForProvider(provider: EmbeddingProvider): Embeddi
     case "ollama":
       return EMBEDDING_MODELS["ollama/nomic-embed-text"];
     default:
-      return EMBEDDING_MODELS["github/text-embedding-3-small"];
+      return EMBEDDING_MODELS["github-copilot/text-embedding-3-small"];
   }
 }
