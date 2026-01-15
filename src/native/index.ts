@@ -23,11 +23,21 @@ function getNativeBinding() {
     throw new Error(`Unsupported platform: ${platform}-${arch}`);
   }
 
-  // Get the directory of this module - works in both ESM and bundled contexts
-  const currentFileUrl = typeof import.meta !== 'undefined' ? import.meta.url : __filename;
-  const currentDir = typeof currentFileUrl === 'string' && currentFileUrl.startsWith('file:') 
-    ? path.dirname(fileURLToPath(currentFileUrl))
-    : __dirname;
+  // Determine the current directory - handle ESM, CJS, and bundled contexts
+  let currentDir: string;
+  
+  // Check for ESM context with valid import.meta.url
+  if (typeof import.meta !== 'undefined' && import.meta.url) {
+    currentDir = path.dirname(fileURLToPath(import.meta.url));
+  } 
+  // Fallback to __dirname for CJS/bundled contexts
+  else if (typeof __dirname !== 'undefined') {
+    currentDir = __dirname;
+  }
+  // Last resort: use process.cwd() - shouldn't normally hit this
+  else {
+    currentDir = process.cwd();
+  }
   
   // The native module is in the 'native' folder at package root
   // From dist/index.js, we go up one level to package root, then into native/
@@ -38,8 +48,8 @@ function getNativeBinding() {
     : path.resolve(currentDir, '..');
   const nativePath = path.join(packageRoot, 'native', bindingName);
   
-  // Use createRequire to load .node files in ESM context
-  const require = createRequire(currentFileUrl);
+  // Load the native module - use standard require for .node files
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require(nativePath);
 }
 
