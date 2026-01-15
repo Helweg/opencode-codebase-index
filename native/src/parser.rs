@@ -8,6 +8,7 @@ use tree_sitter::{Parser, Tree};
 const MIN_CHUNK_SIZE: usize = 50;
 const MAX_CHUNK_SIZE: usize = 2000;
 const TARGET_CHUNK_SIZE: usize = 500;
+const OVERLAP_LINES: usize = 3; // Lines to overlap between consecutive chunks
 
 pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChunk>> {
     let ext = Path::new(file_path)
@@ -202,6 +203,11 @@ fn split_large_chunk(chunk: CodeChunk, chunks: &mut Vec<CodeChunk>) {
     }
 
     let lines_per_chunk = TARGET_CHUNK_SIZE / 40;
+    let step_size = if lines_per_chunk > OVERLAP_LINES {
+        lines_per_chunk - OVERLAP_LINES
+    } else {
+        lines_per_chunk
+    };
     let mut start = 0;
 
     while start < total_lines {
@@ -219,7 +225,10 @@ fn split_large_chunk(chunk: CodeChunk, chunks: &mut Vec<CodeChunk>) {
             });
         }
 
-        start = end;
+        if end >= total_lines {
+            break;
+        }
+        start += step_size;
     }
 }
 
@@ -269,6 +278,11 @@ fn chunk_by_lines(content: &str, language: &Language) -> Vec<CodeChunk> {
     }
 
     let lines_per_chunk = 30;
+    let step_size = if lines_per_chunk > OVERLAP_LINES {
+        lines_per_chunk - OVERLAP_LINES
+    } else {
+        lines_per_chunk
+    };
     let mut chunks = Vec::new();
     let mut start = 0;
 
@@ -287,7 +301,10 @@ fn chunk_by_lines(content: &str, language: &Language) -> Vec<CodeChunk> {
             });
         }
 
-        start = end;
+        if end >= total_lines {
+            break;
+        }
+        start += step_size;
     }
 
     chunks
@@ -337,5 +354,26 @@ class Greeter:
 
         let chunks = parse_file_internal("test.py", content).unwrap();
         assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_overlap() {
+        let lines: Vec<String> = (0..100).map(|i| format!("line {} content here", i)).collect();
+        let content = lines.join("\n");
+        
+        let chunks = chunk_by_lines(&content, &Language::Unknown);
+        
+        assert!(chunks.len() >= 2, "Should have multiple chunks");
+        
+        if chunks.len() >= 2 {
+            let first_end = chunks[0].end_line;
+            let second_start = chunks[1].start_line;
+            assert!(
+                second_start <= first_end,
+                "Chunks should overlap: first ends at {}, second starts at {}",
+                first_end,
+                second_start
+            );
+        }
     }
 }
