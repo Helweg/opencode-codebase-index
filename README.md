@@ -98,25 +98,31 @@ graph TD
     subgraph Indexing
     A[Source Code] -->|Tree-sitter| B[Semantic Chunks]
     B -->|Embedding Model| C[Vectors]
-    C -->|uSearch| D[(Local Vector Store)]
+    C -->|uSearch| D[(Vector Store)]
+    B -->|BM25| E[(Inverted Index)]
     end
 
     subgraph Searching
     Q[User Query] -->|Embedding Model| V[Query Vector]
     V -->|Cosine Similarity| D
-    D --> R[Ranked Results]
+    Q -->|BM25| E
+    D --> F[Hybrid Fusion]
+    E --> F
+    F --> R[Ranked Results]
     end
 ```
 
-1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces).
-2. **Embedding**: These blocks are converted into vector representations using your configured AI provider.
-3. **Storage**: Vectors are stored in a high-performance local index using `usearch`.
-4. **Search**: Your natural language queries are matched against this index to find the most semantically relevant code.
+1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
+2. **Chunking**: Large blocks are split with overlapping windows to preserve context across chunk boundaries.
+3. **Embedding**: These blocks are converted into vector representations using your configured AI provider.
+4. **Storage**: Vectors are stored in a high-performance local index using `usearch` with F16 quantization for 50% memory savings.
+5. **Hybrid Search**: Combines semantic similarity (vectors) with BM25 keyword matching for best results.
 
 **Performance characteristics:**
 - **Incremental indexing**: ~50ms check time — only re-embeds changed files
-- **Smart chunking**: Understands code structure to keep functions whole
+- **Smart chunking**: Understands code structure to keep functions whole, with overlap for context
 - **Native speed**: Core logic written in Rust for maximum performance
+- **Memory efficient**: F16 vector quantization reduces index size by 50%
 
 ## 🧰 Tools Available
 
@@ -140,7 +146,7 @@ The plugin exposes these tools to the OpenCode agent:
 ### `index_codebase`
 Manually trigger indexing.
 - **Use for**: Forcing a re-index or checking stats.
-- **Parameters**: `force` (rebuild all), `estimateOnly` (check costs).
+- **Parameters**: `force` (rebuild all), `estimateOnly` (check costs), `verbose` (show skipped files and parse failures).
 
 ### `index_status`
 Checks if the index is ready and healthy.
@@ -174,7 +180,9 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
   "indexing": {
     "autoIndex": false,
     "watchFiles": true,
-    "maxFileSize": 1048576
+    "maxFileSize": 1048576,
+    "maxChunksPerFile": 100,
+    "semanticOnly": false
   },
   "search": {
     "maxResults": 20,
@@ -195,6 +203,10 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 | `autoIndex` | `false` | Automatically index on plugin load |
 | `watchFiles` | `true` | Re-index when files change |
 | `maxFileSize` | `1048576` | Skip files larger than this (bytes). Default: 1MB |
+| `maxChunksPerFile` | `100` | Maximum chunks to index per file (controls token costs for large files) |
+| `semanticOnly` | `false` | When `true`, only index semantic nodes (functions, classes) and skip generic blocks |
+| `retries` | `3` | Number of retry attempts for failed embedding API calls |
+| `retryDelayMs` | `1000` | Delay between retries in milliseconds |
 | **search** | | |
 | `maxResults` | `20` | Maximum results to return |
 | `minScore` | `0.1` | Minimum similarity score (0-1). Lower = more results |
@@ -275,8 +287,9 @@ CI will automatically run tests and type checking on your PR.
 ### Native Module
 
 The Rust native module handles performance-critical operations:
-- **tree-sitter**: Language-aware code parsing
-- **usearch**: High-performance vector similarity search
+- **tree-sitter**: Language-aware code parsing with JSDoc/docstring extraction
+- **usearch**: High-performance vector similarity search with F16 quantization
+- **BM25 inverted index**: Fast keyword search for hybrid retrieval
 - **xxhash**: Fast content hashing for change detection
 
 Rebuild with: `npm run build:native` (requires Rust toolchain)
