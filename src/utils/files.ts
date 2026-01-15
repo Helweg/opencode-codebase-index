@@ -1,5 +1,5 @@
 import ignore, { Ignore } from "ignore";
-import * as fs from "fs";
+import { existsSync, readFileSync, promises as fsPromises } from "fs";
 import * as path from "path";
 
 export interface SkippedFile {
@@ -32,8 +32,8 @@ export function createIgnoreFilter(projectRoot: string): Ignore {
   ig.add(defaultIgnores);
 
   const gitignorePath = path.join(projectRoot, ".gitignore");
-  if (fs.existsSync(gitignorePath)) {
-    const gitignoreContent = fs.readFileSync(gitignorePath, "utf-8");
+  if (existsSync(gitignorePath)) {
+    const gitignoreContent = readFileSync(gitignorePath, "utf-8");
     ig.add(gitignoreContent);
   }
 
@@ -89,7 +89,7 @@ export async function* walkDirectory(
   maxFileSize: number,
   skipped: SkippedFile[]
 ): AsyncGenerator<{ path: string; size: number }> {
-  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  const entries = await fsPromises.readdir(dir, { withFileTypes: true });
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
@@ -113,7 +113,7 @@ export async function* walkDirectory(
         skipped
       );
     } else if (entry.isFile()) {
-      const stat = await fs.promises.stat(fullPath);
+      const stat = await fsPromises.stat(fullPath);
 
       if (stat.size > maxFileSize) {
         skipped.push({ path: relativePath, reason: "too_large" });

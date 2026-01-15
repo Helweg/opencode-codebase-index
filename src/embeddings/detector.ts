@@ -1,5 +1,5 @@
 import { EmbeddingProvider, getDefaultModelForProvider, EmbeddingModelInfo } from "../config/schema.js";
-import * as fs from "fs";
+import { existsSync, readFileSync } from "fs";
 import * as path from "path";
 import * as os from "os";
 
@@ -47,8 +47,8 @@ function getOpenCodeAuthPath(): string {
 function loadOpenCodeAuth(): Record<string, OpenCodeAuth> {
   const authPath = getOpenCodeAuthPath();
   try {
-    if (fs.existsSync(authPath)) {
-      return JSON.parse(fs.readFileSync(authPath, "utf-8"));
+    if (existsSync(authPath)) {
+      return JSON.parse(readFileSync(authPath, "utf-8"));
     }
   } catch {
     // Ignore auth file read errors

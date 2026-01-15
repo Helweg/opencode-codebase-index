@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import * as fs from "fs";
+import { existsSync, readFileSync } from "fs";
 import * as path from "path";
 
 import { parseConfig } from "./config/schema.js";
@@ -16,8 +16,8 @@ import {
 function loadPluginConfig(projectRoot: string): unknown {
   const configPath = path.join(projectRoot, ".opencode", "codebase-index.json");
   try {
-    if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, "utf-8");
+    if (existsSync(configPath)) {
+      const content = readFileSync(configPath, "utf-8");
       return JSON.parse(content);
     }
   } catch {

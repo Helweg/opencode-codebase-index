@@ -1,4 +1,4 @@
-import * as fs from "fs";
+import { existsSync, readFileSync, writeFileSync, promises as fsPromises } from "fs";
 import * as path from "path";
 import PQueue from "p-queue";
 import pRetry from "p-retry";
@@ -82,8 +82,8 @@ export class Indexer {
 
   private loadFileHashCache(): void {
     try {
-      if (fs.existsSync(this.fileHashCachePath)) {
-        const data = fs.readFileSync(this.fileHashCachePath, "utf-8");
+      if (existsSync(this.fileHashCachePath)) {
+        const data = readFileSync(this.fileHashCachePath, "utf-8");
         const parsed = JSON.parse(data);
         this.fileHashCache = new Map(Object.entries(parsed));
       }
@@ -97,7 +97,7 @@ export class Indexer {
     for (const [k, v] of this.fileHashCache) {
       obj[k] = v;
     }
-    fs.writeFileSync(this.fileHashCachePath, JSON.stringify(obj));
+    writeFileSync(this.fileHashCachePath, JSON.stringify(obj));
   }
 
   async initialize(): Promise<void> {
@@ -113,14 +113,14 @@ export class Indexer {
       this.detectedProvider.modelInfo
     );
 
-    await fs.promises.mkdir(this.indexPath, { recursive: true });
+    await fsPromises.mkdir(this.indexPath, { recursive: true });
 
     const dimensions = this.detectedProvider.modelInfo.dimensions;
     const storePath = path.join(this.indexPath, "vectors");
     this.store = new VectorStore(storePath, dimensions);
 
     const indexFilePath = path.join(this.indexPath, "vectors.usearch");
-    if (fs.existsSync(indexFilePath)) {
+    if (existsSync(indexFilePath)) {
       this.store.load();
     }
 
@@ -206,7 +206,7 @@ export class Indexer {
       if (this.fileHashCache.get(f.path) === currentHash) {
         unchangedFilePaths.add(f.path);
       } else {
-        const content = await fs.promises.readFile(f.path, "utf-8");
+        const content = await fsPromises.readFile(f.path, "utf-8");
         changedFiles.push({ path: f.path, content, hash: currentHash });
       }
     }
@@ -473,7 +473,7 @@ export class Indexer {
         
         if (this.config.search.includeContext) {
           try {
-            const fileContent = await fs.promises.readFile(
+            const fileContent = await fsPromises.readFile(
               r.metadata.filePath,
               "utf-8"
             );
@@ -614,7 +614,7 @@ export class Indexer {
     let removedCount = 0;
 
     for (const [filePath, chunkKeys] of filePathsToChunkKeys) {
-      if (!fs.existsSync(filePath)) {
+      if (!existsSync(filePath)) {
         for (const key of chunkKeys) {
           store.remove(key);
           invertedIndex.removeChunk(key);

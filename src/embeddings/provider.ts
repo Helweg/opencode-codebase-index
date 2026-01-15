@@ -1,6 +1,6 @@
 import { EmbeddingModelInfo } from "../config/schema.js";
 import { ProviderCredentials } from "./detector.js";
-import * as fs from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import * as path from "path";
 import * as os from "os";
 
@@ -91,12 +91,12 @@ class GitHubCopilotEmbeddingProvider implements EmbeddingProviderInterface {
   private persistToken(token: string, expires: number): void {
     try {
       const authPath = path.join(os.homedir(), ".local", "share", "opencode", "auth.json");
-      const authData = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      const authData = JSON.parse(readFileSync(authPath, "utf-8"));
       
       if (authData["github-copilot"]) {
         authData["github-copilot"].access = token;
         authData["github-copilot"].expires = expires;
-        fs.writeFileSync(authPath, JSON.stringify(authData, null, 2));
+        writeFileSync(authPath, JSON.stringify(authData, null, 2));
       }
     } catch {
       // Ignore token cache write errors

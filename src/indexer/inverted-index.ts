@@ -1,4 +1,4 @@
-import * as fs from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import * as path from "path";
 
 interface InvertedIndexData {
@@ -18,12 +18,12 @@ export class InvertedIndex {
   }
 
   load(): void {
-    if (!fs.existsSync(this.indexPath)) {
+    if (!existsSync(this.indexPath)) {
       return;
     }
 
     try {
-      const content = fs.readFileSync(this.indexPath, "utf-8");
+      const content = readFileSync(this.indexPath, "utf-8");
       const data = JSON.parse(content) as InvertedIndexData;
 
       for (const [term, chunkIds] of Object.entries(data.termToChunks)) {
@@ -59,7 +59,7 @@ export class InvertedIndex {
       data.chunkTokens[chunkId] = Object.fromEntries(tokens);
     }
 
-    fs.writeFileSync(this.indexPath, JSON.stringify(data));
+    writeFileSync(this.indexPath, JSON.stringify(data));
   }
 
   addChunk(chunkId: string, content: string): void {
