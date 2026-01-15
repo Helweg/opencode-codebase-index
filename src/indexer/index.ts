@@ -34,6 +34,7 @@ export interface IndexStats {
   removedChunks: number;
   skippedFiles: SkippedFile[];
   parseFailures: string[];
+  failedBatchesPath?: string;
 }
 
 export interface IndexProgress {
@@ -54,6 +55,13 @@ interface PendingChunk {
   metadata: ChunkMetadata;
 }
 
+interface FailedBatch {
+  chunks: PendingChunk[];
+  error: string;
+  attemptCount: number;
+  lastAttempt: string;
+}
+
 export class Indexer {
   private config: ParsedCodebaseIndexConfig;
   private projectRoot: string;
@@ -64,12 +72,14 @@ export class Indexer {
   private detectedProvider: DetectedProvider | null = null;
   private fileHashCache: Map<string, string> = new Map();
   private fileHashCachePath: string = "";
+  private failedBatchesPath: string = "";
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
     this.config = config;
     this.indexPath = this.getIndexPath();
     this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
+    this.failedBatchesPath = path.join(this.indexPath, "failed-batches.json");
   }
 
   private getIndexPath(): string {
@@ -98,6 +108,39 @@ export class Indexer {
       obj[k] = v;
     }
     writeFileSync(this.fileHashCachePath, JSON.stringify(obj));
+  }
+
+  private loadFailedBatches(): FailedBatch[] {
+    try {
+      if (existsSync(this.failedBatchesPath)) {
+        const data = readFileSync(this.failedBatchesPath, "utf-8");
+        return JSON.parse(data) as FailedBatch[];
+      }
+    } catch {
+      return [];
+    }
+    return [];
+  }
+
+  private saveFailedBatches(batches: FailedBatch[]): void {
+    if (batches.length === 0) {
+      if (existsSync(this.failedBatchesPath)) {
+        fsPromises.unlink(this.failedBatchesPath).catch(() => {});
+      }
+      return;
+    }
+    writeFileSync(this.failedBatchesPath, JSON.stringify(batches, null, 2));
+  }
+
+  private addFailedBatch(batch: PendingChunk[], error: string): void {
+    const existing = this.loadFailedBatches();
+    existing.push({
+      chunks: batch,
+      error,
+      attemptCount: 1,
+      lastAttempt: new Date().toISOString(),
+    });
+    this.saveFailedBatches(existing);
   }
 
   async initialize(): Promise<void> {
@@ -375,6 +418,7 @@ export class Indexer {
           });
         } catch (error) {
           stats.failedChunks += batch.length;
+          this.addFailedBatch(batch, String(error));
           console.error(`Failed to embed batch after retries: ${error}`);
         }
       });
@@ -396,6 +440,10 @@ export class Indexer {
     this.saveFileHashCache();
 
     stats.durationMs = Date.now() - startTime;
+    
+    if (stats.failedChunks > 0) {
+      stats.failedBatchesPath = this.failedBatchesPath;
+    }
 
     onProgress?.({
       phase: "complete",
@@ -631,5 +679,69 @@ export class Indexer {
     }
 
     return { removed: removedCount, filePaths: removedFilePaths };
+  }
+
+  async retryFailedBatches(): Promise<{ succeeded: number; failed: number; remaining: number }> {
+    const { store, provider, invertedIndex } = await this.ensureInitialized();
+    
+    const failedBatches = this.loadFailedBatches();
+    if (failedBatches.length === 0) {
+      return { succeeded: 0, failed: 0, remaining: 0 };
+    }
+
+    let succeeded = 0;
+    let failed = 0;
+    const stillFailing: FailedBatch[] = [];
+
+    for (const batch of failedBatches) {
+      try {
+        const result = await pRetry(
+          async () => {
+            const texts = batch.chunks.map((c) => c.text);
+            return provider.embedBatch(texts);
+          },
+          {
+            retries: this.config.indexing.retries,
+            minTimeout: this.config.indexing.retryDelayMs,
+          }
+        );
+
+        const items = batch.chunks.map((chunk, idx) => ({
+          id: chunk.id,
+          vector: result.embeddings[idx],
+          metadata: chunk.metadata,
+        }));
+
+        store.addBatch(items);
+
+        for (const chunk of batch.chunks) {
+          invertedIndex.removeChunk(chunk.id);
+          invertedIndex.addChunk(chunk.id, chunk.content);
+        }
+
+        succeeded += batch.chunks.length;
+      } catch (error) {
+        failed += batch.chunks.length;
+        stillFailing.push({
+          ...batch,
+          attemptCount: batch.attemptCount + 1,
+          lastAttempt: new Date().toISOString(),
+          error: String(error),
+        });
+      }
+    }
+
+    this.saveFailedBatches(stillFailing);
+    
+    if (succeeded > 0) {
+      store.save();
+      invertedIndex.save();
+    }
+
+    return { succeeded, failed, remaining: stillFailing.length };
+  }
+
+  getFailedBatchesCount(): number {
+    return this.loadFailedBatches().length;
   }
 }
