@@ -89,16 +89,28 @@ fn extract_semantic_nodes(
         let is_semantic = is_semantic_node(node_type, language);
 
         if is_semantic {
-            let start_byte = node.start_byte();
+            let mut start_byte = node.start_byte();
             let end_byte = node.end_byte();
+            
+            let leading_comment = find_leading_comment(&node, source, language);
+            if let Some((comment_start, _comment_text)) = &leading_comment {
+                start_byte = *comment_start;
+            }
+            
             let content = &source[start_byte..end_byte];
 
             if content.len() >= MIN_CHUNK_SIZE {
                 let name = extract_name(cursor, source);
 
+                let start_line = if leading_comment.is_some() {
+                    source[..start_byte].matches('\n').count() as u32 + 1
+                } else {
+                    node.start_position().row as u32 + 1
+                };
+
                 let chunk = CodeChunk {
                     content: content.to_string(),
-                    start_line: node.start_position().row as u32 + 1,
+                    start_line,
                     end_line: node.end_position().row as u32 + 1,
                     chunk_type: node_type.to_string(),
                     name,
@@ -121,6 +133,51 @@ fn extract_semantic_nodes(
         if !cursor.goto_next_sibling() {
             break;
         }
+    }
+}
+
+fn find_leading_comment(node: &tree_sitter::Node, source: &str, language: &Language) -> Option<(usize, String)> {
+    let mut prev = node.prev_sibling();
+    let mut comments = Vec::new();
+    
+    while let Some(sibling) = prev {
+        if is_comment_node(sibling.kind(), language) {
+            let start = sibling.start_byte();
+            let end = sibling.end_byte();
+            let text = source[start..end].to_string();
+            comments.push((start, text));
+            prev = sibling.prev_sibling();
+        } else {
+            break;
+        }
+    }
+    
+    if comments.is_empty() {
+        return None;
+    }
+    
+    comments.reverse();
+    let first_start = comments.first().map(|(s, _)| *s)?;
+    let combined: String = comments.into_iter().map(|(_, t)| t).collect::<Vec<_>>().join("\n");
+    
+    Some((first_start, combined))
+}
+
+fn is_comment_node(node_type: &str, language: &Language) -> bool {
+    match language {
+        Language::TypeScript | Language::TypeScriptTsx | Language::JavaScript | Language::JavaScriptJsx => {
+            matches!(node_type, "comment")
+        }
+        Language::Python => {
+            matches!(node_type, "comment")
+        }
+        Language::Rust => {
+            matches!(node_type, "line_comment" | "block_comment")
+        }
+        Language::Go => {
+            matches!(node_type, "comment")
+        }
+        _ => false,
     }
 }
 
@@ -375,5 +432,55 @@ class Greeter:
                 second_start
             );
         }
+    }
+
+    #[test]
+    fn test_jsdoc_extraction() {
+        let content = r#"
+/**
+ * Validates a user's email address format.
+ * @param email The email to validate
+ * @returns true if valid, false otherwise
+ */
+function validateEmail(email: string): boolean {
+    return email.includes('@') && email.includes('.');
+}
+"#;
+
+        let chunks = parse_file_internal("test.ts", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have at least one chunk");
+        
+        let chunk = &chunks[0];
+        assert!(
+            chunk.content.contains("Validates a user's email"),
+            "Chunk should include JSDoc comment: {}",
+            chunk.content
+        );
+        assert!(
+            chunk.content.contains("function validateEmail"),
+            "Chunk should include function: {}",
+            chunk.content
+        );
+    }
+
+    #[test]
+    fn test_rust_doc_comment_extraction() {
+        let content = r#"
+/// Calculates the factorial of a number.
+/// Returns None if the input would cause overflow.
+fn factorial(n: u64) -> Option<u64> {
+    if n <= 1 { Some(1) } else { n.checked_mul(factorial(n - 1)?) }
+}
+"#;
+
+        let chunks = parse_file_internal("test.rs", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have at least one chunk");
+        
+        let chunk = &chunks[0];
+        assert!(
+            chunk.content.contains("Calculates the factorial"),
+            "Chunk should include doc comment: {}",
+            chunk.content
+        );
     }
 }
