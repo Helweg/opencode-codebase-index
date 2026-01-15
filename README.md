@@ -70,7 +70,7 @@ src/api/checkout.ts:89      (Route handler for /pay)
 
 ## 📊 Real-World Comparison
 
-We tested the same query on the [Express.js](https://github.com/expressjs/express) codebase (169 files):
+We tested the same query on the [Express.js](https://github.com/expressjs/express) codebase (169 files) using [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) (Sisyphus agent):
 
 > *"find the middleware that handles routing"*
 
