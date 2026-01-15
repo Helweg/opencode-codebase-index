@@ -38,7 +38,7 @@ impl VectorStoreInner {
         let options = IndexOptions {
             dimensions,
             metric: MetricKind::Cos,
-            quantization: ScalarKind::F32,
+            quantization: ScalarKind::F16,
             connectivity: 16,
             expansion_add: 128,
             expansion_search: 64,
@@ -193,7 +193,7 @@ impl VectorStoreInner {
         let options = IndexOptions {
             dimensions: self.dimensions,
             metric: MetricKind::Cos,
-            quantization: ScalarKind::F32,
+            quantization: ScalarKind::F16,
             connectivity: 16,
             expansion_add: 128,
             expansion_search: 64,
