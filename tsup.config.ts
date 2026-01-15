@@ -9,9 +9,16 @@ export default defineConfig({
   splitting: false,
   treeshake: false,
   bundle: true,
-  noExternal: [/.*/],
+  noExternal: [
+    "chokidar",
+    "ignore",
+    "p-queue",
+    "p-retry",
+    "tiktoken",
+  ],
   external: [
     "zod",
+    "@opencode-ai/plugin",
     /^node:/,
     "fs",
     "fs/promises",
