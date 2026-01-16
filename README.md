@@ -155,12 +155,7 @@ Maintenance tool to remove stale entries from deleted files.
 
 ## 🎮 Slash Commands
 
-For easier access, you can add slash commands to your project.
-
-Copy the commands:
-```bash
-cp -r node_modules/opencode-codebase-index/commands/* .opencode/command/
-```
+The plugin automatically registers these slash commands:
 
 | Command | Description |
 | ------- | ----------- |
@@ -238,19 +233,16 @@ Be aware of these characteristics:
    npm run build
    ```
 
-2. **Deploy to OpenCode Cache**:
-   ```bash
-   # Deploy script
-   rm -rf ~/.cache/opencode/node_modules/opencode-codebase-index
-   mkdir -p ~/.cache/opencode/node_modules/opencode-codebase-index
-   cp -R dist native commands skill package.json ~/.cache/opencode/node_modules/opencode-codebase-index/
+2. **Register in Test Project** (use `file://` URL in `opencode.json`):
+   ```json
+   {
+     "plugin": [
+       "file:///path/to/opencode-codebase-index"
+     ]
+   }
    ```
-
-3. **Register in Test Project**:
-   ```bash
-   mkdir -p .opencode/plugin
-   echo 'export { default } from "$HOME/.cache/opencode/node_modules/opencode-codebase-index/dist/index.js"' > .opencode/plugin/codebase-index.ts
-   ```
+   
+   This loads directly from your source directory, so changes take effect after rebuilding.
 
 ## 🤝 Contributing
 
