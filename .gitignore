@@ -50,3 +50,6 @@ opencode-codebase-index
 # Test files
 test-*.cjs
 test-*.mjs
+
+# Benchmark results
+benchmark-results/
