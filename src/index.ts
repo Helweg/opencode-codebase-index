@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { existsSync, readFileSync } from "fs";
 import * as path from "path";
+import * as os from "os";
 
 import { parseConfig } from "./config/schema.js";
 import { Indexer } from "./indexer/index.js";
@@ -13,16 +14,28 @@ import {
   initializeTools,
 } from "./tools/index.js";
 
-function loadPluginConfig(projectRoot: string): unknown {
-  const configPath = path.join(projectRoot, ".opencode", "codebase-index.json");
+function loadJsonFile(filePath: string): unknown {
   try {
-    if (existsSync(configPath)) {
-      const content = readFileSync(configPath, "utf-8");
+    if (existsSync(filePath)) {
+      const content = readFileSync(filePath, "utf-8");
       return JSON.parse(content);
     }
-  } catch {
-    // Ignore config file read errors, use defaults
+  } catch { /* ignore */ }
+  return null;
+}
+
+function loadPluginConfig(projectRoot: string): unknown {
+  const projectConfig = loadJsonFile(path.join(projectRoot, ".opencode", "codebase-index.json"));
+  if (projectConfig) {
+    return projectConfig;
   }
+
+  const globalConfigPath = path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
+  const globalConfig = loadJsonFile(globalConfigPath);
+  if (globalConfig) {
+    return globalConfig;
+  }
+
   return {};
 }
 
