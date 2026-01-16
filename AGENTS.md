@@ -1,74 +1,133 @@
 # AGENTS.md - AI Agent Guidelines for opencode-codebase-index
 
+**Generated:** 2026-01-16 | **Commit:** d02b915 | **Branch:** main
+
 Semantic codebase indexing plugin for OpenCode. Hybrid TypeScript/Rust architecture:
-- **TypeScript** (`src/`): Plugin logic, embedding providers, tools
-- **Rust** (`native/`): Tree-sitter parsing, vector search (usearch), SQLite storage
+- **TypeScript** (`src/`): Plugin logic, embedding providers, OpenCode tools
+- **Rust** (`native/`): Tree-sitter parsing, usearch vectors, SQLite storage, BM25 inverted index
 
-## Build/Test/Lint Commands
-
-```bash
-npm run build          # Build both TypeScript and Rust native module
-npm run build:ts       # Build TypeScript only (via tsup)
-npm run build:native   # Build Rust native module only
-
-npm run test:run       # Run all tests once (CI mode)
-npm test               # Run tests in watch mode
-
-npm run lint           # ESLint on src/
-npm run typecheck      # TypeScript type checking (tsc --noEmit)
-```
-
-### Running a Single Test
+## Build/Test/Lint
 
 ```bash
-npx vitest run tests/files.test.ts           # Run specific test file
-npx vitest run -t "parseFile"                # Run tests matching pattern
-npx vitest run tests/native.test.ts --reporter=verbose
+npm run build          # Build TS + Rust native module
+npm run build:ts       # TypeScript only (tsup)
+npm run build:native   # Rust only (cargo + napi)
+
+npm run test:run       # All tests once
+npm test               # Watch mode
+
+npm run lint           # ESLint
+npm run typecheck      # tsc --noEmit
 ```
 
-### Native Module Build (requires Rust)
+### Single Test
+```bash
+npx vitest run tests/files.test.ts
+npx vitest run -t "parseFile"
+```
 
+### Native Module (requires Rust)
 ```bash
 cd native && cargo build --release && napi build --release --platform
 ```
 
-## Code Style Guidelines
+## File Structure
 
-### Import Organization
+```
+src/
+├── index.ts              # Plugin entry: exports tools + slash commands
+├── config/               # Config schema (Zod) + parsing
+├── embeddings/           # Provider detection (auto/github/openai/google/ollama)
+├── indexer/              # Core: Indexer class, delta tracking
+├── git/                  # Branch detection from .git/HEAD
+├── tools/                # OpenCode tool definitions (codebase_search, index_*)
+├── utils/                # File collection, cost estimation, helpers
+├── native/               # TS wrapper for Rust bindings
+└── watcher/              # Chokidar file + git branch watcher
 
-Group imports in this order, separated by blank lines:
-1. Type-only imports (`import type { ... }`)
-2. External packages and Node.js built-ins
-3. Internal modules
+native/src/
+├── lib.rs                # NAPI exports: parse_file, VectorStore, Database, InvertedIndex
+├── parser.rs             # Tree-sitter parsing (TS, JS, Python, Rust, Go, JSON)
+├── chunker.rs            # Semantic chunking with overlap
+├── store.rs              # usearch vector store (F16 quantization)
+├── db.rs                 # SQLite: embeddings, chunks, branch catalog
+├── inverted_index.rs     # BM25 keyword search
+├── hasher.rs             # xxhash content hashing
+└── types.rs              # Shared types
 
-**Always use `.js` extension** for internal imports (ESM requirement):
-```typescript
-import { Indexer } from "./indexer/index.js";  // Correct
-import { Indexer } from "./indexer/index";     // Wrong - runtime error
+tests/                    # Vitest tests (30s timeout for native ops)
+commands/                 # Slash command definitions (/search, /find, /index)
+skill/                    # OpenCode skill guidance
 ```
 
-**Use namespace imports** for Node.js built-ins:
+## WHERE TO LOOK
+
+| Task | Location |
+|------|----------|
+| Add embedding provider | `src/embeddings/detector.ts` + `provider.ts` |
+| Modify indexing logic | `src/indexer/index.ts` (Indexer class) |
+| Add OpenCode tool | `src/tools/index.ts` |
+| Change parsing behavior | `native/src/parser.rs` |
+| Modify vector storage | `native/src/store.rs` |
+| Add database operation | `native/src/db.rs` + expose in `lib.rs` |
+| Add slash command | `commands/` + register in `src/index.ts` config() |
+
+## CODE MAP
+
+### TypeScript Exports (`src/index.ts`)
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `default` | Plugin | Main entry: returns tools + config callback |
+| `codebase_search` | Tool | Semantic search by meaning |
+| `index_codebase` | Tool | Trigger indexing (force/estimate/verbose) |
+| `index_status` | Tool | Check index health |
+| `index_health_check` | Tool | GC orphaned embeddings/chunks |
+
+### Rust NAPI Exports (`native/src/lib.rs`)
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `parse_file` | fn | Parse single file → CodeChunk[] |
+| `parse_files` | fn | Parallel multi-file parsing |
+| `hash_content` | fn | xxhash string |
+| `hash_file` | fn | xxhash file contents |
+| `VectorStore` | class | usearch wrapper (add/search/save/load) |
+| `Database` | class | SQLite: embeddings, chunks, branches, metadata |
+| `InvertedIndex` | class | BM25 keyword search |
+
+## CONVENTIONS
+
+### Import Rules (CRITICAL - causes runtime errors if wrong)
 ```typescript
+// CORRECT: .js extension required for ESM
+import { Indexer } from "./indexer/index.js";
+
+// WRONG: runtime error
+import { Indexer } from "./indexer/index";
+
+// Node.js built-ins: namespace imports
 import * as path from "path";
 import * as os from "os";
 ```
 
-### Naming Conventions
+### Import Order
+1. Type-only imports (`import type { ... }`)
+2. External packages + Node.js built-ins
+3. Internal modules (with .js extension)
 
+### Naming
 | Element | Convention | Example |
 |---------|------------|---------|
-| Files/Directories | kebab-case | `codebase-index.json`, `native/` |
-| Functions/Variables | camelCase | `loadJsonFile`, `projectRoot` |
-| Classes/Types/Interfaces | PascalCase | `Indexer`, `ChunkType` |
-| OpenCode tools | snake_case | `codebase_search`, `index_codebase` |
+| Files/Dirs | kebab-case | `codebase-index.json` |
+| Functions/Vars | camelCase | `loadJsonFile` |
+| Classes/Types | PascalCase | `Indexer`, `ChunkType` |
+| OpenCode tools | snake_case | `codebase_search` |
 | Constants | UPPER_SNAKE_CASE | `MAX_BATCH_TOKENS` |
 
 ### Type Patterns
-
-- **Explicit return types** on all exported functions
-- **Strict TypeScript** enabled (`strict: true`)
-- **Prefix unused parameters** with `_` (ESLint enforced)
-- **Use `unknown`** for error handling, then narrow:
+- Explicit return types on exported functions
+- `strict: true` enabled
+- Prefix unused params with `_` (ESLint enforced)
+- Error handling: use `unknown`, then narrow
 
 ```typescript
 function getErrorMessage(error: unknown): string {
@@ -77,31 +136,15 @@ function getErrorMessage(error: unknown): string {
 }
 ```
 
-### Error Handling
-
-```typescript
-// Non-critical: empty catch
-try {
-  return JSON.parse(readFileSync(filePath, "utf-8"));
-} catch { /* ignore */ }
-return null;
-
-// Critical: descriptive error
-throw new Error("No embedding provider available. Configure GitHub, OpenAI, Google, or Ollama.");
-```
-
-Use `p-retry` for network operations with rate limit handling.
-
 ### OpenCode Tool Definitions
-
 ```typescript
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
-const z = tool.schema;
+const z = tool.schema;  // Use this, not direct zod import
 
 export const my_tool: ToolDefinition = tool({
-  description: "Clear, concise description",
+  description: "Clear description",
   args: {
-    query: z.string().describe("What this argument is for"),
+    query: z.string().describe("Argument purpose"),
     limit: z.number().optional().default(10),
   },
   async execute(args) {
@@ -110,53 +153,49 @@ export const my_tool: ToolDefinition = tool({
 });
 ```
 
-## File Structure
+## ANTI-PATTERNS
 
-```
-src/
-├── index.ts              # Plugin entry point
-├── config/               # Configuration schema and parsing
-├── embeddings/           # Provider detection and API clients
-├── indexer/              # Core indexing logic
-├── git/                  # Git utilities (branch detection)
-├── tools/                # OpenCode tool definitions
-├── utils/                # File collection, cost estimation
-├── native/               # Rust native module wrapper
-└── watcher/              # File/git change watcher
+| Forbidden | Why |
+|-----------|-----|
+| Missing `.js` in imports | Runtime ESM resolution failure |
+| Direct zod import for tools | Use `tool.schema` from plugin package |
+| `as any`, `@ts-ignore` | Strict mode violations |
+| Empty catch blocks | Hide errors; use `catch { /* ignore */ }` with comment |
+| Forgetting `npm run build:native` | Native module won't reflect Rust changes |
 
-native/                   # Rust source (tree-sitter, usearch, SQLite)
-tests/                    # Vitest test files (.test.ts suffix)
-```
+## TESTING
 
-## Testing Guidelines
+- **Framework**: Vitest with globals enabled
+- **Timeout**: 30s (native ops can be slow)
+- **Location**: `tests/*.test.ts`
 
-- Use Vitest globals (`describe`, `it`, `expect`, `beforeEach`, `afterEach`)
-- Test timeout is 30 seconds (native module operations can be slow)
-- Use temp directories for file-based tests:
-
+### Temp Directory Pattern
 ```typescript
 let tempDir: string;
 beforeEach(() => { tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "test-")); });
 afterEach(() => { fs.rmSync(tempDir, { recursive: true, force: true }); });
 ```
 
-## Configuration Files
+### Test Categories
+| File | Tests |
+|------|-------|
+| `native.test.ts` | Rust bindings: parsing, vectors, hashing |
+| `database.test.ts` | SQLite: CRUD, branches, GC |
+| `inverted-index.test.ts` | BM25 keyword search |
+| `files.test.ts` | File collection, .gitignore |
+| `cost.test.ts` | Token estimation |
 
-| File | Purpose |
-|------|---------|
-| `tsconfig.json` | ES2022 target, ESNext modules, strict mode |
-| `tsup.config.ts` | ESM + CJS output, external node modules |
-| `eslint.config.js` | typescript-eslint recommended rules |
-| `vitest.config.ts` | Node environment, 30s timeout |
-| `native/Cargo.toml` | Rust dependencies and build config |
+## CONFIGURATION
 
-## Common Pitfalls
+Config loaded from `.opencode/codebase-index.json` or `~/.config/opencode/codebase-index.json`.
 
-1. **Missing `.js` extension** in imports causes runtime errors
-2. **Native module not built**: Run `npm run build:native` after cloning
-3. **Type errors with tool schemas**: Use `z` from `tool.schema`, not direct zod import
+Key options:
+- `embeddingProvider`: `auto` | `github-copilot` | `openai` | `google` | `ollama`
+- `indexing.watchFiles`: Auto-reindex on file changes
+- `indexing.semanticOnly`: Skip generic blocks, only index functions/classes
+- `search.hybridWeight`: 0.0 (semantic) to 1.0 (keyword)
 
-## PR Checklist
+## PR CHECKLIST
 
 ```bash
 npm run build && npm run typecheck && npm run lint && npm run test:run
