@@ -264,6 +264,14 @@ pub struct BranchDelta {
 }
 
 #[napi(object)]
+pub struct EmbeddingBatchItem {
+    pub content_hash: String,
+    pub embedding: Buffer,
+    pub chunk_text: String,
+    pub model: String,
+}
+
+#[napi(object)]
 pub struct DatabaseStats {
     pub embedding_count: u32,
     pub chunk_count: u32,
@@ -382,6 +390,51 @@ impl Database {
     pub fn add_chunks_to_branch(&self, branch: String, chunk_ids: Vec<String>) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
         db::add_chunks_to_branch(&conn, &branch, &chunk_ids)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn upsert_embeddings_batch(&self, items: Vec<EmbeddingBatchItem>) -> Result<()> {
+        let mut conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let batch: Vec<(String, Vec<u8>, String, String)> = items
+            .into_iter()
+            .map(|item| {
+                (
+                    item.content_hash,
+                    item.embedding.to_vec(),
+                    item.chunk_text,
+                    item.model,
+                )
+            })
+            .collect();
+        db::upsert_embeddings_batch(&mut conn, &batch)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn upsert_chunks_batch(&self, chunks: Vec<ChunkData>) -> Result<()> {
+        let mut conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let batch: Vec<db::ChunkRow> = chunks
+            .into_iter()
+            .map(|c| db::ChunkRow {
+                chunk_id: c.chunk_id,
+                content_hash: c.content_hash,
+                file_path: c.file_path,
+                start_line: c.start_line,
+                end_line: c.end_line,
+                node_type: c.node_type,
+                name: c.name,
+                language: c.language,
+            })
+            .collect();
+        db::upsert_chunks_batch(&mut conn, &batch)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn add_chunks_to_branch_batch(&self, branch: String, chunk_ids: Vec<String>) -> Result<()> {
+        let mut conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::add_chunks_to_branch_batch(&mut conn, &branch, &chunk_ids)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 

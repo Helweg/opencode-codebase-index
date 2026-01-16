@@ -140,6 +140,15 @@ class Database {
     this.inner.upsertEmbedding(contentHash, embedding, chunkText, model);
   }
 
+  upsertEmbeddingsBatch(items: Array<{
+    contentHash: string;
+    embedding: Buffer;
+    chunkText: string;
+    model: string;
+  }>): void {
+    this.inner.upsertEmbeddingsBatch(items);
+  }
+
   upsertChunk(data: {
     chunkId: string;
     contentHash: string;
@@ -153,8 +162,25 @@ class Database {
     this.inner.upsertChunk(data);
   }
 
+  upsertChunksBatch(chunks: Array<{
+    chunkId: string;
+    contentHash: string;
+    filePath: string;
+    startLine: number;
+    endLine: number;
+    nodeType?: string;
+    name?: string;
+    language: string;
+  }>): void {
+    this.inner.upsertChunksBatch(chunks);
+  }
+
   addChunksToBranch(branch: string, chunkIds: string[]): void {
     this.inner.addChunksToBranch(branch, chunkIds);
+  }
+
+  addChunksToBranchBatch(branch: string, chunkIds: string[]): void {
+    this.inner.addChunksToBranchBatch(branch, chunkIds);
   }
 
   getBranchChunkIds(branch: string): string[] {
@@ -507,18 +533,19 @@ async function runBenchmarks(): Promise<void> {
     // ============================================
     console.log("\n=== Database Performance (SQLite) ===");
 
-    const dbPath = path.join(tempDir, "benchmark.db");
-    const db = new Database(dbPath);
-
     const chunkCounts = [100, 1000, 5000, 10000];
 
     for (const chunkCount of chunkCounts) {
+      const dbPath = path.join(tempDir, `benchmark-${chunkCount}.db`);
+      const db = new Database(dbPath);
+      const dbBatch = new Database(path.join(tempDir, `benchmark-batch-${chunkCount}.db`));
+
       const embedding = Buffer.from(
         new Float32Array(generateRandomEmbedding(dimensions)).buffer
       );
 
       benchmark(
-        `Insert ${chunkCount} embeddings`,
+        `Insert ${chunkCount} embeddings (sequential)`,
         () => {
           for (let i = 0; i < chunkCount; i++) {
             db.upsertEmbedding(`hash-${chunkCount}-${i}`, embedding, `text-${i}`, "test-model");
@@ -528,8 +555,24 @@ async function runBenchmarks(): Promise<void> {
         { embeddings: chunkCount }
       );
 
+      const embeddingBatchItems = Array.from({ length: chunkCount }, (_, i) => ({
+        contentHash: `hash-batch-${chunkCount}-${i}`,
+        embedding,
+        chunkText: `text-${i}`,
+        model: "test-model",
+      }));
+
       benchmark(
-        `Insert ${chunkCount} chunks`,
+        `Insert ${chunkCount} embeddings (batch)`,
+        () => {
+          dbBatch.upsertEmbeddingsBatch(embeddingBatchItems);
+        },
+        1,
+        { embeddings: chunkCount }
+      );
+
+      benchmark(
+        `Insert ${chunkCount} chunks (sequential)`,
         () => {
           for (let i = 0; i < chunkCount; i++) {
             db.upsertChunk({
@@ -548,14 +591,47 @@ async function runBenchmarks(): Promise<void> {
         { chunks: chunkCount }
       );
 
+      const chunkBatchItems = Array.from({ length: chunkCount }, (_, i) => ({
+        chunkId: `chunk-batch-${chunkCount}-${i}`,
+        contentHash: `hash-batch-${chunkCount}-${i}`,
+        filePath: `/file${i % 100}.ts`,
+        startLine: i * 10,
+        endLine: i * 10 + 10,
+        nodeType: "function",
+        name: `func${i}`,
+        language: "typescript",
+      }));
+
+      benchmark(
+        `Insert ${chunkCount} chunks (batch)`,
+        () => {
+          dbBatch.upsertChunksBatch(chunkBatchItems);
+        },
+        1,
+        { chunks: chunkCount }
+      );
+
       const chunkIds = Array.from(
         { length: chunkCount },
         (_, i) => `chunk-${chunkCount}-${i}`
       );
       benchmark(
-        `Add ${chunkCount} chunks to branch`,
+        `Add ${chunkCount} chunks to branch (sequential)`,
         () => {
           db.addChunksToBranch(`branch-${chunkCount}`, chunkIds);
+        },
+        1,
+        { chunks: chunkCount }
+      );
+
+      const chunkIdsBatch = Array.from(
+        { length: chunkCount },
+        (_, i) => `chunk-batch-${chunkCount}-${i}`
+      );
+      benchmark(
+        `Add ${chunkCount} chunks to branch (batch)`,
+        () => {
+          dbBatch.addChunksToBranchBatch(`branch-batch-${chunkCount}`, chunkIdsBatch);
         },
         1,
         { chunks: chunkCount }

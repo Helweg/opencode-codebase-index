@@ -150,6 +150,35 @@ pub fn upsert_embedding(
     Ok(())
 }
 
+/// Batch insert or update embeddings within a single transaction
+pub fn upsert_embeddings_batch(
+    conn: &mut Connection,
+    embeddings: &[(String, Vec<u8>, String, String)],
+) -> DbResult<()> {
+    if embeddings.is_empty() {
+        return Ok(());
+    }
+
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            r#"
+            INSERT INTO embeddings (content_hash, embedding, chunk_text, model, created_at)
+            VALUES (?, ?, ?, ?, strftime('%s', 'now'))
+            ON CONFLICT(content_hash) DO UPDATE SET
+                embedding = excluded.embedding,
+                model = excluded.model
+            "#,
+        )?;
+
+        for (content_hash, embedding, chunk_text, model) in embeddings {
+            stmt.execute(params![content_hash, embedding, chunk_text, model])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Get multiple embeddings by content hashes
 #[allow(dead_code)]
 pub fn get_embeddings_batch(
@@ -250,6 +279,49 @@ pub fn upsert_chunk(
     Ok(())
 }
 
+/// Batch insert or update chunks within a single transaction
+pub fn upsert_chunks_batch(
+    conn: &mut Connection,
+    chunks: &[ChunkRow],
+) -> DbResult<()> {
+    if chunks.is_empty() {
+        return Ok(());
+    }
+
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            r#"
+            INSERT INTO chunks (chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chunk_id) DO UPDATE SET
+                content_hash = excluded.content_hash,
+                file_path = excluded.file_path,
+                start_line = excluded.start_line,
+                end_line = excluded.end_line,
+                node_type = excluded.node_type,
+                name = excluded.name,
+                language = excluded.language
+            "#,
+        )?;
+
+        for chunk in chunks {
+            stmt.execute(params![
+                chunk.chunk_id,
+                chunk.content_hash,
+                chunk.file_path,
+                chunk.start_line,
+                chunk.end_line,
+                chunk.node_type,
+                chunk.name,
+                chunk.language
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Get chunk by ID
 pub fn get_chunk(conn: &Connection, chunk_id: &str) -> DbResult<Option<ChunkRow>> {
     let result = conn
@@ -341,6 +413,30 @@ pub fn add_chunks_to_branch(conn: &Connection, branch: &str, chunk_ids: &[String
     for chunk_id in chunk_ids {
         stmt.execute(params![branch, chunk_id])?;
     }
+    Ok(())
+}
+
+/// Batch add chunks to a branch within a single transaction
+pub fn add_chunks_to_branch_batch(
+    conn: &mut Connection,
+    branch: &str,
+    chunk_ids: &[String],
+) -> DbResult<()> {
+    if chunk_ids.is_empty() {
+        return Ok(());
+    }
+
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT OR IGNORE INTO branch_chunks (branch, chunk_id) VALUES (?, ?)",
+        )?;
+
+        for chunk_id in chunk_ids {
+            stmt.execute(params![branch, chunk_id])?;
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 
