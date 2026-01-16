@@ -35,6 +35,24 @@ function bufferToFloat32Array(buf: Buffer): Float32Array {
   return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
+function isRateLimitError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return message.includes("429") || message.toLowerCase().includes("rate limit") || message.toLowerCase().includes("too many requests");
+}
+
 export interface IndexStats {
   totalFiles: number;
   totalChunks: number;
@@ -494,10 +512,20 @@ export class Indexer {
             {
               retries: this.config.indexing.retries,
               minTimeout: this.config.indexing.retryDelayMs,
+              maxTimeout: 30000,
+              factor: 2,
               onFailedAttempt: (error) => {
-                console.error(
-                  `Embedding batch failed (attempt ${error.attemptNumber}): ${String(error)}`
-                );
+                const message = getErrorMessage(error);
+                if (isRateLimitError(error)) {
+                  queue.concurrency = 1;
+                  console.error(
+                    `Rate limited (attempt ${error.attemptNumber}/${error.retriesLeft + error.attemptNumber}): waiting before retry...`
+                  );
+                } else {
+                  console.error(
+                    `Embedding batch failed (attempt ${error.attemptNumber}): ${message}`
+                  );
+                }
               },
             }
           );
@@ -537,8 +565,8 @@ export class Indexer {
           });
         } catch (error) {
           stats.failedChunks += batch.length;
-          this.addFailedBatch(batch, String(error));
-          console.error(`Failed to embed batch after retries: ${error}`);
+          this.addFailedBatch(batch, getErrorMessage(error));
+          console.error(`Failed to embed batch after retries: ${getErrorMessage(error)}`);
         }
       });
     }
