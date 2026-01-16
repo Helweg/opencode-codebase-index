@@ -99,14 +99,23 @@ export const index_health_check: ToolDefinition = tool({
     const indexer = getIndexer();
     const result = await indexer.healthCheck();
 
-    if (result.removed === 0) {
+    if (result.removed === 0 && result.gcOrphanEmbeddings === 0 && result.gcOrphanChunks === 0) {
       return "Index is healthy. No stale entries found.";
     }
 
-    const lines = [
-      `Health check complete:`,
-      `  Removed stale entries: ${result.removed}`,
-    ];
+    const lines = [`Health check complete:`];
+    
+    if (result.removed > 0) {
+      lines.push(`  Removed stale entries: ${result.removed}`);
+    }
+    
+    if (result.gcOrphanEmbeddings > 0) {
+      lines.push(`  Garbage collected orphan embeddings: ${result.gcOrphanEmbeddings}`);
+    }
+    
+    if (result.gcOrphanChunks > 0) {
+      lines.push(`  Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
+    }
 
     if (result.filePaths.length > 0) {
       lines.push(`  Cleaned paths: ${result.filePaths.join(", ")}`);
@@ -175,16 +184,25 @@ function formatStatus(status: {
   provider: string;
   model: string;
   indexPath: string;
+  currentBranch: string;
+  baseBranch: string;
 }): string {
   if (!status.indexed) {
     return "Codebase is not indexed. Run index_codebase to create an index.";
   }
 
-  return [
+  const lines = [
     `Index status:`,
     `  Indexed chunks: ${status.vectorCount.toLocaleString()}`,
     `  Provider: ${status.provider}`,
     `  Model: ${status.model}`,
     `  Location: ${status.indexPath}`,
-  ].join("\n");
+  ];
+
+  if (status.currentBranch !== "default") {
+    lines.push(`  Current branch: ${status.currentBranch}`);
+    lines.push(`  Base branch: ${status.baseBranch}`);
+  }
+
+  return lines.join("\n");
 }

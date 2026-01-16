@@ -148,5 +148,22 @@ describe("files utilities", () => {
       expect(result.files.length).toBe(2);
       expect(result.files.some((f) => f.path.endsWith(".css"))).toBe(false);
     });
+
+    it("should collect root-level files with **/*.ext pattern", async () => {
+      fs.mkdirSync(path.join(tempDir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tempDir, "root.js"), "root");
+      fs.writeFileSync(path.join(tempDir, "src/nested.js"), "nested");
+
+      const result = await collectFiles(
+        tempDir,
+        ["**/*.js"],
+        [],
+        1048576
+      );
+
+      expect(result.files.length).toBe(2);
+      expect(result.files.some((f) => f.path.endsWith("root.js"))).toBe(true);
+      expect(result.files.some((f) => f.path.endsWith("nested.js"))).toBe(true);
+    });
   });
 });

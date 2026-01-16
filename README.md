@@ -14,6 +14,7 @@
 
 - 🧠 **Semantic Search**: Finds "user authentication" logic even if the function is named `check_creds`.
 - ⚡ **Blazing Fast Indexing**: Powered by a Rust native module using `tree-sitter` and `usearch`. Incremental updates take milliseconds.
+- 🌿 **Branch-Aware**: Seamlessly handles git branch switches — reuses embeddings, filters stale results.
 - 🔒 **Privacy Focused**: Your vector index is stored locally in your project.
 - 🔌 **Model Agnostic**: Works out-of-the-box with GitHub Copilot, OpenAI, Gemini, or local Ollama models.
 
@@ -31,11 +32,12 @@
    }
    ```
 
-3. **Start Searching**
-   Load OpenCode and ask:
-   > "Find the function that handles credit card validation errors"
+3. **Index your codebase**
+   Run `/index` or ask the agent to index your codebase. This only needs to be done once — subsequent updates are incremental.
 
-   *The plugin will automatically index your codebase on the first run.*
+4. **Start Searching**
+   Ask:
+   > "Find the function that handles credit card validation errors"
 
 ## 🔍 See It In Action
 
@@ -98,13 +100,16 @@ graph TD
     A[Source Code] -->|Tree-sitter| B[Semantic Chunks]
     B -->|Embedding Model| C[Vectors]
     C -->|uSearch| D[(Vector Store)]
+    C -->|SQLite| G[(Embeddings DB)]
     B -->|BM25| E[(Inverted Index)]
+    B -->|Branch Catalog| G
     end
 
     subgraph Searching
     Q[User Query] -->|Embedding Model| V[Query Vector]
     V -->|Cosine Similarity| D
     Q -->|BM25| E
+    G -->|Branch Filter| F
     D --> F[Hybrid Fusion]
     E --> F
     F --> R[Ranked Results]
@@ -114,14 +119,52 @@ graph TD
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 2. **Chunking**: Large blocks are split with overlapping windows to preserve context across chunk boundaries.
 3. **Embedding**: These blocks are converted into vector representations using your configured AI provider.
-4. **Storage**: Vectors are stored in a high-performance local index using `usearch` with F16 quantization for 50% memory savings.
-5. **Hybrid Search**: Combines semantic similarity (vectors) with BM25 keyword matching for best results.
+4. **Storage**: Embeddings are stored in SQLite (deduplicated by content hash) and vectors in `usearch` with F16 quantization for 50% memory savings. A branch catalog tracks which chunks exist on each branch.
+5. **Hybrid Search**: Combines semantic similarity (vectors) with BM25 keyword matching, filtered by current branch.
 
 **Performance characteristics:**
 - **Incremental indexing**: ~50ms check time — only re-embeds changed files
 - **Smart chunking**: Understands code structure to keep functions whole, with overlap for context
 - **Native speed**: Core logic written in Rust for maximum performance
 - **Memory efficient**: F16 vector quantization reduces index size by 50%
+- **Branch-aware**: Automatically tracks which chunks exist on each git branch
+
+## 🌿 Branch-Aware Indexing
+
+The plugin automatically detects git branches and optimizes indexing across branch switches.
+
+### How It Works
+
+When you switch branches, code changes but embeddings for unchanged content remain the same. The plugin:
+
+1. **Stores embeddings by content hash**: Embeddings are deduplicated across branches
+2. **Tracks branch membership**: A lightweight catalog tracks which chunks exist on each branch
+3. **Filters search results**: Queries only return results relevant to the current branch
+
+### Benefits
+
+| Scenario | Without Branch Awareness | With Branch Awareness |
+|----------|-------------------------|----------------------|
+| Switch to feature branch | Re-index everything | Instant — reuse existing embeddings |
+| Return to main | Re-index everything | Instant — catalog already exists |
+| Search on branch | May return stale results | Only returns current branch's code |
+
+### Automatic Behavior
+
+- **Branch detection**: Automatically reads from `.git/HEAD`
+- **Re-indexing on switch**: Triggers when you switch branches (via file watcher)
+- **Legacy migration**: Automatically migrates old indexes on first run
+- **Garbage collection**: Health check removes orphaned embeddings and chunks
+
+### Storage Structure
+
+```
+.opencode/index/
+├── codebase.db           # SQLite: embeddings, chunks, branch catalog
+├── vectors.usearch       # Vector index (uSearch)
+├── inverted-index.json   # BM25 keyword index
+└── file-hashes.json      # File change detection
+```
 
 ## 🧰 Tools Available
 
@@ -151,7 +194,7 @@ Manually trigger indexing.
 Checks if the index is ready and healthy.
 
 ### `index_health_check`
-Maintenance tool to remove stale entries from deleted files.
+Maintenance tool to remove stale entries from deleted files and orphaned embeddings/chunks from the database.
 
 ## 🎮 Slash Commands
 
@@ -263,12 +306,13 @@ CI will automatically run tests and type checking on your PR.
 │   ├── config/               # Configuration schema
 │   ├── embeddings/           # Provider detection and API calls
 │   ├── indexer/              # Core indexing logic + inverted index
+│   ├── git/                  # Git utilities (branch detection)
 │   ├── tools/                # OpenCode tool definitions
 │   ├── utils/                # File collection, cost estimation
 │   ├── native/               # Rust native module wrapper
-│   └── watcher/              # File change watcher
+│   └── watcher/              # File/git change watcher
 ├── native/
-│   └── src/                  # Rust: tree-sitter, usearch, xxhash
+│   └── src/                  # Rust: tree-sitter, usearch, xxhash, SQLite
 ├── tests/                    # Unit tests (vitest)
 ├── commands/                 # Slash command definitions
 ├── skill/                    # Agent skill guidance
@@ -280,6 +324,7 @@ CI will automatically run tests and type checking on your PR.
 The Rust native module handles performance-critical operations:
 - **tree-sitter**: Language-aware code parsing with JSDoc/docstring extraction
 - **usearch**: High-performance vector similarity search with F16 quantization
+- **SQLite**: Persistent storage for embeddings, chunks, and branch catalog
 - **BM25 inverted index**: Fast keyword search for hybrid retrieval
 - **xxhash**: Fast content hashing for change detection
 

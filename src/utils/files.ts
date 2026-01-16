@@ -69,12 +69,17 @@ export function shouldIncludeFile(
 }
 
 function matchGlob(filePath: string, pattern: string): boolean {
-  const regexPattern = pattern
+  let regexPattern = pattern
     .replace(/\*\*/g, "<<<DOUBLESTAR>>>")
     .replace(/\*/g, "[^/]*")
     .replace(/<<<DOUBLESTAR>>>/g, ".*")
     .replace(/\?/g, ".")
     .replace(/\{([^}]+)\}/g, (_, p1) => `(${p1.split(",").join("|")})`);
+
+  // **/*.js → matches both root "file.js" and nested "dir/file.js"
+  if (regexPattern.startsWith(".*/")) {
+    regexPattern = `(.*\\/)?${regexPattern.slice(3)}`;
+  }
 
   const regex = new RegExp(`^${regexPattern}$`);
   return regex.test(filePath);

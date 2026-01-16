@@ -14,14 +14,26 @@ import { createCostEstimate, CostEstimate } from "../utils/cost.js";
 import {
   VectorStore,
   InvertedIndex,
+  Database,
   parseFiles,
   createEmbeddingText,
   generateChunkId,
   generateChunkHash,
   ChunkMetadata,
+  ChunkData,
   createDynamicBatches,
   hashFile,
 } from "../native/index.js";
+import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
+
+function float32ArrayToBuffer(arr: number[]): Buffer {
+  const float32 = new Float32Array(arr);
+  return Buffer.from(float32.buffer);
+}
+
+function bufferToFloat32Array(buf: Buffer): Float32Array {
+  return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+}
 
 export interface IndexStats {
   totalFiles: number;
@@ -52,6 +64,7 @@ interface PendingChunk {
   id: string;
   text: string;
   content: string;
+  contentHash: string;
   metadata: ChunkMetadata;
 }
 
@@ -68,11 +81,14 @@ export class Indexer {
   private indexPath: string;
   private store: VectorStore | null = null;
   private invertedIndex: InvertedIndex | null = null;
+  private database: Database | null = null;
   private provider: EmbeddingProviderInterface | null = null;
   private detectedProvider: DetectedProvider | null = null;
   private fileHashCache: Map<string, string> = new Map();
   private fileHashCachePath: string = "";
   private failedBatchesPath: string = "";
+  private currentBranch: string = "default";
+  private baseBranch: string = "main";
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
@@ -169,7 +185,54 @@ export class Indexer {
 
     const invertedIndexPath = path.join(this.indexPath, "inverted-index.json");
     this.invertedIndex = new InvertedIndex(invertedIndexPath);
-    this.invertedIndex.load();
+    try {
+      this.invertedIndex.load();
+    } catch {
+      if (existsSync(invertedIndexPath)) {
+        await fsPromises.unlink(invertedIndexPath);
+      }
+      this.invertedIndex = new InvertedIndex(invertedIndexPath);
+    }
+
+    const dbPath = path.join(this.indexPath, "codebase.db");
+    const dbIsNew = !existsSync(dbPath);
+    this.database = new Database(dbPath);
+
+    if (dbIsNew && this.store.count() > 0) {
+      this.migrateFromLegacyIndex();
+    }
+
+    if (isGitRepo(this.projectRoot)) {
+      this.currentBranch = getBranchOrDefault(this.projectRoot);
+      this.baseBranch = getBaseBranch(this.projectRoot);
+    } else {
+      this.currentBranch = "default";
+      this.baseBranch = "default";
+    }
+  }
+
+  private migrateFromLegacyIndex(): void {
+    if (!this.store || !this.database) return;
+
+    const allMetadata = this.store.getAllMetadata();
+    const chunkIds: string[] = [];
+
+    for (const { key, metadata } of allMetadata) {
+      const chunkData: ChunkData = {
+        chunkId: key,
+        contentHash: metadata.hash,
+        filePath: metadata.filePath,
+        startLine: metadata.startLine,
+        endLine: metadata.endLine,
+        nodeType: metadata.chunkType,
+        name: metadata.name,
+        language: metadata.language,
+      };
+      this.database.upsertChunk(chunkData);
+      chunkIds.push(key);
+    }
+
+    this.database.addChunksToBranch(this.currentBranch || "default", chunkIds);
   }
 
   private async ensureInitialized(): Promise<{
@@ -177,8 +240,9 @@ export class Indexer {
     provider: EmbeddingProviderInterface;
     invertedIndex: InvertedIndex;
     detectedProvider: DetectedProvider;
+    database: Database;
   }> {
-    if (!this.store || !this.provider || !this.invertedIndex || !this.detectedProvider) {
+    if (!this.store || !this.provider || !this.invertedIndex || !this.detectedProvider || !this.database) {
       await this.initialize();
     }
     return {
@@ -186,6 +250,7 @@ export class Indexer {
       provider: this.provider!,
       invertedIndex: this.invertedIndex!,
       detectedProvider: this.detectedProvider!,
+      database: this.database!,
     };
   }
 
@@ -203,7 +268,7 @@ export class Indexer {
   }
 
   async index(onProgress?: ProgressCallback): Promise<IndexStats> {
-    const { store, provider, invertedIndex } = await this.ensureInitialized();
+    const { store, provider, invertedIndex, database, detectedProvider } = await this.ensureInitialized();
 
     const startTime = Date.now();
     const stats: IndexStats = {
@@ -310,6 +375,18 @@ export class Indexer {
         const contentHash = generateChunkHash(chunk);
         currentChunkIds.add(id);
 
+        const chunkData: ChunkData = {
+          chunkId: id,
+          contentHash,
+          filePath: parsed.path,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          nodeType: chunk.chunkType,
+          name: chunk.name,
+          language: chunk.language,
+        };
+        database.upsertChunk(chunkData);
+
         if (existingChunks.get(id) === contentHash) {
           fileChunkCount++;
           continue;
@@ -326,7 +403,7 @@ export class Indexer {
           hash: contentHash,
         };
 
-        pendingChunks.push({ id, text, content: chunk.content, metadata });
+        pendingChunks.push({ id, text, content: chunk.content, contentHash, metadata });
         fileChunkCount++;
       }
     }
@@ -345,6 +422,8 @@ export class Indexer {
     stats.removedChunks = removedCount;
 
     if (pendingChunks.length === 0 && removedCount === 0) {
+      database.clearBranch(this.currentBranch);
+      database.addChunksToBranch(this.currentBranch, Array.from(currentChunkIds));
       this.fileHashCache = currentFileHashes;
       this.saveFileHashCache();
       stats.durationMs = Date.now() - startTime;
@@ -359,6 +438,8 @@ export class Indexer {
     }
 
     if (pendingChunks.length === 0) {
+      database.clearBranch(this.currentBranch);
+      database.addChunksToBranch(this.currentBranch, Array.from(currentChunkIds));
       store.save();
       invertedIndex.save();
       this.fileHashCache = currentFileHashes;
@@ -382,8 +463,25 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
+    const allContentHashes = pendingChunks.map((c) => c.contentHash);
+    const missingHashes = new Set(database.getMissingEmbeddings(allContentHashes));
+    
+    const chunksNeedingEmbedding = pendingChunks.filter((c) => missingHashes.has(c.contentHash));
+    const chunksWithExistingEmbedding = pendingChunks.filter((c) => !missingHashes.has(c.contentHash));
+
+    for (const chunk of chunksWithExistingEmbedding) {
+      const embeddingBuffer = database.getEmbedding(chunk.contentHash);
+      if (embeddingBuffer) {
+        const vector = bufferToFloat32Array(embeddingBuffer);
+        store.add(chunk.id, Array.from(vector), chunk.metadata);
+        invertedIndex.removeChunk(chunk.id);
+        invertedIndex.addChunk(chunk.id, chunk.content);
+        stats.indexedChunks++;
+      }
+    }
+
     const queue = new PQueue({ concurrency: 3 });
-    const dynamicBatches = createDynamicBatches(pendingChunks);
+    const dynamicBatches = createDynamicBatches(chunksNeedingEmbedding);
 
     for (const batch of dynamicBatches) {
       queue.add(async () => {
@@ -412,7 +510,17 @@ export class Indexer {
 
           store.addBatch(items);
           
-          for (const chunk of batch) {
+          for (let i = 0; i < batch.length; i++) {
+            const chunk = batch[i];
+            const embedding = result.embeddings[i];
+            
+            database.upsertEmbedding(
+              chunk.contentHash,
+              float32ArrayToBuffer(embedding),
+              chunk.text,
+              detectedProvider.modelInfo.model
+            );
+            
             invertedIndex.removeChunk(chunk.id);
             invertedIndex.addChunk(chunk.id, chunk.content);
           }
@@ -445,6 +553,9 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
+    database.clearBranch(this.currentBranch);
+    database.addChunksToBranch(this.currentBranch, Array.from(currentChunkIds));
+
     store.save();
     invertedIndex.save();
     this.fileHashCache = currentFileHashes;
@@ -476,6 +587,7 @@ export class Indexer {
       directory?: string;
       chunkType?: string;
       contextLines?: number;
+      filterByBranch?: boolean;
     }
   ): Promise<
     Array<{
@@ -488,7 +600,7 @@ export class Indexer {
       name?: string;
     }>
   > {
-    const { store, provider } = await this.ensureInitialized();
+    const { store, provider, database } = await this.ensureInitialized();
 
     if (store.count() === 0) {
       return [];
@@ -496,6 +608,7 @@ export class Indexer {
 
     const maxResults = limit ?? this.config.search.maxResults;
     const hybridWeight = options?.hybridWeight ?? this.config.search.hybridWeight;
+    const filterByBranch = options?.filterByBranch ?? true;
 
     const { embedding } = await provider.embed(query);
     const semanticResults = store.search(embedding, maxResults * 4);
@@ -504,8 +617,15 @@ export class Indexer {
 
     const combined = this.fuseResults(semanticResults, keywordResults, hybridWeight, maxResults * 4);
 
+    let branchChunkIds: Set<string> | null = null;
+    if (filterByBranch && this.currentBranch !== "default") {
+      branchChunkIds = new Set(database.getBranchChunkIds(this.currentBranch));
+    }
+
     const filtered = combined.filter((r) => {
       if (r.score < this.config.search.minScore) return false;
+
+      if (branchChunkIds && !branchChunkIds.has(r.id)) return false;
 
       if (options?.fileType) {
         const ext = r.metadata.filePath.split(".").pop()?.toLowerCase();
@@ -637,6 +757,8 @@ export class Indexer {
     provider: string;
     model: string;
     indexPath: string;
+    currentBranch: string;
+    baseBranch: string;
   }> {
     const { store, detectedProvider } = await this.ensureInitialized();
 
@@ -646,6 +768,8 @@ export class Indexer {
       provider: detectedProvider.provider,
       model: detectedProvider.modelInfo.model,
       indexPath: this.indexPath,
+      currentBranch: this.currentBranch,
+      baseBranch: this.baseBranch,
     };
   }
 
@@ -658,8 +782,8 @@ export class Indexer {
     invertedIndex.save();
   }
 
-  async healthCheck(): Promise<{ removed: number; filePaths: string[] }> {
-    const { store, invertedIndex } = await this.ensureInitialized();
+  async healthCheck(): Promise<{ removed: number; filePaths: string[]; gcOrphanEmbeddings: number; gcOrphanChunks: number }> {
+    const { store, invertedIndex, database } = await this.ensureInitialized();
 
     const allMetadata = store.getAllMetadata();
     const filePathsToChunkKeys = new Map<string, string[]>();
@@ -680,6 +804,7 @@ export class Indexer {
           invertedIndex.removeChunk(key);
           removedCount++;
         }
+        database.deleteChunksByFile(filePath);
         removedFilePaths.push(filePath);
       }
     }
@@ -689,7 +814,10 @@ export class Indexer {
       invertedIndex.save();
     }
 
-    return { removed: removedCount, filePaths: removedFilePaths };
+    const gcOrphanEmbeddings = database.gcOrphanEmbeddings();
+    const gcOrphanChunks = database.gcOrphanChunks();
+
+    return { removed: removedCount, filePaths: removedFilePaths, gcOrphanEmbeddings, gcOrphanChunks };
   }
 
   async retryFailedBatches(): Promise<{ succeeded: number; failed: number; remaining: number }> {
@@ -754,5 +882,25 @@ export class Indexer {
 
   getFailedBatchesCount(): number {
     return this.loadFailedBatches().length;
+  }
+
+  getCurrentBranch(): string {
+    return this.currentBranch;
+  }
+
+  getBaseBranch(): string {
+    return this.baseBranch;
+  }
+
+  refreshBranchInfo(): void {
+    if (isGitRepo(this.projectRoot)) {
+      this.currentBranch = getBranchOrDefault(this.projectRoot);
+      this.baseBranch = getBaseBranch(this.projectRoot);
+    }
+  }
+
+  async getDatabaseStats(): Promise<{ embeddingCount: number; chunkCount: number; branchChunkCount: number; branchCount: number } | null> {
+    const { database } = await this.ensureInitialized();
+    return database.getStats();
   }
 }

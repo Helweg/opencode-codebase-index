@@ -22,6 +22,8 @@ tree-sitter-json = "0.20"
 
 usearch = "2.15"
 
+rusqlite = { version = "0.31", features = ["bundled"] }
+
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 serde = { version = "1.0", features = ["derive"] }

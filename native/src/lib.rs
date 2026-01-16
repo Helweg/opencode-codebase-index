@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod chunker;
+mod db;
 mod hasher;
 mod inverted_index;
 mod parser;
@@ -236,5 +237,235 @@ impl InvertedIndex {
     #[napi]
     pub fn document_count(&self) -> u32 {
         self.inner.document_count() as u32
+    }
+}
+
+#[napi]
+pub struct Database {
+    conn: std::sync::Mutex<rusqlite::Connection>,
+}
+
+#[napi(object)]
+pub struct ChunkData {
+    pub chunk_id: String,
+    pub content_hash: String,
+    pub file_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub node_type: Option<String>,
+    pub name: Option<String>,
+    pub language: String,
+}
+
+#[napi(object)]
+pub struct BranchDelta {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+#[napi(object)]
+pub struct DatabaseStats {
+    pub embedding_count: u32,
+    pub chunk_count: u32,
+    pub branch_chunk_count: u32,
+    pub branch_count: u32,
+}
+
+#[napi]
+impl Database {
+    #[napi(constructor)]
+    pub fn new(db_path: String) -> Result<Self> {
+        let conn = db::init_db(std::path::Path::new(&db_path))
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(Self {
+            conn: std::sync::Mutex::new(conn),
+        })
+    }
+
+    #[napi]
+    pub fn embedding_exists(&self, content_hash: String) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::embedding_exists(&conn, &content_hash).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_embedding(&self, content_hash: String) -> Result<Option<Buffer>> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let result = db::get_embedding(&conn, &content_hash)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(result.map(|v| Buffer::from(v)))
+    }
+
+    #[napi]
+    pub fn upsert_embedding(
+        &self,
+        content_hash: String,
+        embedding: Buffer,
+        chunk_text: String,
+        model: String,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::upsert_embedding(&conn, &content_hash, &embedding, &chunk_text, &model)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_missing_embeddings(&self, content_hashes: Vec<String>) -> Result<Vec<String>> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::get_missing_embeddings(&conn, &content_hashes)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn upsert_chunk(&self, chunk: ChunkData) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::upsert_chunk(
+            &conn,
+            &chunk.chunk_id,
+            &chunk.content_hash,
+            &chunk.file_path,
+            chunk.start_line,
+            chunk.end_line,
+            chunk.node_type.as_deref(),
+            chunk.name.as_deref(),
+            &chunk.language,
+        )
+        .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_chunk(&self, chunk_id: String) -> Result<Option<ChunkData>> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let result = db::get_chunk(&conn, &chunk_id)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(result.map(|row| ChunkData {
+            chunk_id: row.chunk_id,
+            content_hash: row.content_hash,
+            file_path: row.file_path,
+            start_line: row.start_line,
+            end_line: row.end_line,
+            node_type: row.node_type,
+            name: row.name,
+            language: row.language,
+        }))
+    }
+
+    #[napi]
+    pub fn get_chunks_by_file(&self, file_path: String) -> Result<Vec<ChunkData>> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let rows = db::get_chunks_by_file(&conn, &file_path)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ChunkData {
+                chunk_id: row.chunk_id,
+                content_hash: row.content_hash,
+                file_path: row.file_path,
+                start_line: row.start_line,
+                end_line: row.end_line,
+                node_type: row.node_type,
+                name: row.name,
+                language: row.language,
+            })
+            .collect())
+    }
+
+    #[napi]
+    pub fn delete_chunks_by_file(&self, file_path: String) -> Result<u32> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::delete_chunks_by_file(&conn, &file_path)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    #[napi]
+    pub fn add_chunks_to_branch(&self, branch: String, chunk_ids: Vec<String>) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::add_chunks_to_branch(&conn, &branch, &chunk_ids)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn clear_branch(&self, branch: String) -> Result<u32> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::clear_branch(&conn, &branch)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    #[napi]
+    pub fn get_branch_chunk_ids(&self, branch: String) -> Result<Vec<String>> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::get_branch_chunk_ids(&conn, &branch).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_branch_delta(&self, branch: String, base_branch: String) -> Result<BranchDelta> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let delta = db::get_branch_delta(&conn, &branch, &base_branch)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(BranchDelta {
+            added: delta.added,
+            removed: delta.removed,
+        })
+    }
+
+    #[napi]
+    pub fn chunk_exists_on_branch(&self, branch: String, chunk_id: String) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::chunk_exists_on_branch(&conn, &branch, &chunk_id)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_all_branches(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::get_all_branches(&conn).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_metadata(&self, key: String) -> Result<Option<String>> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::get_metadata(&conn, &key).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn set_metadata(&self, key: String, value: String) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::set_metadata(&conn, &key, &value).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn delete_metadata(&self, key: String) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        db::delete_metadata(&conn, &key).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn gc_orphan_embeddings(&self) -> Result<u32> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::gc_orphan_embeddings(&conn)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    #[napi]
+    pub fn gc_orphan_chunks(&self) -> Result<u32> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::gc_orphan_chunks(&conn)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    #[napi]
+    pub fn get_stats(&self) -> Result<DatabaseStats> {
+        let conn = self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+        let stats = db::get_stats(&conn).map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(DatabaseStats {
+            embedding_count: stats.embedding_count as u32,
+            chunk_count: stats.chunk_count as u32,
+            branch_chunk_count: stats.branch_chunk_count as u32,
+            branch_count: stats.branch_count as u32,
+        })
     }
 }

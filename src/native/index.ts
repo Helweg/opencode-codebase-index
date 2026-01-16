@@ -494,3 +494,119 @@ export class InvertedIndex {
     return this.inner.documentCount();
   }
 }
+
+export interface ChunkData {
+  chunkId: string;
+  contentHash: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  nodeType?: string;
+  name?: string;
+  language: string;
+}
+
+export interface BranchDelta {
+  added: string[];
+  removed: string[];
+}
+
+export interface DatabaseStats {
+  embeddingCount: number;
+  chunkCount: number;
+  branchChunkCount: number;
+  branchCount: number;
+}
+
+export class Database {
+  private inner: any;
+
+  constructor(dbPath: string) {
+    this.inner = new native.Database(dbPath);
+  }
+
+  embeddingExists(contentHash: string): boolean {
+    return this.inner.embeddingExists(contentHash);
+  }
+
+  getEmbedding(contentHash: string): Buffer | null {
+    return this.inner.getEmbedding(contentHash) ?? null;
+  }
+
+  upsertEmbedding(
+    contentHash: string,
+    embedding: Buffer,
+    chunkText: string,
+    model: string
+  ): void {
+    this.inner.upsertEmbedding(contentHash, embedding, chunkText, model);
+  }
+
+  getMissingEmbeddings(contentHashes: string[]): string[] {
+    return this.inner.getMissingEmbeddings(contentHashes);
+  }
+
+  upsertChunk(chunk: ChunkData): void {
+    this.inner.upsertChunk(chunk);
+  }
+
+  getChunk(chunkId: string): ChunkData | null {
+    return this.inner.getChunk(chunkId) ?? null;
+  }
+
+  getChunksByFile(filePath: string): ChunkData[] {
+    return this.inner.getChunksByFile(filePath);
+  }
+
+  deleteChunksByFile(filePath: string): number {
+    return this.inner.deleteChunksByFile(filePath);
+  }
+
+  addChunksToBranch(branch: string, chunkIds: string[]): void {
+    this.inner.addChunksToBranch(branch, chunkIds);
+  }
+
+  clearBranch(branch: string): number {
+    return this.inner.clearBranch(branch);
+  }
+
+  getBranchChunkIds(branch: string): string[] {
+    return this.inner.getBranchChunkIds(branch);
+  }
+
+  getBranchDelta(branch: string, baseBranch: string): BranchDelta {
+    return this.inner.getBranchDelta(branch, baseBranch);
+  }
+
+  chunkExistsOnBranch(branch: string, chunkId: string): boolean {
+    return this.inner.chunkExistsOnBranch(branch, chunkId);
+  }
+
+  getAllBranches(): string[] {
+    return this.inner.getAllBranches();
+  }
+
+  getMetadata(key: string): string | null {
+    return this.inner.getMetadata(key) ?? null;
+  }
+
+  setMetadata(key: string, value: string): void {
+    this.inner.setMetadata(key, value);
+  }
+
+  deleteMetadata(key: string): boolean {
+    return this.inner.deleteMetadata(key);
+  }
+
+  gcOrphanEmbeddings(): number {
+    return this.inner.gcOrphanEmbeddings();
+  }
+
+  gcOrphanChunks(): number {
+    return this.inner.gcOrphanChunks();
+  }
+
+  getStats(): DatabaseStats {
+    return this.inner.getStats();
+  }
+}
