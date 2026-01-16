@@ -219,7 +219,10 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "watchFiles": true,
     "maxFileSize": 1048576,
     "maxChunksPerFile": 100,
-    "semanticOnly": false
+    "semanticOnly": false,
+    "autoGc": true,
+    "gcIntervalDays": 7,
+    "gcOrphanThreshold": 100
   },
   "search": {
     "maxResults": 20,
@@ -244,6 +247,9 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 | `semanticOnly` | `false` | When `true`, only index semantic nodes (functions, classes) and skip generic blocks |
 | `retries` | `3` | Number of retry attempts for failed embedding API calls |
 | `retryDelayMs` | `1000` | Delay between retries in milliseconds |
+| `autoGc` | `true` | Automatically run garbage collection to remove orphaned embeddings/chunks |
+| `gcIntervalDays` | `7` | Run GC on initialization if last GC was more than N days ago |
+| `gcOrphanThreshold` | `100` | Run GC after indexing if orphan count exceeds this threshold |
 | **search** | | |
 | `maxResults` | `20` | Maximum results to return |
 | `minScore` | `0.1` | Minimum similarity score (0-1). Lower = more results |

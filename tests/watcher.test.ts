@@ -19,6 +19,9 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
     semanticOnly: false,
     retries: 3,
     retryDelayMs: 1000,
+    autoGc: true,
+    gcIntervalDays: 7,
+    gcOrphanThreshold: 100,
   },
   search: {
     maxResults: 20,
