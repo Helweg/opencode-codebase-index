@@ -498,11 +498,19 @@ export class Indexer {
       }
     }
 
-    const queue = new PQueue({ concurrency: 3 });
+    // GitHub Models API rate limit: 15 requests/minute for embeddings
+    // Use concurrency 1 with 4-second delay to stay under limit (15 req/min = 1 req per 4 sec)
+    const queue = new PQueue({ concurrency: 1, interval: 4000, intervalCap: 1 });
     const dynamicBatches = createDynamicBatches(chunksNeedingEmbedding);
+    let rateLimitBackoffMs = 0;
 
     for (const batch of dynamicBatches) {
       queue.add(async () => {
+        // Additional backoff if we've been rate limited
+        if (rateLimitBackoffMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, rateLimitBackoffMs));
+        }
+        
         try {
           const result = await pRetry(
             async () => {
@@ -511,15 +519,16 @@ export class Indexer {
             },
             {
               retries: this.config.indexing.retries,
-              minTimeout: this.config.indexing.retryDelayMs,
-              maxTimeout: 30000,
+              minTimeout: Math.max(this.config.indexing.retryDelayMs, 5000), // Minimum 5s between retries
+              maxTimeout: 60000, // Max 60s backoff
               factor: 2,
               onFailedAttempt: (error) => {
                 const message = getErrorMessage(error);
                 if (isRateLimitError(error)) {
-                  queue.concurrency = 1;
+                  // Exponential backoff: 10s, 20s, 40s...
+                  rateLimitBackoffMs = Math.min(60000, (rateLimitBackoffMs || 5000) * 2);
                   console.error(
-                    `Rate limited (attempt ${error.attemptNumber}/${error.retriesLeft + error.attemptNumber}): waiting before retry...`
+                    `Rate limited (attempt ${error.attemptNumber}/${error.retriesLeft + error.attemptNumber}): waiting ${rateLimitBackoffMs / 1000}s before retry...`
                   );
                 } else {
                   console.error(
@@ -529,6 +538,11 @@ export class Indexer {
               },
             }
           );
+          
+          // Success - gradually reduce backoff
+          if (rateLimitBackoffMs > 0) {
+            rateLimitBackoffMs = Math.max(0, rateLimitBackoffMs - 2000);
+          }
 
           const items = batch.map((chunk, idx) => ({
             id: chunk.id,
