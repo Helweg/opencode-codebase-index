@@ -153,7 +153,11 @@ impl VectorStoreInner {
             fs::create_dir_all(parent)?;
         }
 
-        self.index.save(self.index_path.to_str().unwrap())?;
+        let index_path_str = self
+            .index_path
+            .to_str()
+            .ok_or_else(|| anyhow!("Index path contains invalid UTF-8: {:?}", self.index_path))?;
+        self.index.save(index_path_str)?;
 
         let metadata_json = serde_json::to_string(&self.stored)?;
         fs::write(&self.metadata_path, metadata_json)?;
@@ -163,7 +167,11 @@ impl VectorStoreInner {
 
     pub fn load(&mut self) -> Result<()> {
         if self.index_path.exists() {
-            self.index.load(self.index_path.to_str().unwrap())?;
+            let index_path_str = self
+                .index_path
+                .to_str()
+                .ok_or_else(|| anyhow!("Index path contains invalid UTF-8: {:?}", self.index_path))?;
+            self.index.load(index_path_str)?;
         }
 
         if self.metadata_path.exists() {
