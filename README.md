@@ -257,6 +257,31 @@ The plugin automatically detects available credentials in this order:
 3. **Google** (Gemini Embeddings)
 4. **Ollama** (Local/Private - requires `nomic-embed-text`)
 
+### Rate Limits by Provider
+
+Each provider has different rate limits. The plugin automatically adjusts concurrency and delays:
+
+| Provider | Concurrency | Delay | Best For |
+|----------|-------------|-------|----------|
+| **GitHub Copilot** | 1 | 4s | Small codebases (<1k files) |
+| **OpenAI** | 3 | 500ms | Medium codebases |
+| **Google** | 5 | 200ms | Medium-large codebases |
+| **Ollama** | 5 | None | Large codebases (10k+ files) |
+
+**For large codebases**, use Ollama locally to avoid rate limits:
+
+```bash
+# Install the embedding model
+ollama pull nomic-embed-text
+```
+
+```json
+// .opencode/codebase-index.json
+{
+  "embeddingProvider": "ollama"
+}
+```
+
 ## ⚠️ Tradeoffs
 
 Be aware of these characteristics:
