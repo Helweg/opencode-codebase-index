@@ -1,9 +1,11 @@
 use crate::SearchResult;
 use anyhow::{anyhow, Result};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use usearch::{new_index, Index, IndexOptions, MetricKind, ScalarKind};
 
 #[derive(Serialize, Deserialize, Default)]
@@ -94,9 +96,67 @@ impl VectorStoreInner {
             return Err(anyhow!("Mismatched batch sizes"));
         }
 
-        for (i, key) in keys.iter().enumerate() {
-            self.add(key, &vectors[i], &metadata[i])?;
+        let batch_size = keys.len();
+        if batch_size == 0 {
+            return Ok(());
         }
+
+        for (i, vector) in vectors.iter().enumerate() {
+            if vector.len() != self.dimensions {
+                return Err(anyhow!(
+                    "Vector {} dimension mismatch: expected {}, got {}",
+                    i,
+                    self.dimensions,
+                    vector.len()
+                ));
+            }
+        }
+
+        let existing_ids: Vec<u64> = keys
+            .iter()
+            .filter_map(|key| self.stored.key_to_id.get(key).copied())
+            .collect();
+
+        for id in existing_ids {
+            self.index.remove(id)?;
+            if let Some(key) = self.stored.id_to_key.remove(&id) {
+                self.stored.key_to_id.remove(&key);
+            }
+        }
+
+        let current_size = self.index.size();
+        let needed_capacity = current_size + batch_size;
+        let num_threads = rayon::current_num_threads();
+        self.index
+            .reserve_capacity_and_threads(needed_capacity, num_threads)?;
+
+        let start_id = self.stored.next_id;
+        let failure_count = AtomicUsize::new(0);
+
+        let ids: Vec<u64> = (0..batch_size).map(|i| start_id + i as u64).collect();
+
+        ids.par_iter().zip(vectors.par_iter()).for_each(|(&id, vector)| {
+            if self.index.add(id, vector).is_err() {
+                failure_count.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        if failure_count.load(Ordering::Relaxed) > 0 {
+            return Err(anyhow!(
+                "Failed to add {} vectors to index",
+                failure_count.load(Ordering::Relaxed)
+            ));
+        }
+
+        for (i, key) in keys.iter().enumerate() {
+            let id = start_id + i as u64;
+            self.stored.id_to_key.insert(id, key.clone());
+            self.stored.key_to_id.insert(key.clone(), id);
+            self.stored
+                .metadata
+                .insert(key.clone(), metadata[i].clone());
+        }
+        self.stored.next_id = start_id + batch_size as u64;
 
         Ok(())
     }
