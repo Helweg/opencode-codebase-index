@@ -68,28 +68,27 @@ src/api/checkout.ts:89      (Route handler for /pay)
 
 **Rule of thumb**: Semantic search for discovery → grep for precision.
 
-## 📊 Token Usage Benchmarks
+## 📊 Token Usage
 
-We tested the query *"find the error handling middleware"* across multiple open-source codebases:
+In our testing across open-source codebases (axios, express), we observed **up to 90% reduction in token usage** for conceptual queries like *"find the error handling middleware"*.
 
-| Codebase | Files | Without Plugin | With Plugin | Savings |
-|----------|-------|----------------|-------------|---------|
-| [axios](https://github.com/axios/axios) | 170 | 126,051 tokens | 3,377 tokens | **97%** |
-| [express](https://github.com/expressjs/express) | 670 | 21,727 tokens | 2,458 tokens | **89%** |
+### Why It Saves Tokens
+
+- **Without plugin**: Agent explores files, reads code, backtracks, explores more
+- **With plugin**: Semantic search returns relevant code immediately → less exploration
 
 ### Key Takeaways
 
-1. **Massive token savings**: 89-97% reduction across tested codebases
-2. **Scales with complexity**: Without the plugin, the agent explores more files; with it, semantic search provides immediate context
-3. **Complements existing tools**: The plugin doesn't replace grep/explore—it provides a faster initial signal that reduces exploration overhead
-4. **Same answer quality**: Both approaches found the relevant error handling code
+1. **Significant savings possible**: Up to 90% reduction in the best cases
+2. **Results vary**: Savings depend on query type, codebase structure, and agent behavior
+3. **Best for discovery**: Conceptual queries benefit most; exact identifier lookups should use grep
+4. **Complements existing tools**: Provides a faster initial signal, doesn't replace grep/explore
 
 ### When the Plugin Helps Most
 
 - **Conceptual queries**: "Where is the authentication logic?" (no keywords to grep for)
 - **Unfamiliar codebases**: You don't know what to search for yet
-- **Cost-sensitive workflows**: 89-97% fewer tokens adds up significantly
-- **Large codebases**: Semantic search scales better than exhaustive grep
+- **Large codebases**: Semantic search scales better than exhaustive exploration
 
 ## 🛠️ How It Works
 
