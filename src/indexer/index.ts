@@ -297,6 +297,7 @@ export class Indexer {
 
     const allMetadata = this.store.getAllMetadata();
     const chunkIds: string[] = [];
+    const chunkDataBatch: ChunkData[] = [];
 
     for (const { key, metadata } of allMetadata) {
       const chunkData: ChunkData = {
@@ -309,11 +310,14 @@ export class Indexer {
         name: metadata.name,
         language: metadata.language,
       };
-      this.database.upsertChunk(chunkData);
+      chunkDataBatch.push(chunkData);
       chunkIds.push(key);
     }
 
-    this.database.addChunksToBranch(this.currentBranch || "default", chunkIds);
+    if (chunkDataBatch.length > 0) {
+      this.database.upsertChunksBatch(chunkDataBatch);
+    }
+    this.database.addChunksToBranchBatch(this.currentBranch || "default", chunkIds);
   }
 
   private async ensureInitialized(): Promise<{
@@ -434,6 +438,8 @@ export class Indexer {
       }
     }
 
+    const chunkDataBatch: ChunkData[] = [];
+
     for (const parsed of parsedFiles) {
       currentFilePaths.add(parsed.path);
       
@@ -466,7 +472,7 @@ export class Indexer {
           name: chunk.name,
           language: chunk.language,
         };
-        database.upsertChunk(chunkData);
+        chunkDataBatch.push(chunkData);
 
         if (existingChunks.get(id) === contentHash) {
           fileChunkCount++;
@@ -489,6 +495,10 @@ export class Indexer {
       }
     }
 
+    if (chunkDataBatch.length > 0) {
+      database.upsertChunksBatch(chunkDataBatch);
+    }
+
     let removedCount = 0;
     for (const [chunkId] of existingChunks) {
       if (!currentChunkIds.has(chunkId)) {
@@ -504,7 +514,7 @@ export class Indexer {
 
     if (pendingChunks.length === 0 && removedCount === 0) {
       database.clearBranch(this.currentBranch);
-      database.addChunksToBranch(this.currentBranch, Array.from(currentChunkIds));
+      database.addChunksToBranchBatch(this.currentBranch, Array.from(currentChunkIds));
       this.fileHashCache = currentFileHashes;
       this.saveFileHashCache();
       stats.durationMs = Date.now() - startTime;
@@ -520,7 +530,7 @@ export class Indexer {
 
     if (pendingChunks.length === 0) {
       database.clearBranch(this.currentBranch);
-      database.addChunksToBranch(this.currentBranch, Array.from(currentChunkIds));
+      database.addChunksToBranchBatch(this.currentBranch, Array.from(currentChunkIds));
       store.save();
       invertedIndex.save();
       this.fileHashCache = currentFileHashes;
@@ -615,17 +625,15 @@ export class Indexer {
 
           store.addBatch(items);
           
-          for (let i = 0; i < batch.length; i++) {
-            const chunk = batch[i];
-            const embedding = result.embeddings[i];
-            
-            database.upsertEmbedding(
-              chunk.contentHash,
-              float32ArrayToBuffer(embedding),
-              chunk.text,
-              detectedProvider.modelInfo.model
-            );
-            
+          const embeddingBatchItems = batch.map((chunk, i) => ({
+            contentHash: chunk.contentHash,
+            embedding: float32ArrayToBuffer(result.embeddings[i]),
+            chunkText: chunk.text,
+            model: detectedProvider.modelInfo.model,
+          }));
+          database.upsertEmbeddingsBatch(embeddingBatchItems);
+
+          for (const chunk of batch) {
             invertedIndex.removeChunk(chunk.id);
             invertedIndex.addChunk(chunk.id, chunk.content);
           }
@@ -659,7 +667,7 @@ export class Indexer {
     });
 
     database.clearBranch(this.currentBranch);
-    database.addChunksToBranch(this.currentBranch, Array.from(currentChunkIds));
+    database.addChunksToBranchBatch(this.currentBranch, Array.from(currentChunkIds));
 
     store.save();
     invertedIndex.save();

@@ -542,12 +542,29 @@ export class Database {
     this.inner.upsertEmbedding(contentHash, embedding, chunkText, model);
   }
 
+  upsertEmbeddingsBatch(
+    items: Array<{
+      contentHash: string;
+      embedding: Buffer;
+      chunkText: string;
+      model: string;
+    }>
+  ): void {
+    if (items.length === 0) return;
+    this.inner.upsertEmbeddingsBatch(items);
+  }
+
   getMissingEmbeddings(contentHashes: string[]): string[] {
     return this.inner.getMissingEmbeddings(contentHashes);
   }
 
   upsertChunk(chunk: ChunkData): void {
     this.inner.upsertChunk(chunk);
+  }
+
+  upsertChunksBatch(chunks: ChunkData[]): void {
+    if (chunks.length === 0) return;
+    this.inner.upsertChunksBatch(chunks);
   }
 
   getChunk(chunkId: string): ChunkData | null {
@@ -564,6 +581,11 @@ export class Database {
 
   addChunksToBranch(branch: string, chunkIds: string[]): void {
     this.inner.addChunksToBranch(branch, chunkIds);
+  }
+
+  addChunksToBranchBatch(branch: string, chunkIds: string[]): void {
+    if (chunkIds.length === 0) return;
+    this.inner.addChunksToBranchBatch(branch, chunkIds);
   }
 
   clearBranch(branch: string): number {

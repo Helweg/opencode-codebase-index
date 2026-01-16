@@ -1,6 +1,6 @@
 # AGENTS.md - AI Agent Guidelines for opencode-codebase-index
 
-**Generated:** 2026-01-16 | **Commit:** d02b915 | **Branch:** main
+**Generated:** 2025-01-16 | **Commit:** 9f94822 | **Branch:** main
 
 Semantic codebase indexing plugin for OpenCode. Hybrid TypeScript/Rust architecture:
 - **TypeScript** (`src/`): Plugin logic, embedding providers, OpenCode tools
@@ -90,9 +90,19 @@ skill/                    # OpenCode skill guidance
 | `parse_files` | fn | Parallel multi-file parsing |
 | `hash_content` | fn | xxhash string |
 | `hash_file` | fn | xxhash file contents |
-| `VectorStore` | class | usearch wrapper (add/search/save/load) |
-| `Database` | class | SQLite: embeddings, chunks, branches, metadata |
+| `VectorStore` | class | usearch wrapper (add/addBatch/search/save/load) |
+| `Database` | class | SQLite: embeddings, chunks, branches, metadata (includes batch methods) |
 | `InvertedIndex` | class | BM25 keyword search |
+
+### Database Batch Methods
+The `Database` class exposes batch operations for high-performance bulk inserts:
+| Method | Purpose | Speedup |
+|--------|---------|---------|
+| `upsertEmbeddingsBatch` | Batch insert embeddings in single transaction | ~1.3x |
+| `upsertChunksBatch` | Batch insert chunks in single transaction | ~12x |
+| `addChunksToBranchBatch` | Batch add chunks to branch in single transaction | ~18x |
+
+These are used by the Indexer for all bulk operations. Prefer batch methods over sequential calls.
 
 ## CONVENTIONS
 
@@ -180,10 +190,20 @@ afterEach(() => { fs.rmSync(tempDir, { recursive: true, force: true }); });
 | File | Tests |
 |------|-------|
 | `native.test.ts` | Rust bindings: parsing, vectors, hashing |
-| `database.test.ts` | SQLite: CRUD, branches, GC |
+| `database.test.ts` | SQLite: CRUD, branches, GC, batch operations |
 | `inverted-index.test.ts` | BM25 keyword search |
 | `files.test.ts` | File collection, .gitignore |
 | `cost.test.ts` | Token estimation |
+| `watcher.test.ts` | File/git branch watching |
+| `auto-gc.test.ts` | Automatic garbage collection |
+| `git.test.ts` | Git branch detection |
+
+### Benchmarks
+```bash
+npx tsx benchmarks/run.ts   # Performance testing for native operations
+```
+
+Tests batch vs sequential performance for VectorStore and SQLite operations.
 
 ## CONFIGURATION
 

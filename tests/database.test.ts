@@ -293,4 +293,148 @@ describe("Database", () => {
       expect(stats.branchCount).toBe(1);
     });
   });
+
+  describe("batch operations", () => {
+    it("should upsert embeddings in batch", () => {
+      const items = [
+        {
+          contentHash: "batch_hash1",
+          embedding: Buffer.from(new Float32Array([1.0, 2.0]).buffer),
+          chunkText: "text1",
+          model: "test-model",
+        },
+        {
+          contentHash: "batch_hash2",
+          embedding: Buffer.from(new Float32Array([3.0, 4.0]).buffer),
+          chunkText: "text2",
+          model: "test-model",
+        },
+        {
+          contentHash: "batch_hash3",
+          embedding: Buffer.from(new Float32Array([5.0, 6.0]).buffer),
+          chunkText: "text3",
+          model: "test-model",
+        },
+      ];
+
+      db.upsertEmbeddingsBatch(items);
+
+      expect(db.embeddingExists("batch_hash1")).toBe(true);
+      expect(db.embeddingExists("batch_hash2")).toBe(true);
+      expect(db.embeddingExists("batch_hash3")).toBe(true);
+
+      const retrieved = db.getEmbedding("batch_hash2");
+      expect(retrieved).not.toBeNull();
+      const floats = new Float32Array(retrieved!.buffer, retrieved!.byteOffset, retrieved!.byteLength / 4);
+      expect(floats[0]).toBeCloseTo(3.0);
+      expect(floats[1]).toBeCloseTo(4.0);
+    });
+
+    it("should handle empty embeddings batch", () => {
+      db.upsertEmbeddingsBatch([]);
+      expect(db.getStats().embeddingCount).toBe(0);
+    });
+
+    it("should upsert chunks in batch", () => {
+      const chunks: ChunkData[] = [
+        {
+          chunkId: "batch_chunk1",
+          contentHash: "hash1",
+          filePath: "/file1.ts",
+          startLine: 1,
+          endLine: 10,
+          nodeType: "function",
+          name: "func1",
+          language: "typescript",
+        },
+        {
+          chunkId: "batch_chunk2",
+          contentHash: "hash2",
+          filePath: "/file2.ts",
+          startLine: 20,
+          endLine: 30,
+          nodeType: "class",
+          name: "MyClass",
+          language: "typescript",
+        },
+        {
+          chunkId: "batch_chunk3",
+          contentHash: "hash3",
+          filePath: "/file1.ts",
+          startLine: 50,
+          endLine: 60,
+          language: "typescript",
+        },
+      ];
+
+      db.upsertChunksBatch(chunks);
+
+      const chunk1 = db.getChunk("batch_chunk1");
+      expect(chunk1).not.toBeNull();
+      expect(chunk1!.filePath).toBe("/file1.ts");
+      expect(chunk1!.name).toBe("func1");
+
+      const chunk2 = db.getChunk("batch_chunk2");
+      expect(chunk2).not.toBeNull();
+      expect(chunk2!.nodeType).toBe("class");
+
+      const chunk3 = db.getChunk("batch_chunk3");
+      expect(chunk3).not.toBeNull();
+
+      const file1Chunks = db.getChunksByFile("/file1.ts");
+      expect(file1Chunks.length).toBe(2);
+    });
+
+    it("should handle empty chunks batch", () => {
+      db.upsertChunksBatch([]);
+      expect(db.getStats().chunkCount).toBe(0);
+    });
+
+    it("should add chunks to branch in batch", () => {
+      const chunks: ChunkData[] = [
+        { chunkId: "c1", contentHash: "h1", filePath: "/f.ts", startLine: 1, endLine: 5, language: "ts" },
+        { chunkId: "c2", contentHash: "h2", filePath: "/f.ts", startLine: 10, endLine: 15, language: "ts" },
+        { chunkId: "c3", contentHash: "h3", filePath: "/f.ts", startLine: 20, endLine: 25, language: "ts" },
+      ];
+      db.upsertChunksBatch(chunks);
+
+      db.addChunksToBranchBatch("feature-branch", ["c1", "c2", "c3"]);
+
+      const branchChunks = db.getBranchChunkIds("feature-branch");
+      expect(branchChunks.length).toBe(3);
+      expect(branchChunks).toContain("c1");
+      expect(branchChunks).toContain("c2");
+      expect(branchChunks).toContain("c3");
+    });
+
+    it("should handle empty branch batch", () => {
+      db.addChunksToBranchBatch("empty-branch", []);
+      expect(db.getBranchChunkIds("empty-branch").length).toBe(0);
+    });
+
+    it("should update existing chunks in batch", () => {
+      db.upsertChunk({
+        chunkId: "update_chunk",
+        contentHash: "old_hash",
+        filePath: "/old.ts",
+        startLine: 1,
+        endLine: 5,
+        language: "typescript",
+      });
+
+      db.upsertChunksBatch([{
+        chunkId: "update_chunk",
+        contentHash: "new_hash",
+        filePath: "/new.ts",
+        startLine: 10,
+        endLine: 20,
+        language: "typescript",
+      }]);
+
+      const chunk = db.getChunk("update_chunk");
+      expect(chunk!.contentHash).toBe("new_hash");
+      expect(chunk!.filePath).toBe("/new.ts");
+      expect(chunk!.startLine).toBe(10);
+    });
+  });
 });
