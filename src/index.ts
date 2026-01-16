@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { existsSync, readFileSync } from "fs";
 import * as path from "path";
 import * as os from "os";
+import { fileURLToPath } from "url";
 
 import { parseConfig } from "./config/schema.js";
 import { Indexer } from "./indexer/index.js";
@@ -13,6 +14,17 @@ import {
   index_health_check,
   initializeTools,
 } from "./tools/index.js";
+import { loadCommandsFromDirectory } from "./commands/loader.js";
+
+function getCommandsDir(): string {
+  let currentDir = process.cwd();
+  
+  if (typeof import.meta !== "undefined" && import.meta.url) {
+    currentDir = path.dirname(fileURLToPath(import.meta.url));
+  }
+  
+  return path.join(currentDir, "..", "commands");
+}
 
 function loadJsonFile(filePath: string): unknown {
   try {
@@ -69,38 +81,12 @@ const plugin: Plugin = async ({ directory }) => {
     async config(cfg) {
       cfg.command = cfg.command ?? {};
 
-      cfg.command["search"] = {
-        description: "Search codebase by meaning using semantic search",
-        template: `Use the \`codebase_search\` tool to find code related to: $ARGUMENTS
+      const commandsDir = getCommandsDir();
+      const commands = loadCommandsFromDirectory(commandsDir);
 
-If the index doesn't exist yet, run \`index_codebase\` first.
-
-Return the most relevant results with file paths and line numbers.`,
-      };
-
-      cfg.command["find"] = {
-        description: "Find code using hybrid approach (semantic + grep)",
-        template: `Find code related to: $ARGUMENTS
-
-Strategy:
-1. First use \`codebase_search\` to find semantically related code
-2. From the results, identify specific function/class names
-3. Use grep to find all occurrences of those identifiers
-4. Combine findings into a comprehensive answer
-
-If the semantic index doesn't exist, run \`index_codebase\` first.`,
-      };
-
-      cfg.command["index"] = {
-        description: "Index the codebase for semantic search",
-        template: `Run the \`index_codebase\` tool to create or update the semantic search index.
-
-Show progress and final statistics including:
-- Number of files processed
-- Number of chunks indexed
-- Tokens used
-- Duration`,
-      };
+      for (const [name, definition] of commands) {
+        cfg.command[name] = definition;
+      }
     },
   };
 };
