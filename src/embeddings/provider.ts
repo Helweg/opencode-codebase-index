@@ -157,41 +157,42 @@ class GoogleEmbeddingProvider implements EmbeddingProviderInterface {
   }
 
   async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
-    const embeddings: number[][] = [];
-    let totalTokens = 0;
-
-    for (const text of texts) {
-      const response = await fetch(
-        `${this.credentials.baseUrl}/models/${this.modelInfo.model}:embedContent?key=${this.credentials.apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            content: {
-              parts: [{ text }],
+    const results = await Promise.all(
+      texts.map(async (text) => {
+        const response = await fetch(
+          `${this.credentials.baseUrl}/models/${this.modelInfo.model}:embedContent?key=${this.credentials.apiKey}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
             },
-          }),
+            body: JSON.stringify({
+              content: {
+                parts: [{ text }],
+              },
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.text();
+          throw new Error(`Google embedding API error: ${response.status} - ${error}`);
         }
-      );
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Google embedding API error: ${response.status} - ${error}`);
-      }
+        const data = await response.json() as {
+          embedding: { values: number[] };
+        };
 
-      const data = await response.json() as {
-        embedding: { values: number[] };
-      };
-
-      embeddings.push(data.embedding.values);
-      totalTokens += Math.ceil(text.length / 4);
-    }
+        return {
+          embedding: data.embedding.values,
+          tokensUsed: Math.ceil(text.length / 4),
+        };
+      })
+    );
 
     return {
-      embeddings,
-      totalTokensUsed: totalTokens,
+      embeddings: results.map((r) => r.embedding),
+      totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
     };
   }
 
@@ -234,18 +235,11 @@ class OllamaEmbeddingProvider implements EmbeddingProviderInterface {
   }
 
   async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
-    const embeddings: number[][] = [];
-    let totalTokens = 0;
-
-    for (const text of texts) {
-      const result = await this.embed(text);
-      embeddings.push(result.embedding);
-      totalTokens += result.tokensUsed;
-    }
-
+    const results = await Promise.all(texts.map((text) => this.embed(text)));
+    
     return {
-      embeddings,
-      totalTokensUsed: totalTokens,
+      embeddings: results.map((r) => r.embedding),
+      totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
     };
   }
 

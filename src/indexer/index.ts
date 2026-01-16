@@ -892,12 +892,19 @@ export class Indexer {
   }
 
   async clearIndex(): Promise<void> {
-    const { store, invertedIndex } = await this.ensureInitialized();
+    const { store, invertedIndex, database } = await this.ensureInitialized();
 
     store.clear();
     store.save();
     invertedIndex.clear();
     invertedIndex.save();
+    
+    // Clear file hash cache so all files are re-parsed
+    this.fileHashCache.clear();
+    this.saveFileHashCache();
+    
+    // Clear branch catalog
+    database.clearBranch(this.currentBranch);
   }
 
   async healthCheck(): Promise<{ removed: number; filePaths: string[]; gcOrphanEmbeddings: number; gcOrphanChunks: number }> {
