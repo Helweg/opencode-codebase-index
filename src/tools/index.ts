@@ -1,6 +1,6 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
-import { Indexer, IndexStats } from "../indexer/index.js";
+import { Indexer, IndexStats, IndexProgress } from "../indexer/index.js";
 import { ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
 
@@ -63,7 +63,7 @@ export const index_codebase: ToolDefinition = tool({
     estimateOnly: z.boolean().optional().default(false).describe("Only show cost estimate without indexing"),
     verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
   },
-  async execute(args) {
+  async execute(args, context) {
     const indexer = getIndexer();
 
     if (args.estimateOnly) {
@@ -75,7 +75,19 @@ export const index_codebase: ToolDefinition = tool({
       await indexer.clearIndex();
     }
 
-    const stats = await indexer.index();
+    const stats = await indexer.index((progress) => {
+      context.metadata({
+        title: formatProgressTitle(progress),
+        metadata: {
+          phase: progress.phase,
+          filesProcessed: progress.filesProcessed,
+          totalFiles: progress.totalFiles,
+          chunksProcessed: progress.chunksProcessed,
+          totalChunks: progress.totalChunks,
+          percentage: calculatePercentage(progress),
+        },
+      });
+    });
     return formatIndexStats(stats, args.verbose ?? false);
   },
 });
@@ -205,4 +217,40 @@ function formatStatus(status: {
   }
 
   return lines.join("\n");
+}
+
+function formatProgressTitle(progress: IndexProgress): string {
+  switch (progress.phase) {
+    case "scanning":
+      return "Scanning files...";
+    case "parsing":
+      return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files`;
+    case "embedding":
+      return `Embedding: ${progress.chunksProcessed}/${progress.totalChunks} chunks`;
+    case "storing":
+      return "Storing index...";
+    case "complete":
+      return "Indexing complete";
+    default:
+      return "Indexing...";
+  }
+}
+
+function calculatePercentage(progress: IndexProgress): number {
+  if (progress.phase === "scanning") return 0;
+  if (progress.phase === "complete") return 100;
+  
+  if (progress.phase === "parsing") {
+    if (progress.totalFiles === 0) return 5;
+    return Math.round(5 + (progress.filesProcessed / progress.totalFiles) * 15);
+  }
+  
+  if (progress.phase === "embedding") {
+    if (progress.totalChunks === 0) return 20;
+    return Math.round(20 + (progress.chunksProcessed / progress.totalChunks) * 70);
+  }
+  
+  if (progress.phase === "storing") return 95;
+  
+  return 0;
 }
