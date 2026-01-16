@@ -288,6 +288,125 @@ ollama pull nomic-embed-text
 }
 ```
 
+## 📈 Performance
+
+The plugin is built for speed with a Rust native module. Here are typical performance numbers (Apple M1):
+
+### Parsing (tree-sitter)
+
+| Files | Chunks | Time |
+|-------|--------|------|
+| 100 | 1,200 | ~7ms |
+| 500 | 6,000 | ~32ms |
+
+### Vector Search (usearch)
+
+| Index Size | Search Time | Throughput |
+|------------|-------------|------------|
+| 1,000 vectors | 0.7ms | 1,400 ops/sec |
+| 5,000 vectors | 1.2ms | 850 ops/sec |
+| 10,000 vectors | 1.3ms | 780 ops/sec |
+
+### Database Operations (SQLite with batch)
+
+| Operation | 1,000 items | 10,000 items |
+|-----------|-------------|--------------|
+| Insert chunks | 4ms | 44ms |
+| Add to branch | 2ms | 22ms |
+| Check embedding exists | <0.01ms | <0.01ms |
+
+### Batch vs Sequential Performance
+
+Batch operations provide significant speedups:
+
+| Operation | Sequential | Batch | Speedup |
+|-----------|------------|-------|---------|
+| Insert 1,000 chunks | 38ms | 4ms | **~10x** |
+| Add 1,000 to branch | 29ms | 2ms | **~14x** |
+| Insert 1,000 embeddings | 59ms | 40ms | **~1.5x** |
+
+Run benchmarks yourself: `npx tsx benchmarks/run.ts`
+
+## 🎯 Choosing a Provider
+
+Use this decision tree to pick the right embedding provider:
+
+```
+                    ┌─────────────────────────┐
+                    │ Do you have Copilot?    │
+                    └───────────┬─────────────┘
+                          ┌─────┴─────┐
+                         YES          NO
+                          │            │
+              ┌───────────▼───────┐    │
+              │ Codebase < 1k     │    │
+              │ files?            │    │
+              └─────────┬─────────┘    │
+                  ┌─────┴─────┐        │
+                 YES          NO       │
+                  │            │       │
+                  ▼            │       │
+           ┌──────────┐        │       │
+           │ Copilot  │        │       │
+           │ (free)   │        │       │
+           └──────────┘        │       │
+                               ▼       ▼
+                    ┌─────────────────────────┐
+                    │ Need fastest indexing?  │
+                    └───────────┬─────────────┘
+                          ┌─────┴─────┐
+                         YES          NO
+                          │            │
+                          ▼            ▼
+                   ┌──────────┐ ┌──────────────┐
+                   │ Ollama   │ │ OpenAI or    │
+                   │ (local)  │ │ Google       │
+                   └──────────┘ └──────────────┘
+```
+
+### Provider Comparison
+
+| Provider | Speed | Cost | Privacy | Best For |
+|----------|-------|------|---------|----------|
+| **Ollama** | Fastest | Free | Full | Large codebases, privacy-sensitive |
+| **GitHub Copilot** | Slow (rate limited) | Free* | Cloud | Small codebases, existing subscribers |
+| **OpenAI** | Medium | ~$0.0001/1K tokens | Cloud | General use |
+| **Google** | Fast | Free tier available | Cloud | Medium-large codebases |
+
+*Requires active Copilot subscription
+
+### Setup by Provider
+
+**Ollama (Recommended for large codebases)**
+```bash
+ollama pull nomic-embed-text
+```
+```json
+{ "embeddingProvider": "ollama" }
+```
+
+**OpenAI**
+```bash
+export OPENAI_API_KEY=sk-...
+```
+```json
+{ "embeddingProvider": "openai" }
+```
+
+**Google**
+```bash
+export GOOGLE_API_KEY=...
+```
+```json
+{ "embeddingProvider": "google" }
+```
+
+**GitHub Copilot**
+No setup needed if you have an active Copilot subscription.
+```json
+{ "embeddingProvider": "github-copilot" }
+```
+
 ## ⚠️ Tradeoffs
 
 Be aware of these characteristics:
