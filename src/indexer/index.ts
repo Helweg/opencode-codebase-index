@@ -247,6 +247,49 @@ export class Indexer {
       this.currentBranch = "default";
       this.baseBranch = "default";
     }
+
+    // Auto-GC: Run garbage collection if enabled and interval has elapsed
+    if (this.config.indexing.autoGc) {
+      await this.maybeRunAutoGc();
+    }
+  }
+
+  private async maybeRunAutoGc(): Promise<void> {
+    if (!this.database) return;
+
+    const lastGcTimestamp = this.database.getMetadata("lastGcTimestamp");
+    const now = Date.now();
+    const intervalMs = this.config.indexing.gcIntervalDays * 24 * 60 * 60 * 1000;
+
+    let shouldRunGc = false;
+    if (!lastGcTimestamp) {
+      // Never run GC before, run it now
+      shouldRunGc = true;
+    } else {
+      const lastGcTime = parseInt(lastGcTimestamp, 10);
+      if (!isNaN(lastGcTime) && now - lastGcTime > intervalMs) {
+        shouldRunGc = true;
+      }
+    }
+
+    if (shouldRunGc) {
+      await this.healthCheck();
+      this.database.setMetadata("lastGcTimestamp", now.toString());
+    }
+  }
+
+  private async maybeRunOrphanGc(): Promise<void> {
+    if (!this.database) return;
+
+    const stats = this.database.getStats();
+    if (!stats) return;
+
+    const orphanCount = stats.embeddingCount - stats.chunkCount;
+    if (orphanCount > this.config.indexing.gcOrphanThreshold) {
+      this.database.gcOrphanEmbeddings();
+      this.database.gcOrphanChunks();
+      this.database.setMetadata("lastGcTimestamp", Date.now().toString());
+    }
   }
 
   private migrateFromLegacyIndex(): void {
@@ -622,6 +665,11 @@ export class Indexer {
     invertedIndex.save();
     this.fileHashCache = currentFileHashes;
     this.saveFileHashCache();
+
+    // Auto-GC after indexing: check if orphan count exceeds threshold
+    if (this.config.indexing.autoGc && stats.removedChunks > 0) {
+      await this.maybeRunOrphanGc();
+    }
 
     stats.durationMs = Date.now() - startTime;
     

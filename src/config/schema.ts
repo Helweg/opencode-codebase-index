@@ -12,6 +12,9 @@ export interface IndexingConfig {
   semanticOnly: boolean;
   retries: number;
   retryDelayMs: number;
+  autoGc: boolean;
+  gcIntervalDays: number;
+  gcOrphanThreshold: number;
 }
 
 export interface SearchConfig {
@@ -75,6 +78,9 @@ function getDefaultIndexingConfig(): IndexingConfig {
     semanticOnly: false,
     retries: 3,
     retryDelayMs: 1000,
+    autoGc: true,
+    gcIntervalDays: 7,
+    gcOrphanThreshold: 100,
   };
 }
 
@@ -117,6 +123,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     semanticOnly: typeof rawIndexing.semanticOnly === "boolean" ? rawIndexing.semanticOnly : defaultIndexing.semanticOnly,
     retries: typeof rawIndexing.retries === "number" ? rawIndexing.retries : defaultIndexing.retries,
     retryDelayMs: typeof rawIndexing.retryDelayMs === "number" ? rawIndexing.retryDelayMs : defaultIndexing.retryDelayMs,
+    autoGc: typeof rawIndexing.autoGc === "boolean" ? rawIndexing.autoGc : defaultIndexing.autoGc,
+    gcIntervalDays: typeof rawIndexing.gcIntervalDays === "number" ? Math.max(1, rawIndexing.gcIntervalDays) : defaultIndexing.gcIntervalDays,
+    gcOrphanThreshold: typeof rawIndexing.gcOrphanThreshold === "number" ? Math.max(0, rawIndexing.gcOrphanThreshold) : defaultIndexing.gcOrphanThreshold,
   };
   
   const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;
