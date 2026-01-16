@@ -1,7 +1,7 @@
 import * as path from "path";
-import { existsSync, readFileSync, rmSync } from "fs";
+import { existsSync, readFileSync, rmSync, mkdirSync } from "fs";
 
-import { Database, VectorStore, InvertedIndex, ChunkData } from "../native/index.js";
+import { Database, VectorStore, InvertedIndex, ChunkData, ChunkType } from "../native/index.js";
 
 export interface DeltaIndexes {
   vectorStore: VectorStore;
@@ -25,7 +25,7 @@ export async function buildDeltaIndexes(
   const delta = database.getBranchDelta(branch, baseBranch);
   
   const deltaPath = path.join(indexPath, `delta-${sanitizeBranchName(branch)}`);
-  await fsPromises.mkdir(deltaPath, { recursive: true });
+  mkdirSync(deltaPath, { recursive: true });
 
   const vectorStorePath = path.join(deltaPath, "vectors");
   const vectorStore = new VectorStore(vectorStorePath, dimensions);
@@ -45,7 +45,7 @@ export async function buildDeltaIndexes(
       filePath: chunk.filePath,
       startLine: chunk.startLine,
       endLine: chunk.endLine,
-      chunkType: chunk.nodeType || "other",
+      chunkType: (chunk.nodeType || "other") as ChunkType,
       name: chunk.name,
       language: chunk.language,
       hash: chunk.contentHash,
