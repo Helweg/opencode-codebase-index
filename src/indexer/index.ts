@@ -302,7 +302,7 @@ export class Indexer {
           break;
         }
         
-        if (this.config.indexing.semanticOnly && chunk.chunkType === "block") {
+        if (this.config.indexing.semanticOnly && chunk.chunkType === "other") {
           continue;
         }
         

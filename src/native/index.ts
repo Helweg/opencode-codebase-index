@@ -303,9 +303,9 @@ export function createEmbeddingText(chunk: CodeChunk, filePath: string): string 
   return parts.join("\n");
 }
 
-export function createDynamicBatches(chunks: Array<{ text: string; [key: string]: any }>): Array<Array<{ text: string; [key: string]: any }>> {
-  const batches: Array<Array<{ text: string; [key: string]: any }>> = [];
-  let currentBatch: Array<{ text: string; [key: string]: any }> = [];
+export function createDynamicBatches<T extends { text: string }>(chunks: T[]): T[][] {
+  const batches: T[][] = [];
+  let currentBatch: T[] = [];
   let currentTokens = 0;
   
   for (const chunk of chunks) {

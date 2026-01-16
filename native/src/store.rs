@@ -6,23 +6,12 @@ use std::fs;
 use std::path::PathBuf;
 use usearch::{new_index, Index, IndexOptions, MetricKind, ScalarKind};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct StoredMetadata {
     id_to_key: HashMap<u64, String>,
     key_to_id: HashMap<String, u64>,
     metadata: HashMap<String, String>,
     next_id: u64,
-}
-
-impl Default for StoredMetadata {
-    fn default() -> Self {
-        Self {
-            id_to_key: HashMap::new(),
-            key_to_id: HashMap::new(),
-            metadata: HashMap::new(),
-            next_id: 0,
-        }
-    }
 }
 
 pub struct VectorStoreInner {

@@ -85,7 +85,7 @@ impl InvertedIndexInner {
 
             self.term_to_chunks
                 .entry(token.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(chunk_id.to_string());
         }
 

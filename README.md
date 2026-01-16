@@ -249,8 +249,8 @@ Be aware of these characteristics:
 3. **Register in Test Project**:
    ```bash
    mkdir -p .opencode/plugin
-    echo 'export { default } from "$HOME/.cache/opencode/node_modules/opencode-codebase-index/dist/index.js"' > .opencode/plugin/codebase-index.ts
-    ```
+   echo 'export { default } from "$HOME/.cache/opencode/node_modules/opencode-codebase-index/dist/index.js"' > .opencode/plugin/codebase-index.ts
+   ```
 
 ## 🤝 Contributing
 
