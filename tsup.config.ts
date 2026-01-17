@@ -36,9 +36,14 @@ export default defineConfig({
     "https",
     "url",
   ],
-  esbuildOptions(options) {
+  esbuildOptions(options, context) {
     options.banner = {
       js: "// opencode-codebase-index - Semantic codebase search for OpenCode",
     };
+    if (context.format === "cjs") {
+      options.logOverride = {
+        "empty-import-meta": "silent",
+      };
+    }
   },
 });
