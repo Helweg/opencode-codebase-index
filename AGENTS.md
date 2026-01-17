@@ -47,7 +47,7 @@ src/
 
 native/src/
 ├── lib.rs                # NAPI exports: parse_file, VectorStore, Database, InvertedIndex
-├── parser.rs             # Tree-sitter parsing (TS, JS, Python, Rust, Go, JSON)
+├── parser.rs             # Tree-sitter parsing (12 languages: TS, JS, Python, Rust, Go, Java, C#, Ruby, Bash, C, C++, JSON)
 ├── chunker.rs            # Semantic chunking with overlap
 ├── store.rs              # usearch vector store (F16 quantization)
 ├── db.rs                 # SQLite: embeddings, chunks, branch catalog
@@ -197,6 +197,7 @@ afterEach(() => { fs.rmSync(tempDir, { recursive: true, force: true }); });
 | `watcher.test.ts` | File/git branch watching |
 | `auto-gc.test.ts` | Automatic garbage collection |
 | `git.test.ts` | Git branch detection |
+| `commands.test.ts` | Slash command loader, frontmatter parsing |
 
 ### Benchmarks
 ```bash

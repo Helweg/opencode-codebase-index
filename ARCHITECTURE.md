@@ -1,0 +1,323 @@
+# Architecture Overview
+
+This document explains the architecture of opencode-codebase-index, including data flow, component interactions, and key design decisions.
+
+## High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              OpenCode Agent                                  │
+│                                                                             │
+│  Tools: codebase_search, index_codebase, index_status, index_health_check  │
+│  Commands: /search, /find, /index, /status                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           TypeScript Layer                                   │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │   Indexer    │  │  Embeddings  │  │   Watcher    │  │     Git      │   │
+│  │              │  │   Provider   │  │              │  │   Detector   │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Rust Native Module (NAPI)                           │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │  Tree-sitter │  │   usearch    │  │    SQLite    │  │     BM25     │   │
+│  │   Parser     │  │   Vectors    │  │   Database   │  │ Inverted Idx │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Storage Layer                                   │
+│                                                                             │
+│  .opencode/index/                                                           │
+│  ├── codebase.db           # SQLite: embeddings, chunks, branch catalog    │
+│  ├── vectors.usearch       # Vector index (uSearch)                        │
+│  ├── inverted-index.json   # BM25 keyword index                            │
+│  └── file-hashes.json      # File change detection                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Data Flow
+
+### Indexing Flow
+
+```
+Source Files → Parse → Chunk → Embed → Store
+
+1. COLLECT: File discovery (respects .gitignore)
+   └─ src/utils/files.ts: collectFiles()
+
+2. DELTA: Check what's changed
+   └─ Compare file hashes (xxhash) against stored hashes
+   └─ Only process new/modified files
+
+3. PARSE: Tree-sitter language-aware parsing
+   └─ native/src/parser.rs: parse_file()
+   └─ Extracts: functions, classes, methods, interfaces
+   └─ Includes: JSDoc/docstrings with their code
+
+4. CHUNK: Split large blocks with overlap
+   └─ native/src/chunker.rs: semantic chunking
+   └─ Preserves code structure boundaries
+   └─ Adds overlap for context continuity
+
+5. EMBED: Convert to vectors via AI provider
+   └─ src/embeddings/provider.ts
+   └─ Deduped by content hash (same code = same embedding)
+
+6. STORE: Persist to disk
+   └─ SQLite: embeddings (by hash), chunks, branch catalog
+   └─ usearch: vector index for similarity search
+   └─ BM25: inverted index for keyword search
+```
+
+### Search Flow
+
+```
+Query → Embed → Search → Rank → Return
+
+1. EMBED QUERY
+   └─ Same embedding model as indexing
+   └─ Single API call (~800ms latency)
+
+2. PARALLEL SEARCH
+   ├─ SEMANTIC: usearch cosine similarity
+   │  └─ Returns top-K similar vectors
+   └─ KEYWORD: BM25 inverted index
+      └─ Returns top-K keyword matches
+
+3. HYBRID FUSION
+   └─ Combines semantic + keyword scores
+   └─ Weights controlled by hybridWeight config
+   └─ Filters by current git branch
+
+4. BRANCH FILTER
+   └─ Only returns chunks existing on current branch
+   └─ Prevents stale results from other branches
+
+5. RETURN RESULTS
+   └─ File path, line numbers, code snippet
+   └─ Sorted by combined score
+```
+
+## Component Details
+
+### Indexer (`src/indexer/index.ts`)
+
+The central orchestrator. Responsibilities:
+- Manages full and incremental indexing
+- Coordinates parsing → embedding → storage
+- Handles rate limiting and retries
+- Tracks per-file hashes for delta detection
+
+Key methods:
+| Method | Purpose |
+|--------|---------|
+| `index()` | Main entry: orchestrates full indexing flow |
+| `searchSemantic()` | Pure vector similarity search |
+| `searchHybrid()` | Combines semantic + BM25 |
+| `cleanup()` | Garbage collection for orphaned data |
+
+### Embedding Provider (`src/embeddings/`)
+
+Abstracts different AI embedding APIs:
+
+| Provider | Implementation | Rate Limit Strategy |
+|----------|----------------|---------------------|
+| GitHub Copilot | OAuth + internal API | 1 concurrent, 4s delay |
+| OpenAI | Official API | 3 concurrent, 500ms delay |
+| Google | Gemini API | 5 concurrent, 200ms delay |
+| Ollama | Local REST | 5 concurrent, no delay |
+
+Detection order: GitHub Copilot → OpenAI → Google → Ollama
+
+### Native Module (`native/src/`)
+
+Rust components exposed via NAPI:
+
+| Component | Crate | Purpose |
+|-----------|-------|---------|
+| Parser | tree-sitter-* | Language-aware code parsing |
+| VectorStore | usearch | HNSW vector similarity search |
+| Database | rusqlite | Persistent storage with batch ops |
+| InvertedIndex | Custom | BM25 keyword search |
+| Hasher | xxhash-rust | Fast content hashing |
+
+### Watcher (`src/watcher/index.ts`)
+
+File system observer using chokidar:
+- Watches for file changes → triggers incremental index
+- Watches `.git/HEAD` → detects branch switches
+- Debounces rapid changes (500ms window)
+
+## Design Decisions
+
+### Why Hybrid TypeScript + Rust?
+
+| Layer | Language | Rationale |
+|-------|----------|-----------|
+| Plugin interface | TypeScript | Native OpenCode integration, config parsing |
+| Core logic | TypeScript | Orchestration, API calls, easier iteration |
+| Hot paths | Rust | Performance: parsing, vectors, DB operations |
+
+The 80/20 rule: TypeScript for flexibility, Rust for speed-critical operations.
+
+### Why usearch for Vectors?
+
+Alternatives considered:
+- **FAISS**: Heavier, complex build, overkill for our scale
+- **hnswlib**: Good, but usearch is faster and has F16 support
+- **In-memory arrays**: Too slow for 10k+ vectors
+
+usearch advantages:
+- F16 quantization → 50% memory savings
+- Fast HNSW algorithm
+- Simple C++ core, easy Rust bindings
+- Persistent on-disk index
+
+### Why SQLite for Storage?
+
+Alternatives considered:
+- **JSON files**: No transactions, slow for large data
+- **LevelDB/RocksDB**: Overkill, complex keys
+- **PostgreSQL**: External dependency, overkill
+
+SQLite advantages:
+- Single-file database
+- ACID transactions for batch inserts
+- Fast lookups by content hash
+- Built-in query capabilities
+- Widely supported in Rust
+
+### Why BM25 Hybrid Search?
+
+Pure semantic search has weaknesses:
+- Misses exact identifier matches
+- Can't find "the function named exactly X"
+- Embedding models have knowledge cutoffs
+
+BM25 hybrid provides:
+- Exact keyword matching for precision
+- Fallback when semantic misses
+- Better results for technical queries
+- Configurable weighting (hybridWeight)
+
+### Why Branch-Aware Indexing?
+
+Problem: Switching branches changes code but embeddings are expensive.
+
+Solution:
+1. **Store embeddings by content hash** (not by file)
+   - Same code = same embedding, regardless of branch
+   - Deduplicated storage
+   
+2. **Branch catalog tracks membership**
+   - Lightweight: just chunk IDs per branch
+   - Instant branch switch (no re-embedding)
+   
+3. **Filter search by current branch**
+   - Query only returns relevant results
+   - No stale results from other branches
+
+### Why Content-Based Deduplication?
+
+Instead of storing embeddings per-file, we hash the content:
+- `hash(code) → embedding_id`
+- Same utility function across files? One embedding.
+- Copy-paste code? Already embedded.
+
+Benefits:
+- Reduces token costs (don't re-embed duplicates)
+- Smaller index size
+- Faster incremental indexing
+
+## Performance Characteristics
+
+### Indexing Performance
+
+| Phase | Time Complexity | Actual Performance |
+|-------|-----------------|-------------------|
+| File collection | O(n files) | ~10ms for 1000 files |
+| Parsing | O(n files × file size) | ~7ms for 100 files |
+| Embedding | O(n chunks) × API latency | Bottleneck (rate limited) |
+| Storage | O(n chunks) | ~4ms for 1000 chunks (batch) |
+
+### Search Performance
+
+| Phase | Time Complexity | Actual Performance |
+|-------|-----------------|-------------------|
+| Query embedding | O(1) API call | ~800-1000ms |
+| Vector search | O(log n) HNSW | ~1ms for 10k vectors |
+| BM25 search | O(n tokens) | ~5ms for 50k tokens |
+| Result fusion | O(k results) | <1ms |
+
+**Total search latency**: ~800-1000ms (dominated by embedding API call)
+
+### Memory Usage
+
+| Component | Memory Profile |
+|-----------|----------------|
+| Vector index | ~3KB per chunk (F16 quantization) |
+| SQLite | ~1KB per chunk metadata |
+| BM25 index | ~2KB per unique token |
+
+For a typical 500-file codebase (~5000 chunks): ~30MB total
+
+## Security Considerations
+
+### What Gets Sent to Cloud
+
+| Data | Destination | Purpose |
+|------|-------------|---------|
+| Code chunks | Embedding provider | Vector generation |
+| Search queries | Embedding provider | Query embedding |
+
+The vector index itself stays local. Only code/queries go to the embedding API.
+
+### Privacy Options
+
+For maximum privacy, use Ollama:
+```json
+{ "embeddingProvider": "ollama" }
+```
+All processing happens locally. Nothing leaves your machine.
+
+### Credential Handling
+
+- GitHub Copilot: Uses OpenCode's OAuth token
+- OpenAI/Google: Reads from environment variables
+- Ollama: Local REST, no credentials needed
+
+No credentials are stored by the plugin.
+
+## Extending the Architecture
+
+### Adding a New Language
+
+1. Add tree-sitter grammar to `native/Cargo.toml`
+2. Update `native/src/types.rs`: `Language` enum
+3. Update `native/src/parser.rs`:
+   - `ts_language()` match arm
+   - `is_comment_node()` patterns
+   - `is_semantic_node()` patterns
+4. Add tests in `native/src/parser.rs`
+
+### Adding a New Embedding Provider
+
+1. Add detection in `src/embeddings/detector.ts`
+2. Implement embed function in `src/embeddings/provider.ts`
+3. Add rate limit config in `src/indexer/index.ts`
+
+### Adding a New Storage Backend
+
+1. Implement storage interface (see `native/src/db.rs`)
+2. Expose via NAPI in `native/src/lib.rs`
+3. Update `src/native/index.ts` wrapper
+4. Update `src/indexer/index.ts` to use new backend
