@@ -39,6 +39,8 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Bash => tree_sitter_bash::LANGUAGE.into(),
         Language::C => tree_sitter_c::LANGUAGE.into(),
         Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        Language::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
+        Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         _ => return Ok(chunk_by_lines(content, &language)),
     };
 
@@ -211,6 +213,12 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::C | Language::Cpp => {
             matches!(node_type, "comment")
         }
+        Language::Toml => {
+            matches!(node_type, "comment")
+        }
+        Language::Yaml => {
+            matches!(node_type, "comment")
+        }
         _ => false,
     }
 }
@@ -308,6 +316,12 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
                     | "namespace_definition"
                     | "template_declaration"
             )
+        }
+        Language::Toml => {
+            matches!(node_type, "table" | "table_array_element")
+        }
+        Language::Yaml => {
+            matches!(node_type, "block_mapping_pair" | "block_sequence")
         }
         _ => false,
     }
@@ -770,5 +784,105 @@ T max(T a, T b) {
             has_class || has_namespace,
             "Should find class_specifier or namespace_definition"
         );
+    }
+
+    #[test]
+    fn test_parse_toml() {
+        let content = r#"
+# This is a TOML configuration file
+
+[package]
+name = "my-project"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = "1.0"
+
+[[bin]]
+name = "my-app"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+opt-level = 3
+"#;
+
+        let chunks = parse_file_internal("Cargo.toml", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for TOML");
+
+        let has_table = chunks.iter().any(|c| c.chunk_type == "table");
+        let has_table_array = chunks.iter().any(|c| c.chunk_type == "table_array_element");
+        assert!(
+            has_table || has_table_array,
+            "Should find table or table_array_element"
+        );
+    }
+
+    #[test]
+    fn test_parse_yaml() {
+        let content = r#"
+# Kubernetes deployment config
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: my-app
+          image: my-app:latest
+          ports:
+            - containerPort: 8080
+"#;
+
+        let chunks = parse_file_internal("deployment.yaml", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for YAML");
+    }
+
+    #[test]
+    fn test_parse_markdown_fallback() {
+        let content = r#"
+# My Project
+
+This is a **markdown** file with various content.
+
+## Installation
+
+```bash
+npm install my-project
+```
+
+## Usage
+
+Here's how to use the library:
+
+```typescript
+import { myFunction } from 'my-project';
+myFunction();
+```
+
+## Contributing
+
+Please read CONTRIBUTING.md for details.
+"#;
+
+        let chunks = parse_file_internal("README.md", content).unwrap();
+        // Markdown falls back to line-based chunking
+        assert!(!chunks.is_empty(), "Should have chunks for Markdown");
+        // Should be block type since we use line-based chunking
+        let has_block = chunks.iter().any(|c| c.chunk_type == "block");
+        assert!(has_block, "Markdown should use block chunking");
     }
 }

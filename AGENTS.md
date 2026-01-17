@@ -47,7 +47,7 @@ src/
 
 native/src/
 ├── lib.rs                # NAPI exports: parse_file, VectorStore, Database, InvertedIndex
-├── parser.rs             # Tree-sitter parsing (12 languages: TS, JS, Python, Rust, Go, Java, C#, Ruby, Bash, C, C++, JSON)
+├── parser.rs             # Tree-sitter parsing (14 languages: TS, JS, Python, Rust, Go, Java, C#, Ruby, Bash, C, C++, JSON, TOML, YAML)
 ├── chunker.rs            # Semantic chunking with overlap
 ├── store.rs              # usearch vector store (F16 quantization)
 ├── db.rs                 # SQLite: embeddings, chunks, branch catalog

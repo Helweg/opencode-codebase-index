@@ -118,7 +118,7 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, Bash, C, C++, JSON
+**Supported Languages**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, Bash, C, C++, JSON, TOML, YAML
 2. **Chunking**: Large blocks are split with overlapping windows to preserve context across chunk boundaries.
 3. **Embedding**: These blocks are converted into vector representations using your configured AI provider.
 4. **Storage**: Embeddings are stored in SQLite (deduplicated by content hash) and vectors in `usearch` with F16 quantization for 50% memory savings. A branch catalog tracks which chunks exist on each branch.
