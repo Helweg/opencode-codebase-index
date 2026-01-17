@@ -1,7 +1,7 @@
-use xxhash_rust::xxh3::xxh3_64;
+use anyhow::Result;
 use std::fs;
 use std::path::Path;
-use anyhow::Result;
+use xxhash_rust::xxh3::xxh3_64;
 
 pub fn xxhash_content(content: &str) -> String {
     format!("{:016x}", xxh3_64(content.as_bytes()))
@@ -21,7 +21,7 @@ mod tests {
         let hash1 = xxhash_content("hello world");
         let hash2 = xxhash_content("hello world");
         let hash3 = xxhash_content("different content");
-        
+
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
         assert_eq!(hash1.len(), 16);

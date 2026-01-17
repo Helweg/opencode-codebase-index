@@ -20,9 +20,28 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Check Rust formatting
+        working-directory: native
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        working-directory: native
+        run: cargo clippy -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: native
+        run: cargo test
 
       - name: Build native module
         working-directory: native
@@ -36,22 +55,8 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
-      - name: Run tests
-        run: npm run test:run
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
       - name: Run lint
         run: npm run lint
+
+      - name: Run tests
+        run: npm run test:run

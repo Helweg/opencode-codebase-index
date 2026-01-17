@@ -81,7 +81,9 @@ impl VectorStoreInner {
 
         self.stored.id_to_key.insert(id, key.to_string());
         self.stored.key_to_id.insert(key.to_string(), id);
-        self.stored.metadata.insert(key.to_string(), metadata.to_string());
+        self.stored
+            .metadata
+            .insert(key.to_string(), metadata.to_string());
 
         Ok(())
     }
@@ -135,11 +137,13 @@ impl VectorStoreInner {
 
         let ids: Vec<u64> = (0..batch_size).map(|i| start_id + i as u64).collect();
 
-        ids.par_iter().zip(vectors.par_iter()).for_each(|(&id, vector)| {
-            if self.index.add(id, vector).is_err() {
-                failure_count.fetch_add(1, Ordering::Relaxed);
-            }
-        });
+        ids.par_iter()
+            .zip(vectors.par_iter())
+            .for_each(|(&id, vector)| {
+                if self.index.add(id, vector).is_err() {
+                    failure_count.fetch_add(1, Ordering::Relaxed);
+                }
+            });
 
         if failure_count.load(Ordering::Relaxed) > 0 {
             return Err(anyhow!(
@@ -176,12 +180,7 @@ impl VectorStoreInner {
 
         for (i, &id) in results.keys.iter().enumerate() {
             if let Some(key) = self.stored.id_to_key.get(&id) {
-                let metadata = self
-                    .stored
-                    .metadata
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_default();
+                let metadata = self.stored.metadata.get(key).cloned().unwrap_or_default();
 
                 let score = 1.0 - results.distances[i] as f64;
 
@@ -227,10 +226,9 @@ impl VectorStoreInner {
 
     pub fn load(&mut self) -> Result<()> {
         if self.index_path.exists() {
-            let index_path_str = self
-                .index_path
-                .to_str()
-                .ok_or_else(|| anyhow!("Index path contains invalid UTF-8: {:?}", self.index_path))?;
+            let index_path_str = self.index_path.to_str().ok_or_else(|| {
+                anyhow!("Index path contains invalid UTF-8: {:?}", self.index_path)
+            })?;
             self.index.load(index_path_str)?;
         }
 
@@ -295,9 +293,15 @@ mod tests {
 
         let mut store = VectorStoreInner::new(index_path, 3).unwrap();
 
-        store.add("vec1", &[1.0, 0.0, 0.0], r#"{"file": "a.ts"}"#).unwrap();
-        store.add("vec2", &[0.0, 1.0, 0.0], r#"{"file": "b.ts"}"#).unwrap();
-        store.add("vec3", &[0.0, 0.0, 1.0], r#"{"file": "c.ts"}"#).unwrap();
+        store
+            .add("vec1", &[1.0, 0.0, 0.0], r#"{"file": "a.ts"}"#)
+            .unwrap();
+        store
+            .add("vec2", &[0.0, 1.0, 0.0], r#"{"file": "b.ts"}"#)
+            .unwrap();
+        store
+            .add("vec3", &[0.0, 0.0, 1.0], r#"{"file": "c.ts"}"#)
+            .unwrap();
 
         assert_eq!(store.count(), 3);
 
@@ -313,7 +317,9 @@ mod tests {
 
         {
             let mut store = VectorStoreInner::new(index_path.clone(), 3).unwrap();
-            store.add("vec1", &[1.0, 0.0, 0.0], r#"{"file": "a.ts"}"#).unwrap();
+            store
+                .add("vec1", &[1.0, 0.0, 0.0], r#"{"file": "a.ts"}"#)
+                .unwrap();
             store.save().unwrap();
         }
 

@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use thiserror::Error;
 
@@ -189,7 +189,11 @@ pub fn get_embeddings_batch(
         return Ok(vec![]);
     }
 
-    let placeholders: String = content_hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let placeholders: String = content_hashes
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
     let query = format!(
         "SELECT content_hash, embedding FROM embeddings WHERE content_hash IN ({})",
         placeholders
@@ -221,7 +225,11 @@ pub fn get_missing_embeddings(
         return Ok(vec![]);
     }
 
-    let placeholders: String = content_hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let placeholders: String = content_hashes
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
     let query = format!(
         "SELECT content_hash FROM embeddings WHERE content_hash IN ({})",
         placeholders
@@ -250,6 +258,7 @@ pub fn get_missing_embeddings(
 // ============================================================================
 
 /// Insert or update a chunk
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_chunk(
     conn: &Connection,
     chunk_id: &str,
@@ -280,10 +289,7 @@ pub fn upsert_chunk(
 }
 
 /// Batch insert or update chunks within a single transaction
-pub fn upsert_chunks_batch(
-    conn: &mut Connection,
-    chunks: &[ChunkRow],
-) -> DbResult<()> {
+pub fn upsert_chunks_batch(conn: &mut Connection, chunks: &[ChunkRow]) -> DbResult<()> {
     if chunks.is_empty() {
         return Ok(());
     }
@@ -406,9 +412,8 @@ pub fn add_chunks_to_branch(conn: &Connection, branch: &str, chunk_ids: &[String
         return Ok(());
     }
 
-    let mut stmt = conn.prepare(
-        "INSERT OR IGNORE INTO branch_chunks (branch, chunk_id) VALUES (?, ?)",
-    )?;
+    let mut stmt =
+        conn.prepare("INSERT OR IGNORE INTO branch_chunks (branch, chunk_id) VALUES (?, ?)")?;
 
     for chunk_id in chunk_ids {
         stmt.execute(params![branch, chunk_id])?;
@@ -428,9 +433,8 @@ pub fn add_chunks_to_branch_batch(
 
     let tx = conn.transaction()?;
     {
-        let mut stmt = tx.prepare(
-            "INSERT OR IGNORE INTO branch_chunks (branch, chunk_id) VALUES (?, ?)",
-        )?;
+        let mut stmt =
+            tx.prepare("INSERT OR IGNORE INTO branch_chunks (branch, chunk_id) VALUES (?, ?)")?;
 
         for chunk_id in chunk_ids {
             stmt.execute(params![branch, chunk_id])?;

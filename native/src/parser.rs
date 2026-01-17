@@ -25,7 +25,9 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
     let mut parser = Parser::new();
 
     let ts_language = match language {
-        Language::TypeScript | Language::TypeScriptTsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        Language::TypeScript | Language::TypeScriptTsx => {
+            tree_sitter_typescript::LANGUAGE_TSX.into()
+        }
         Language::JavaScript | Language::JavaScriptJsx => tree_sitter_javascript::LANGUAGE.into(),
         Language::Python => tree_sitter_python::LANGUAGE.into(),
         Language::Rust => tree_sitter_rust::LANGUAGE.into(),
@@ -97,12 +99,12 @@ fn extract_semantic_nodes(
         if is_semantic {
             let mut start_byte = node.start_byte();
             let end_byte = node.end_byte();
-            
+
             let leading_comment = find_leading_comment(&node, source, language);
             if let Some((comment_start, _comment_text)) = &leading_comment {
                 start_byte = *comment_start;
             }
-            
+
             let content = &source[start_byte..end_byte];
 
             if content.len() >= MIN_CHUNK_SIZE {
@@ -142,10 +144,14 @@ fn extract_semantic_nodes(
     }
 }
 
-fn find_leading_comment(node: &tree_sitter::Node, source: &str, language: &Language) -> Option<(usize, String)> {
+fn find_leading_comment(
+    node: &tree_sitter::Node,
+    source: &str,
+    language: &Language,
+) -> Option<(usize, String)> {
     let mut prev = node.prev_sibling();
     let mut comments = Vec::new();
-    
+
     while let Some(sibling) = prev {
         if is_comment_node(sibling.kind(), language) {
             let start = sibling.start_byte();
@@ -157,21 +163,28 @@ fn find_leading_comment(node: &tree_sitter::Node, source: &str, language: &Langu
             break;
         }
     }
-    
+
     if comments.is_empty() {
         return None;
     }
-    
+
     comments.reverse();
     let first_start = comments.first().map(|(s, _)| *s)?;
-    let combined: String = comments.into_iter().map(|(_, t)| t).collect::<Vec<_>>().join("\n");
-    
+    let combined: String = comments
+        .into_iter()
+        .map(|(_, t)| t)
+        .collect::<Vec<_>>()
+        .join("\n");
+
     Some((first_start, combined))
 }
 
 fn is_comment_node(node_type: &str, language: &Language) -> bool {
     match language {
-        Language::TypeScript | Language::TypeScriptTsx | Language::JavaScript | Language::JavaScriptJsx => {
+        Language::TypeScript
+        | Language::TypeScriptTsx
+        | Language::JavaScript
+        | Language::JavaScriptJsx => {
             matches!(node_type, "comment")
         }
         Language::Python => {
@@ -204,7 +217,10 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
 
 fn is_semantic_node(node_type: &str, language: &Language) -> bool {
     match language {
-        Language::TypeScript | Language::TypeScriptTsx | Language::JavaScript | Language::JavaScriptJsx => {
+        Language::TypeScript
+        | Language::TypeScriptTsx
+        | Language::JavaScript
+        | Language::JavaScriptJsx => {
             matches!(
                 node_type,
                 "function_declaration"
@@ -240,10 +256,7 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
         Language::Go => {
             matches!(
                 node_type,
-                "function_declaration"
-                    | "method_declaration"
-                    | "type_declaration"
-                    | "type_spec"
+                "function_declaration" | "method_declaration" | "type_declaration" | "type_spec"
             )
         }
         Language::Java => {
@@ -486,13 +499,15 @@ class Greeter:
 
     #[test]
     fn test_chunk_overlap() {
-        let lines: Vec<String> = (0..100).map(|i| format!("line {} content here", i)).collect();
+        let lines: Vec<String> = (0..100)
+            .map(|i| format!("line {} content here", i))
+            .collect();
         let content = lines.join("\n");
-        
+
         let chunks = chunk_by_lines(&content, &Language::Unknown);
-        
+
         assert!(chunks.len() >= 2, "Should have multiple chunks");
-        
+
         if chunks.len() >= 2 {
             let first_end = chunks[0].end_line;
             let second_start = chunks[1].start_line;
@@ -520,7 +535,7 @@ function validateEmail(email: string): boolean {
 
         let chunks = parse_file_internal("test.ts", content).unwrap();
         assert!(!chunks.is_empty(), "Should have at least one chunk");
-        
+
         let chunk = &chunks[0];
         assert!(
             chunk.content.contains("Validates a user's email"),
@@ -546,7 +561,7 @@ fn factorial(n: u64) -> Option<u64> {
 
         let chunks = parse_file_internal("test.rs", content).unwrap();
         assert!(!chunks.is_empty(), "Should have at least one chunk");
-        
+
         let chunk = &chunks[0];
         assert!(
             chunk.content.contains("Calculates the factorial"),
@@ -581,7 +596,7 @@ public enum Operation {
 
         let chunks = parse_file_internal("Calculator.java", content).unwrap();
         assert!(!chunks.is_empty(), "Should have chunks for Java");
-        
+
         let has_class = chunks.iter().any(|c| c.chunk_type == "class_declaration");
         assert!(has_class, "Should find class_declaration");
     }
@@ -646,7 +661,7 @@ end
 
         let chunks = parse_file_internal("greeter.rb", content).unwrap();
         assert!(!chunks.is_empty(), "Should have chunks for Ruby");
-        
+
         let has_class = chunks.iter().any(|c| c.chunk_type == "class");
         assert!(has_class, "Should find class");
     }
@@ -672,7 +687,7 @@ greet "World"
 
         let chunks = parse_file_internal("script.sh", content).unwrap();
         assert!(!chunks.is_empty(), "Should have chunks for Bash");
-        
+
         let has_function = chunks.iter().any(|c| c.chunk_type == "function_definition");
         assert!(has_function, "Should find function_definition");
     }
@@ -704,7 +719,7 @@ void greet(const char* name) {
 
         let chunks = parse_file_internal("main.c", content).unwrap();
         assert!(!chunks.is_empty(), "Should have chunks for C");
-        
+
         let has_function = chunks.iter().any(|c| c.chunk_type == "function_definition");
         assert!(has_function, "Should find function_definition");
     }
@@ -746,9 +761,14 @@ T max(T a, T b) {
 
         let chunks = parse_file_internal("main.cpp", content).unwrap();
         assert!(!chunks.is_empty(), "Should have chunks for C++");
-        
+
         let has_class = chunks.iter().any(|c| c.chunk_type == "class_specifier");
-        let has_namespace = chunks.iter().any(|c| c.chunk_type == "namespace_definition");
-        assert!(has_class || has_namespace, "Should find class_specifier or namespace_definition");
+        let has_namespace = chunks
+            .iter()
+            .any(|c| c.chunk_type == "namespace_definition");
+        assert!(
+            has_class || has_namespace,
+            "Should find class_specifier or namespace_definition"
+        );
     }
 }

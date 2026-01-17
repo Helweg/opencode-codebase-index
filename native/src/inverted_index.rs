@@ -150,15 +150,11 @@ impl InvertedIndexInner {
                     continue;
                 }
 
-                let df = self
-                    .term_to_chunks
-                    .get(term)
-                    .map(|s| s.len())
-                    .unwrap_or(0) as f64;
+                let df = self.term_to_chunks.get(term).map(|s| s.len()).unwrap_or(0) as f64;
                 let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
 
-                let tf_norm =
-                    (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * (doc_length as f64 / avg_doc_length)));
+                let tf_norm = (tf * (k1 + 1.0))
+                    / (tf + k1 * (1.0 - b + b * (doc_length as f64 / avg_doc_length)));
                 score += idf * tf_norm;
             }
 
