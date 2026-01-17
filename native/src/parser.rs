@@ -8,7 +8,7 @@ use tree_sitter::{Parser, Tree};
 const MIN_CHUNK_SIZE: usize = 50;
 const MAX_CHUNK_SIZE: usize = 2000;
 const TARGET_CHUNK_SIZE: usize = 500;
-const OVERLAP_LINES: usize = 3; // Lines to overlap between consecutive chunks
+const OVERLAP_LINES: usize = 3;
 
 pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChunk>> {
     let ext = Path::new(file_path)
@@ -25,16 +25,22 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
     let mut parser = Parser::new();
 
     let ts_language = match language {
-        Language::TypeScript | Language::TypeScriptTsx => tree_sitter_typescript::language_tsx(),
-        Language::JavaScript | Language::JavaScriptJsx => tree_sitter_javascript::language(),
-        Language::Python => tree_sitter_python::language(),
-        Language::Rust => tree_sitter_rust::language(),
-        Language::Go => tree_sitter_go::language(),
-        Language::Json => tree_sitter_json::language(),
+        Language::TypeScript | Language::TypeScriptTsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        Language::JavaScript | Language::JavaScriptJsx => tree_sitter_javascript::LANGUAGE.into(),
+        Language::Python => tree_sitter_python::LANGUAGE.into(),
+        Language::Rust => tree_sitter_rust::LANGUAGE.into(),
+        Language::Go => tree_sitter_go::LANGUAGE.into(),
+        Language::Json => tree_sitter_json::LANGUAGE.into(),
+        Language::Java => tree_sitter_java::LANGUAGE.into(),
+        Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        Language::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+        Language::Bash => tree_sitter_bash::LANGUAGE.into(),
+        Language::C => tree_sitter_c::LANGUAGE.into(),
+        Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
         _ => return Ok(chunk_by_lines(content, &language)),
     };
 
-    parser.set_language(ts_language)?;
+    parser.set_language(&ts_language)?;
 
     let tree = parser
         .parse(content, None)
@@ -177,6 +183,21 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::Go => {
             matches!(node_type, "comment")
         }
+        Language::Java => {
+            matches!(node_type, "line_comment" | "block_comment")
+        }
+        Language::CSharp => {
+            matches!(node_type, "comment")
+        }
+        Language::Ruby => {
+            matches!(node_type, "comment")
+        }
+        Language::Bash => {
+            matches!(node_type, "comment")
+        }
+        Language::C | Language::Cpp => {
+            matches!(node_type, "comment")
+        }
         _ => false,
     }
 }
@@ -223,6 +244,56 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
                     | "method_declaration"
                     | "type_declaration"
                     | "type_spec"
+            )
+        }
+        Language::Java => {
+            matches!(
+                node_type,
+                "class_declaration"
+                    | "method_declaration"
+                    | "constructor_declaration"
+                    | "interface_declaration"
+                    | "enum_declaration"
+                    | "annotation_type_declaration"
+            )
+        }
+        Language::CSharp => {
+            matches!(
+                node_type,
+                "class_declaration"
+                    | "method_declaration"
+                    | "constructor_declaration"
+                    | "interface_declaration"
+                    | "enum_declaration"
+                    | "struct_declaration"
+                    | "record_declaration"
+                    | "property_declaration"
+            )
+        }
+        Language::Ruby => {
+            matches!(
+                node_type,
+                "method" | "singleton_method" | "class" | "module"
+            )
+        }
+        Language::Bash => {
+            matches!(node_type, "function_definition")
+        }
+        Language::C => {
+            matches!(
+                node_type,
+                "function_definition" | "struct_specifier" | "enum_specifier" | "type_definition"
+            )
+        }
+        Language::Cpp => {
+            matches!(
+                node_type,
+                "function_definition"
+                    | "class_specifier"
+                    | "struct_specifier"
+                    | "enum_specifier"
+                    | "namespace_definition"
+                    | "template_declaration"
             )
         }
         _ => false,
@@ -482,5 +553,202 @@ fn factorial(n: u64) -> Option<u64> {
             "Chunk should include doc comment: {}",
             chunk.content
         );
+    }
+
+    #[test]
+    fn test_parse_java() {
+        let content = r#"
+public class Calculator {
+    private int value;
+
+    public Calculator() {
+        this.value = 0;
+    }
+
+    public int add(int a, int b) {
+        return a + b;
+    }
+}
+
+public interface Computable {
+    int compute(int input);
+}
+
+public enum Operation {
+    ADD, SUBTRACT, MULTIPLY, DIVIDE
+}
+"#;
+
+        let chunks = parse_file_internal("Calculator.java", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for Java");
+        
+        let has_class = chunks.iter().any(|c| c.chunk_type == "class_declaration");
+        assert!(has_class, "Should find class_declaration");
+    }
+
+    #[test]
+    fn test_parse_csharp() {
+        let content = r#"
+public class Person
+{
+    public string Name { get; set; }
+
+    public Person(string name)
+    {
+        Name = name;
+    }
+
+    public void Greet()
+    {
+        Console.WriteLine($"Hello, {Name}!");
+    }
+}
+
+public interface IGreeter
+{
+    void Greet();
+}
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+"#;
+
+        let chunks = parse_file_internal("Person.cs", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for C#");
+    }
+
+    #[test]
+    fn test_parse_ruby() {
+        let content = r#"
+class Greeter
+  def initialize(name)
+    @name = name
+  end
+
+  def greet
+    puts "Hello, #{@name}!"
+  end
+
+  def self.default_greeting
+    "Hello, World!"
+  end
+end
+
+module Utils
+  def self.format(str)
+    str.strip.downcase
+  end
+end
+"#;
+
+        let chunks = parse_file_internal("greeter.rb", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for Ruby");
+        
+        let has_class = chunks.iter().any(|c| c.chunk_type == "class");
+        assert!(has_class, "Should find class");
+    }
+
+    #[test]
+    fn test_parse_bash() {
+        let content = r#"
+#!/bin/bash
+
+function greet() {
+    local name=$1
+    echo "Hello, $name!"
+}
+
+function add() {
+    local a=$1
+    local b=$2
+    echo $((a + b))
+}
+
+greet "World"
+"#;
+
+        let chunks = parse_file_internal("script.sh", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for Bash");
+        
+        let has_function = chunks.iter().any(|c| c.chunk_type == "function_definition");
+        assert!(has_function, "Should find function_definition");
+    }
+
+    #[test]
+    fn test_parse_c() {
+        let content = r#"
+#include <stdio.h>
+
+struct Point {
+    int x;
+    int y;
+};
+
+enum Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+int add(int a, int b) {
+    return a + b;
+}
+
+void greet(const char* name) {
+    printf("Hello, %s!\n", name);
+}
+"#;
+
+        let chunks = parse_file_internal("main.c", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for C");
+        
+        let has_function = chunks.iter().any(|c| c.chunk_type == "function_definition");
+        assert!(has_function, "Should find function_definition");
+    }
+
+    #[test]
+    fn test_parse_cpp() {
+        let content = r#"
+#include <iostream>
+#include <string>
+
+namespace Math {
+    int add(int a, int b) {
+        return a + b;
+    }
+}
+
+class Greeter {
+private:
+    std::string name;
+
+public:
+    Greeter(const std::string& n) : name(n) {}
+
+    void greet() const {
+        std::cout << "Hello, " << name << "!" << std::endl;
+    }
+};
+
+struct Point {
+    int x;
+    int y;
+};
+
+template<typename T>
+T max(T a, T b) {
+    return (a > b) ? a : b;
+}
+"#;
+
+        let chunks = parse_file_internal("main.cpp", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for C++");
+        
+        let has_class = chunks.iter().any(|c| c.chunk_type == "class_specifier");
+        let has_namespace = chunks.iter().any(|c| c.chunk_type == "namespace_definition");
+        assert!(has_class || has_namespace, "Should find class_specifier or namespace_definition");
     }
 }
