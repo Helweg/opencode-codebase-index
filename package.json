@@ -38,6 +38,7 @@
     "dev": "tsup --watch",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
@@ -70,6 +71,7 @@
     "@napi-rs/cli": "^3.5.1",
     "@opencode-ai/plugin": "^1.1.21",
     "@types/node": "^25.0.8",
+    "@vitest/coverage-v8": "^4.0.17",
     "eslint": "^9.0.0",
     "tsup": "^8.1.0",
     "typescript": "^5.5.0",
