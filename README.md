@@ -205,6 +205,7 @@ The plugin automatically registers these slash commands:
 | `/search <query>` | **Pure Semantic Search**. Best for "How does X work?" |
 | `/find <query>` | **Hybrid Search**. Combines semantic search + grep. Best for "Find usage of X". |
 | `/index` | **Update Index**. Forces a refresh of the codebase index. |
+| `/status` | **Check Status**. Shows if indexed, chunk count, and provider info. |
 
 ## ⚙️ Configuration
 

@@ -32,6 +32,10 @@ Find code by describing what it does in natural language.
 **Parameters:**
 - `query` (required): Natural language description
 - `limit` (optional): Maximum results (default: 10)
+- `chunkType` (optional): Filter by code type
+- `directory` (optional): Filter by directory path
+- `fileType` (optional): Filter by file extension
+- `contextLines` (optional): Extra lines before/after each match
 
 **Returns:** Focused list of 5-10 most relevant files/chunks with scores.
 
@@ -41,6 +45,7 @@ Create or update the semantic index. Required before first search.
 **Parameters:**
 - `force` (optional): Reindex from scratch (default: false)
 - `estimateOnly` (optional): Show cost estimate without indexing
+- `verbose` (optional): Show skipped files and parse failures
 
 **Note:** Incremental indexing is fast (~50ms) when files haven't changed.
 
@@ -48,7 +53,89 @@ Create or update the semantic index. Required before first search.
 Check if the codebase is indexed and ready for search.
 
 ### `index_health_check`
-Remove stale entries from deleted files.
+Remove stale entries from deleted files and orphaned embeddings.
+
+## Search Filters
+
+### Filter by Chunk Type (`chunkType`)
+
+Narrow results to specific code constructs:
+
+| Value | Finds |
+|-------|-------|
+| `function` | Functions, arrow functions |
+| `class` | Class definitions |
+| `method` | Class methods |
+| `interface` | TypeScript interfaces |
+| `type` | Type aliases |
+| `enum` | Enumerations |
+| `struct` | Rust/Go structs |
+| `impl` | Rust impl blocks |
+| `trait` | Rust traits |
+| `module` | Module definitions |
+
+**Examples:**
+```
+codebase_search(query="validation logic", chunkType="function")
+codebase_search(query="data models", chunkType="interface")
+codebase_search(query="user entity", chunkType="class")
+```
+
+### Filter by Directory (`directory`)
+
+Scope search to specific paths:
+
+```
+codebase_search(query="API routes", directory="src/api")
+codebase_search(query="test helpers", directory="tests")
+codebase_search(query="database queries", directory="src/db")
+```
+
+### Filter by File Type (`fileType`)
+
+Limit to specific languages:
+
+```
+codebase_search(query="config parsing", fileType="ts")
+codebase_search(query="build scripts", fileType="py")
+codebase_search(query="data structures", fileType="rs")
+```
+
+### Combining Filters
+
+Filters can be combined for precise results:
+
+```
+codebase_search(
+  query="validation",
+  chunkType="function",
+  directory="src/utils",
+  fileType="ts"
+)
+```
+
+## Hybrid Weight Tuning
+
+The `hybridWeight` config option (0.0-1.0) balances semantic vs keyword search:
+
+| Value | Behavior | Best For |
+|-------|----------|----------|
+| `0.0` | Pure semantic | Conceptual queries, unfamiliar code |
+| `0.5` | Balanced (default) | General use |
+| `1.0` | Pure keyword (BM25) | When you know specific terms |
+
+Configure in `.opencode/codebase-index.json`:
+```json
+{
+  "search": {
+    "hybridWeight": 0.3
+  }
+}
+```
+
+**When to adjust:**
+- Lower (0.2-0.4): Exploratory queries, finding related code
+- Higher (0.6-0.8): When query contains specific identifiers
 
 ## Query Writing Tips
 
@@ -75,6 +162,13 @@ Bad:  "401" (literal keyword, use grep)
 5. grep "SessionStore" → once you know the class name
 ```
 
+### Finding all functions in a module
+```
+1. codebase_search(query="utility helpers", directory="src/utils", chunkType="function")
+2. Review results to understand available utilities
+3. grep specific function name for all usages
+```
+
 ### Finding implementation for a feature
 ```
 1. codebase_search("image upload and processing") → find relevant files
@@ -88,4 +182,10 @@ Bad:  "401" (literal keyword, use grep)
 1. codebase_search("error handling for payment failures") → find error handlers
 2. codebase_search("retry logic for API calls") → find retry mechanisms
 3. grep "PaymentError" → find specific error class
+```
+
+### Finding TypeScript interfaces
+```
+1. codebase_search(query="user data", chunkType="interface") → find User interfaces
+2. codebase_search(query="API response", chunkType="type") → find response types
 ```
