@@ -3,6 +3,7 @@ import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 import { Indexer, IndexStats, IndexProgress } from "../indexer/index.js";
 import { ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
+import type { LogLevel } from "../config/schema.js";
 
 const z = tool.schema;
 
@@ -134,6 +135,62 @@ export const index_health_check: ToolDefinition = tool({
     }
 
     return lines.join("\n");
+  },
+});
+
+export const index_metrics: ToolDefinition = tool({
+  description:
+    "Get metrics and performance statistics for the codebase index. Shows indexing stats, search timings, cache hit rates, and API usage. Requires debug.enabled=true and debug.metrics=true in config.",
+  args: {},
+  async execute() {
+    const indexer = getIndexer();
+    const logger = indexer.getLogger();
+
+    if (!logger.isEnabled()) {
+      return "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```";
+    }
+
+    if (!logger.isMetricsEnabled()) {
+      return "Metrics collection is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```";
+    }
+
+    return logger.formatMetrics();
+  },
+});
+
+export const index_logs: ToolDefinition = tool({
+  description:
+    "Get recent debug logs from the codebase indexer. Shows timestamped log entries with level and category. Requires debug.enabled=true in config.",
+  args: {
+    limit: z.number().optional().default(20).describe("Maximum number of log entries to return"),
+    category: z.enum(["search", "embedding", "cache", "gc", "branch", "general"]).optional().describe("Filter by log category"),
+    level: z.enum(["error", "warn", "info", "debug"]).optional().describe("Filter by minimum log level"),
+  },
+  async execute(args) {
+    const indexer = getIndexer();
+    const logger = indexer.getLogger();
+
+    if (!logger.isEnabled()) {
+      return "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true\n  }\n}\n```";
+    }
+
+    let logs;
+    if (args.category) {
+      logs = logger.getLogsByCategory(args.category, args.limit);
+    } else if (args.level) {
+      logs = logger.getLogsByLevel(args.level as LogLevel, args.limit);
+    } else {
+      logs = logger.getLogs(args.limit);
+    }
+
+    if (logs.length === 0) {
+      return "No logs recorded yet. Logs are captured during indexing and search operations.";
+    }
+
+    return logs.map(l => {
+      const dataStr = l.data ? ` ${JSON.stringify(l.data)}` : "";
+      return `[${l.timestamp}] [${l.level.toUpperCase()}] [${l.category}] ${l.message}${dataStr}`;
+    }).join("\n");
   },
 });
 

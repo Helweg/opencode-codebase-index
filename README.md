@@ -198,6 +198,14 @@ Checks if the index is ready and healthy.
 ### `index_health_check`
 Maintenance tool to remove stale entries from deleted files and orphaned embeddings/chunks from the database.
 
+### `index_metrics`
+Returns collected metrics about indexing and search performance. Requires `debug.enabled` and `debug.metrics` to be `true`.
+- **Metrics include**: Files indexed, chunks created, cache hit rate, search timing breakdown, GC stats, embedding API call stats.
+
+### `index_logs`
+Returns recent debug logs with optional filtering.
+- **Parameters**: `category` (optional: `search`, `embedding`, `cache`, `gc`, `branch`), `level` (optional: `error`, `warn`, `info`, `debug`), `limit` (default: 50).
+
 ## 🎮 Slash Commands
 
 The plugin automatically registers these slash commands:
@@ -232,6 +240,11 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "minScore": 0.1,
     "hybridWeight": 0.5,
     "contextLines": 0
+  },
+  "debug": {
+    "enabled": false,
+    "logLevel": "info",
+    "metrics": false
   }
 }
 ```
@@ -258,6 +271,15 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 | `minScore` | `0.1` | Minimum similarity score (0-1). Lower = more results |
 | `hybridWeight` | `0.5` | Balance between keyword (1.0) and semantic (0.0) search |
 | `contextLines` | `0` | Extra lines to include before/after each match |
+| **debug** | | |
+| `enabled` | `false` | Enable debug logging and metrics collection |
+| `logLevel` | `"info"` | Log level: `error`, `warn`, `info`, `debug` |
+| `logSearch` | `true` | Log search operations with timing breakdown |
+| `logEmbedding` | `true` | Log embedding API calls (success, error, rate-limit) |
+| `logCache` | `true` | Log cache hits and misses |
+| `logGc` | `true` | Log garbage collection operations |
+| `logBranch` | `true` | Log branch detection and switches |
+| `metrics` | `false` | Enable metrics collection (indexing stats, search timing, cache performance) |
 
 ### Embedding Providers
 The plugin automatically detects available credentials in this order:

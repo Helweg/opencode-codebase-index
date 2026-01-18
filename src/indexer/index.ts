@@ -11,6 +11,7 @@ import {
 } from "../embeddings/provider.js";
 import { collectFiles, SkippedFile } from "../utils/files.js";
 import { createCostEstimate, CostEstimate } from "../utils/cost.js";
+import { Logger, initializeLogger } from "../utils/logger.js";
 import {
   VectorStore,
   InvertedIndex,
@@ -107,6 +108,7 @@ export class Indexer {
   private failedBatchesPath: string = "";
   private currentBranch: string = "default";
   private baseBranch: string = "main";
+  private logger: Logger;
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
@@ -114,6 +116,7 @@ export class Indexer {
     this.indexPath = this.getIndexPath();
     this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
     this.failedBatchesPath = path.join(this.indexPath, "failed-batches.json");
+    this.logger = initializeLogger(config.debug);
   }
 
   private getIndexPath(): string {
@@ -205,6 +208,12 @@ export class Indexer {
       );
     }
 
+    this.logger.info("Initializing indexer", {
+      provider: this.detectedProvider.provider,
+      model: this.detectedProvider.modelInfo.model,
+      scope: this.config.scope,
+    });
+
     this.provider = createEmbeddingProvider(
       this.detectedProvider.credentials,
       this.detectedProvider.modelInfo
@@ -243,9 +252,14 @@ export class Indexer {
     if (isGitRepo(this.projectRoot)) {
       this.currentBranch = getBranchOrDefault(this.projectRoot);
       this.baseBranch = getBaseBranch(this.projectRoot);
+      this.logger.branch("info", "Detected git repository", {
+        currentBranch: this.currentBranch,
+        baseBranch: this.baseBranch,
+      });
     } else {
       this.currentBranch = "default";
       this.baseBranch = "default";
+      this.logger.branch("debug", "Not a git repository, using default branch");
     }
 
     // Auto-GC: Run garbage collection if enabled and interval has elapsed
@@ -355,6 +369,9 @@ export class Indexer {
   async index(onProgress?: ProgressCallback): Promise<IndexStats> {
     const { store, provider, invertedIndex, database, detectedProvider } = await this.ensureInitialized();
 
+    this.logger.recordIndexingStart();
+    this.logger.info("Starting indexing", { projectRoot: this.projectRoot });
+
     const startTime = Date.now();
     const stats: IndexStats = {
       totalFiles: 0,
@@ -389,6 +406,12 @@ export class Indexer {
     stats.totalFiles = files.length;
     stats.skippedFiles = skipped;
 
+    this.logger.recordFilesScanned(files.length);
+    this.logger.cache("debug", "Scanning files for changes", {
+      totalFiles: files.length,
+      skippedFiles: skipped.length,
+    });
+
     const changedFiles: Array<{ path: string; content: string; hash: string }> = [];
     const unchangedFilePaths = new Set<string>();
     const currentFileHashes = new Map<string, string>();
@@ -399,11 +422,18 @@ export class Indexer {
       
       if (this.fileHashCache.get(f.path) === currentHash) {
         unchangedFilePaths.add(f.path);
+        this.logger.recordCacheHit();
       } else {
         const content = await fsPromises.readFile(f.path, "utf-8");
         changedFiles.push({ path: f.path, content, hash: currentHash });
+        this.logger.recordCacheMiss();
       }
     }
+
+    this.logger.cache("info", "File hash cache results", {
+      unchanged: unchangedFilePaths.size,
+      changed: changedFiles.length,
+    });
 
     onProgress?.({
       phase: "parsing",
@@ -415,6 +445,9 @@ export class Indexer {
 
     const parsedFiles = parseFiles(changedFiles);
     
+    this.logger.recordFilesParsed(parsedFiles.length);
+    this.logger.debug("Parsed changed files", { parsedCount: parsedFiles.length });
+
     const existingChunks = new Map<string, string>();
     const existingChunksByFile = new Map<string, Set<string>>();
     for (const { key, metadata } of store.getAllMetadata()) {
@@ -512,6 +545,14 @@ export class Indexer {
     stats.existingChunks = currentChunkIds.size - pendingChunks.length;
     stats.removedChunks = removedCount;
 
+    this.logger.recordChunksProcessed(currentChunkIds.size);
+    this.logger.recordChunksRemoved(removedCount);
+    this.logger.info("Chunk analysis complete", {
+      pending: pendingChunks.length,
+      existing: stats.existingChunks,
+      removed: removedCount,
+    });
+
     if (pendingChunks.length === 0 && removedCount === 0) {
       database.clearBranch(this.currentBranch);
       database.addChunksToBranchBatch(this.currentBranch, Array.from(currentChunkIds));
@@ -560,6 +601,12 @@ export class Indexer {
     const chunksNeedingEmbedding = pendingChunks.filter((c) => missingHashes.has(c.contentHash));
     const chunksWithExistingEmbedding = pendingChunks.filter((c) => !missingHashes.has(c.contentHash));
 
+    this.logger.cache("info", "Embedding cache lookup", {
+      needsEmbedding: chunksNeedingEmbedding.length,
+      fromCache: chunksWithExistingEmbedding.length,
+    });
+    this.logger.recordChunksFromCache(chunksWithExistingEmbedding.length);
+
     for (const chunk of chunksWithExistingEmbedding) {
       const embeddingBuffer = database.getEmbedding(chunk.contentHash);
       if (embeddingBuffer) {
@@ -601,13 +648,16 @@ export class Indexer {
                 const message = getErrorMessage(error);
                 if (isRateLimitError(error)) {
                   rateLimitBackoffMs = Math.min(providerRateLimits.maxRetryMs, (rateLimitBackoffMs || providerRateLimits.minRetryMs) * 2);
-                  console.error(
-                    `Rate limited (attempt ${error.attemptNumber}/${error.retriesLeft + error.attemptNumber}): waiting ${rateLimitBackoffMs / 1000}s before retry...`
-                  );
+                  this.logger.embedding("warn", `Rate limited, backing off`, {
+                    attempt: error.attemptNumber,
+                    retriesLeft: error.retriesLeft,
+                    backoffMs: rateLimitBackoffMs,
+                  });
                 } else {
-                  console.error(
-                    `Embedding batch failed (attempt ${error.attemptNumber}): ${message}`
-                  );
+                  this.logger.embedding("error", `Embedding batch failed`, {
+                    attempt: error.attemptNumber,
+                    error: message,
+                  });
                 }
               },
             }
@@ -641,6 +691,13 @@ export class Indexer {
           stats.indexedChunks += batch.length;
           stats.tokensUsed += result.totalTokensUsed;
 
+          this.logger.recordChunksEmbedded(batch.length);
+          this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
+          this.logger.embedding("debug", `Embedded batch`, {
+            batchSize: batch.length,
+            tokens: result.totalTokensUsed,
+          });
+
           onProgress?.({
             phase: "embedding",
             filesProcessed: files.length,
@@ -651,7 +708,11 @@ export class Indexer {
         } catch (error) {
           stats.failedChunks += batch.length;
           this.addFailedBatch(batch, getErrorMessage(error));
-          console.error(`Failed to embed batch after retries: ${getErrorMessage(error)}`);
+          this.logger.recordEmbeddingError();
+          this.logger.embedding("error", `Failed to embed batch after retries`, {
+            batchSize: batch.length,
+            error: getErrorMessage(error),
+          });
         }
       });
     }
@@ -681,6 +742,17 @@ export class Indexer {
 
     stats.durationMs = Date.now() - startTime;
     
+    this.logger.recordIndexingEnd();
+    this.logger.info("Indexing complete", {
+      files: stats.totalFiles,
+      indexed: stats.indexedChunks,
+      existing: stats.existingChunks,
+      removed: stats.removedChunks,
+      failed: stats.failedChunks,
+      tokens: stats.tokensUsed,
+      durationMs: stats.durationMs,
+    });
+
     if (stats.failedChunks > 0) {
       stats.failedBatchesPath = this.failedBatchesPath;
     }
@@ -718,9 +790,11 @@ export class Indexer {
       name?: string;
     }>
   > {
+    const searchStartTime = Date.now();
     const { store, provider, database } = await this.ensureInitialized();
 
     if (store.count() === 0) {
+      this.logger.search("debug", "Search on empty index", { query });
       return [];
     }
 
@@ -728,12 +802,28 @@ export class Indexer {
     const hybridWeight = options?.hybridWeight ?? this.config.search.hybridWeight;
     const filterByBranch = options?.filterByBranch ?? true;
 
+    this.logger.search("debug", "Starting search", {
+      query,
+      maxResults,
+      hybridWeight,
+      filterByBranch,
+    });
+
+    const embeddingStartTime = Date.now();
     const { embedding } = await provider.embed(query);
+    const embeddingMs = Date.now() - embeddingStartTime;
+
+    const vectorStartTime = Date.now();
     const semanticResults = store.search(embedding, maxResults * 4);
+    const vectorMs = Date.now() - vectorStartTime;
 
+    const keywordStartTime = Date.now();
     const keywordResults = await this.keywordSearch(query, maxResults * 4);
+    const keywordMs = Date.now() - keywordStartTime;
 
+    const fusionStartTime = Date.now();
     const combined = this.fuseResults(semanticResults, keywordResults, hybridWeight, maxResults * 4);
+    const fusionMs = Date.now() - fusionStartTime;
 
     let branchChunkIds: Set<string> | null = null;
     if (filterByBranch && this.currentBranch !== "default") {
@@ -762,6 +852,23 @@ export class Indexer {
 
       return true;
     }).slice(0, maxResults);
+
+    const totalSearchMs = Date.now() - searchStartTime;
+    this.logger.recordSearch(totalSearchMs, {
+      embeddingMs,
+      vectorMs,
+      keywordMs,
+      fusionMs,
+    });
+    this.logger.search("info", "Search complete", {
+      query,
+      results: filtered.length,
+      totalMs: totalSearchMs,
+      embeddingMs,
+      vectorMs,
+      keywordMs,
+      fusionMs,
+    });
 
     return Promise.all(
       filtered.map(async (r) => {
@@ -910,6 +1017,8 @@ export class Indexer {
   async healthCheck(): Promise<{ removed: number; filePaths: string[]; gcOrphanEmbeddings: number; gcOrphanChunks: number }> {
     const { store, invertedIndex, database } = await this.ensureInitialized();
 
+    this.logger.gc("info", "Starting health check");
+
     const allMetadata = store.getAllMetadata();
     const filePathsToChunkKeys = new Map<string, string[]>();
 
@@ -941,6 +1050,14 @@ export class Indexer {
 
     const gcOrphanEmbeddings = database.gcOrphanEmbeddings();
     const gcOrphanChunks = database.gcOrphanChunks();
+
+    this.logger.recordGc(removedCount, gcOrphanChunks, gcOrphanEmbeddings);
+    this.logger.gc("info", "Health check complete", {
+      removedStale: removedCount,
+      orphanEmbeddings: gcOrphanEmbeddings,
+      orphanChunks: gcOrphanChunks,
+      removedFiles: removedFilePaths.length,
+    });
 
     return { removed: removedCount, filePaths: removedFilePaths, gcOrphanEmbeddings, gcOrphanChunks };
   }
@@ -1027,5 +1144,9 @@ export class Indexer {
   async getDatabaseStats(): Promise<{ embeddingCount: number; chunkCount: number; branchChunkCount: number; branchCount: number } | null> {
     const { database } = await this.ensureInitialized();
     return database.getStats();
+  }
+
+  getLogger(): Logger {
+    return this.logger;
   }
 }
