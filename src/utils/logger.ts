@@ -105,24 +105,6 @@ export class Logger {
     if (this.logs.length > this.maxLogs) {
       this.logs.shift();
     }
-
-    const prefix = `[${entry.timestamp}] [${level.toUpperCase()}] [${category}]`;
-    const dataStr = data ? ` ${JSON.stringify(data)}` : "";
-    
-    switch (level) {
-      case "error":
-        console.error(`${prefix} ${message}${dataStr}`);
-        break;
-      case "warn":
-        console.warn(`${prefix} ${message}${dataStr}`);
-        break;
-      case "info":
-        console.info(`${prefix} ${message}${dataStr}`);
-        break;
-      case "debug":
-        console.debug(`${prefix} ${message}${dataStr}`);
-        break;
-    }
   }
 
   search(level: LogLevel, message: string, data?: Record<string, unknown>): void {

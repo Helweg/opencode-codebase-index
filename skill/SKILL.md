@@ -55,6 +55,21 @@ Check if the codebase is indexed and ready for search.
 ### `index_health_check`
 Remove stale entries from deleted files and orphaned embeddings.
 
+### `index_metrics`
+Get performance statistics for indexing and search operations.
+Requires `debug.enabled` and `debug.metrics` to be `true` in config.
+
+**Shows:** Files indexed, chunks created, cache hit rate, search timing breakdown, GC stats, embedding API call stats.
+
+### `index_logs`
+Get recent debug logs with optional filtering.
+Requires `debug.enabled` to be `true` in config.
+
+**Parameters:**
+- `limit` (optional): Maximum log entries (default: 20)
+- `category` (optional): Filter by `search`, `embedding`, `cache`, `gc`, `branch`, `general`
+- `level` (optional): Filter by `error`, `warn`, `info`, `debug`
+
 ## Search Filters
 
 ### Filter by Chunk Type (`chunkType`)

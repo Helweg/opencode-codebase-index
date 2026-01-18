@@ -41,7 +41,7 @@ src/
 ├── indexer/              # Core: Indexer class, delta tracking
 ├── git/                  # Branch detection from .git/HEAD
 ├── tools/                # OpenCode tool definitions (codebase_search, index_*)
-├── utils/                # File collection, cost estimation, helpers
+├── utils/                # File collection, cost estimation, Logger
 ├── native/               # TS wrapper for Rust bindings
 └── watcher/              # Chokidar file + git branch watcher
 
@@ -82,6 +82,8 @@ skill/                    # OpenCode skill guidance
 | `index_codebase` | Tool | Trigger indexing (force/estimate/verbose) |
 | `index_status` | Tool | Check index health |
 | `index_health_check` | Tool | GC orphaned embeddings/chunks |
+| `index_metrics` | Tool | Get performance metrics (requires debug.enabled + debug.metrics) |
+| `index_logs` | Tool | Get debug logs (requires debug.enabled) |
 
 ### Rust NAPI Exports (`native/src/lib.rs`)
 | Symbol | Type | Purpose |
@@ -198,6 +200,7 @@ afterEach(() => { fs.rmSync(tempDir, { recursive: true, force: true }); });
 | `auto-gc.test.ts` | Automatic garbage collection |
 | `git.test.ts` | Git branch detection |
 | `commands.test.ts` | Slash command loader, frontmatter parsing |
+| `logger.test.ts` | Logger utility, metrics collection |
 
 ### Benchmarks
 ```bash
@@ -215,6 +218,8 @@ Key options:
 - `indexing.watchFiles`: Auto-reindex on file changes
 - `indexing.semanticOnly`: Skip generic blocks, only index functions/classes
 - `search.hybridWeight`: 0.0 (semantic) to 1.0 (keyword)
+- `debug.enabled`: Enable debug logging and metrics collection
+- `debug.metrics`: Enable performance metrics (use with `index_metrics` tool)
 
 ## PR CHECKLIST
 
