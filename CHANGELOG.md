@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2025-01-18
+
+### Added
+- **Query embedding cache**: LRU cache (100 entries, 5min TTL) avoids redundant API calls for repeated searches
+- **Query similarity matching**: Reuses cached embeddings for similar queries (Jaccard similarity ≥0.85)
+- **Batch metadata lookup**: `VectorStore.getMetadata()` and `getMetadataBatch()` for efficient chunk retrieval
+- **Parse timing metrics**: Tracks `parseMs` for tree-sitter parsing duration
+- **Query cache stats**: Separate tracking for exact hits, similar hits, and misses
+
+### Changed
+- BM25 keyword search now uses `getMetadataBatch()` - O(n) instead of O(total) for result metadata lookup
+
+### Fixed
+- Remove console output from Logger (was leaking to stdout)
+- Record embedding API metrics for search queries (previously only tracked during indexing)
+- Record embedding API metrics during batch retries
+
 ## [0.3.0] - 2025-01-16
 
 ### Added
@@ -110,6 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
+[0.3.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.1.11...v0.2.0
