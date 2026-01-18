@@ -12,6 +12,7 @@ export interface Metrics {
   indexingEndTime?: number;
   filesScanned: number;
   filesParsed: number;
+  parseMs: number;
   chunksProcessed: number;
   chunksEmbedded: number;
   chunksFromCache: number;
@@ -32,6 +33,10 @@ export interface Metrics {
   cacheHits: number;
   cacheMisses: number;
   
+  queryCacheHits: number;
+  queryCacheSimilarHits: number;
+  queryCacheMisses: number;
+  
   gcRuns: number;
   gcOrphansRemoved: number;
   gcChunksRemoved: number;
@@ -50,6 +55,7 @@ function createEmptyMetrics(): Metrics {
   return {
     filesScanned: 0,
     filesParsed: 0,
+    parseMs: 0,
     chunksProcessed: 0,
     chunksEmbedded: 0,
     chunksFromCache: 0,
@@ -67,6 +73,9 @@ function createEmptyMetrics(): Metrics {
     fusionMs: 0,
     cacheHits: 0,
     cacheMisses: 0,
+    queryCacheHits: 0,
+    queryCacheSimilarHits: 0,
+    queryCacheMisses: 0,
     gcRuns: 0,
     gcOrphansRemoved: 0,
     gcChunksRemoved: 0,
@@ -173,6 +182,11 @@ export class Logger {
     this.metrics.filesParsed = count;
   }
 
+  recordParseDuration(durationMs: number): void {
+    if (!this.config.metrics) return;
+    this.metrics.parseMs = durationMs;
+  }
+
   recordChunksProcessed(count: number): void {
     if (!this.config.metrics) return;
     this.metrics.chunksProcessed += count;
@@ -227,6 +241,21 @@ export class Logger {
   recordCacheMiss(): void {
     if (!this.config.metrics) return;
     this.metrics.cacheMisses++;
+  }
+
+  recordQueryCacheHit(): void {
+    if (!this.config.metrics) return;
+    this.metrics.queryCacheHits++;
+  }
+
+  recordQueryCacheSimilarHit(): void {
+    if (!this.config.metrics) return;
+    this.metrics.queryCacheSimilarHits++;
+  }
+
+  recordQueryCacheMiss(): void {
+    if (!this.config.metrics) return;
+    this.metrics.queryCacheMisses++;
   }
 
   recordGc(orphans: number, chunks: number, embeddings: number): void {

@@ -448,10 +448,13 @@ export class Indexer {
       totalChunks: 0,
     });
 
+    const parseStartTime = performance.now();
     const parsedFiles = parseFiles(changedFiles);
+    const parseMs = performance.now() - parseStartTime;
     
     this.logger.recordFilesParsed(parsedFiles.length);
-    this.logger.debug("Parsed changed files", { parsedCount: parsedFiles.length });
+    this.logger.recordParseDuration(parseMs);
+    this.logger.debug("Parsed changed files", { parsedCount: parsedFiles.length, parseMs: parseMs.toFixed(2) });
 
     const existingChunks = new Map<string, string>();
     const existingChunksByFile = new Map<string, Set<string>>();
@@ -779,6 +782,7 @@ export class Indexer {
     
     if (cached && (now - cached.timestamp) < this.queryCacheTtlMs) {
       this.logger.cache("debug", "Query embedding cache hit (exact)", { query: query.slice(0, 50) });
+      this.logger.recordQueryCacheHit();
       return cached.embedding;
     }
     
@@ -789,10 +793,12 @@ export class Indexer {
         similarTo: similarMatch.key.slice(0, 50),
         similarity: similarMatch.similarity.toFixed(3),
       });
+      this.logger.recordQueryCacheSimilarHit();
       return similarMatch.embedding;
     }
     
     this.logger.cache("debug", "Query embedding cache miss", { query: query.slice(0, 50) });
+    this.logger.recordQueryCacheMiss();
     const { embedding, tokensUsed } = await provider.embed(query);
     this.logger.recordEmbeddingApiCall(tokensUsed);
     
