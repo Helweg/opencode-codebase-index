@@ -871,6 +871,7 @@ export class Indexer {
       chunkType?: string;
       contextLines?: number;
       filterByBranch?: boolean;
+      metadataOnly?: boolean;
     }
   ): Promise<
     Array<{
@@ -963,13 +964,15 @@ export class Indexer {
       fusionMs: Math.round(fusionMs * 100) / 100,
     });
 
+    const metadataOnly = options?.metadataOnly ?? false;
+
     return Promise.all(
       filtered.map(async (r) => {
         let content = "";
         let contextStartLine = r.metadata.startLine;
         let contextEndLine = r.metadata.endLine;
         
-        if (this.config.search.includeContext) {
+        if (!metadataOnly && this.config.search.includeContext) {
           try {
             const fileContent = await fsPromises.readFile(
               r.metadata.filePath,

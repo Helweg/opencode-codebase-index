@@ -78,7 +78,8 @@ skill/                    # OpenCode skill guidance
 | Symbol | Type | Purpose |
 |--------|------|---------|
 | `default` | Plugin | Main entry: returns tools + config callback |
-| `codebase_search` | Tool | Semantic search by meaning |
+| `codebase_search` | Tool | Semantic search by meaning (returns full code content) |
+| `codebase_peek` | Tool | Semantic search returning metadata only (file, line, name) - saves tokens |
 | `index_codebase` | Tool | Trigger indexing (force/estimate/verbose) |
 | `index_status` | Tool | Check index health |
 | `index_health_check` | Tool | GC orphaned embeddings/chunks |

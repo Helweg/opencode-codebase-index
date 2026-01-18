@@ -64,11 +64,12 @@ src/api/checkout.ts:89      (Route handler for /pay)
 |----------|------|-----|
 | Don't know the function name | `codebase_search` | Semantic search finds by meaning |
 | Exploring unfamiliar codebase | `codebase_search` | Discovers related code across files |
+| Just need to find locations | `codebase_peek` | Returns metadata only, saves ~90% tokens |
 | Know exact identifier | `grep` | Faster, finds all occurrences |
 | Need ALL matches | `grep` | Semantic returns top N only |
 | Mixed discovery + precision | `/find` (hybrid) | Best of both worlds |
 
-**Rule of thumb**: Semantic search for discovery → grep for precision.
+**Rule of thumb**: `codebase_peek` to find locations → `Read` to examine → `grep` for precision.
 
 ## 📊 Token Usage
 
@@ -186,6 +187,18 @@ The plugin exposes these tools to the OpenCode agent:
 | "middleware that checks authentication" | "auth middleware" |
 | "code that calculates shipping costs" | "shipping" |
 | "where user permissions are checked" | "permissions" |
+
+### `codebase_peek`
+**Token-efficient discovery.** Returns only metadata (file, line, name, type) without code content.
+- **Use for**: Finding WHERE code is before deciding what to read. Saves ~90% tokens vs `codebase_search`.
+- **Example output**:
+  ```
+  [1] function "validatePayment" at src/billing.ts:45-67 (score: 0.92)
+  [2] class "PaymentProcessor" at src/processor.ts:12-89 (score: 0.87)
+  
+  Use Read tool to examine specific files.
+  ```
+- **Workflow**: `codebase_peek` → find locations → `Read` specific files
 
 ### `index_codebase`
 Manually trigger indexing.

@@ -9,6 +9,7 @@ import { Indexer } from "./indexer/index.js";
 import { createWatcherWithIndexer } from "./watcher/index.js";
 import {
   codebase_search,
+  codebase_peek,
   index_codebase,
   index_status,
   index_health_check,
@@ -75,6 +76,7 @@ const plugin: Plugin = async ({ directory }) => {
   return {
     tool: {
       codebase_search,
+      codebase_peek,
       index_codebase,
       index_status,
       index_health_check,

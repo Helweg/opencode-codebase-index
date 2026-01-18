@@ -22,7 +22,7 @@ function getIndexer(): Indexer {
 
 export const codebase_search: ToolDefinition = tool({
   description:
-    "Search codebase by MEANING, not keywords. Use when you don't know exact function/class names. Returns focused results (5-10 files). For known identifiers like 'validateToken' or 'UserService', use grep instead - it's faster and finds all occurrences. Best for: 'find authentication logic', 'code that handles payments', 'error middleware'.",
+    "Search codebase by MEANING, not keywords. Returns full code content. Use when you need to see actual implementation. For just finding WHERE code is (saves ~90% tokens), use codebase_peek instead. For known identifiers like 'validateToken', use grep - it's faster.",
   args: {
     query: z.string().describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
     limit: z.number().optional().default(10).describe("Maximum number of results to return"),
@@ -53,6 +53,39 @@ export const codebase_search: ToolDefinition = tool({
     });
 
     return `Found ${results.length} results for "${args.query}":\n\n${formatted.join("\n\n")}`;
+  },
+});
+
+export const codebase_peek: ToolDefinition = tool({
+  description:
+    "Quick lookup of code locations by meaning. Returns only metadata (file, line, name, type) WITHOUT code content. Use this first to find WHERE code is, then use Read tool to examine specific files. Saves tokens by not returning full code blocks. Best for: discovery, navigation, finding multiple related locations.",
+  args: {
+    query: z.string().describe("Natural language description of what code you're looking for."),
+    limit: z.number().optional().default(10).describe("Maximum number of results to return"),
+    fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
+    directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
+    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
+  },
+  async execute(args) {
+    const indexer = getIndexer();
+    const results = await indexer.search(args.query, args.limit ?? 10, {
+      fileType: args.fileType,
+      directory: args.directory,
+      chunkType: args.chunkType,
+      metadataOnly: true,
+    });
+
+    if (results.length === 0) {
+      return "No matching code found. Try a different query or run index_codebase first.";
+    }
+
+    const formatted = results.map((r, idx) => {
+      const location = `${r.filePath}:${r.startLine}-${r.endLine}`;
+      const name = r.name ? `"${r.name}"` : "(anonymous)";
+      return `[${idx + 1}] ${r.chunkType} ${name} at ${location} (score: ${r.score.toFixed(2)})`;
+    });
+
+    return `Found ${results.length} locations for "${args.query}":\n\n${formatted.join("\n")}\n\nUse Read tool to examine specific files.`;
   },
 });
 
