@@ -113,6 +113,7 @@ export class Indexer {
   private queryEmbeddingCache: Map<string, { embedding: number[]; timestamp: number }> = new Map();
   private readonly maxQueryCacheSize = 100;
   private readonly queryCacheTtlMs = 5 * 60 * 1000;
+  private readonly querySimilarityThreshold = 0.85;
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
@@ -777,8 +778,18 @@ export class Indexer {
     const cached = this.queryEmbeddingCache.get(query);
     
     if (cached && (now - cached.timestamp) < this.queryCacheTtlMs) {
-      this.logger.cache("debug", "Query embedding cache hit", { query: query.slice(0, 50) });
+      this.logger.cache("debug", "Query embedding cache hit (exact)", { query: query.slice(0, 50) });
       return cached.embedding;
+    }
+    
+    const similarMatch = this.findSimilarCachedQuery(query, now);
+    if (similarMatch) {
+      this.logger.cache("debug", "Query embedding cache hit (similar)", { 
+        query: query.slice(0, 50),
+        similarTo: similarMatch.key.slice(0, 50),
+        similarity: similarMatch.similarity.toFixed(3),
+      });
+      return similarMatch.embedding;
     }
     
     this.logger.cache("debug", "Query embedding cache miss", { query: query.slice(0, 50) });
@@ -793,6 +804,54 @@ export class Indexer {
     
     this.queryEmbeddingCache.set(query, { embedding, timestamp: now });
     return embedding;
+  }
+
+  private findSimilarCachedQuery(
+    query: string, 
+    now: number
+  ): { key: string; embedding: number[]; similarity: number } | null {
+    const queryTokens = this.tokenize(query);
+    if (queryTokens.size === 0) return null;
+    
+    let bestMatch: { key: string; embedding: number[]; similarity: number } | null = null;
+    
+    for (const [cachedQuery, { embedding, timestamp }] of this.queryEmbeddingCache) {
+      if ((now - timestamp) >= this.queryCacheTtlMs) continue;
+      
+      const cachedTokens = this.tokenize(cachedQuery);
+      const similarity = this.jaccardSimilarity(queryTokens, cachedTokens);
+      
+      if (similarity >= this.querySimilarityThreshold) {
+        if (!bestMatch || similarity > bestMatch.similarity) {
+          bestMatch = { key: cachedQuery, embedding, similarity };
+        }
+      }
+    }
+    
+    return bestMatch;
+  }
+
+  private tokenize(text: string): Set<string> {
+    return new Set(
+      text
+        .toLowerCase()
+        .replace(/[^\w\s]/g, " ")
+        .split(/\s+/)
+        .filter(t => t.length > 1)
+    );
+  }
+
+  private jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+    if (a.size === 0 && b.size === 0) return 1;
+    if (a.size === 0 || b.size === 0) return 0;
+    
+    let intersection = 0;
+    for (const token of a) {
+      if (b.has(token)) intersection++;
+    }
+    
+    const union = a.size + b.size - intersection;
+    return intersection / union;
   }
 
   async search(
