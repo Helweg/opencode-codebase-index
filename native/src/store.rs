@@ -289,12 +289,7 @@ impl VectorStoreInner {
     /// when you need metadata for many specific keys (avoids cloning unused entries).
     pub fn get_metadata_batch(&self, keys: &[String]) -> Vec<(String, String)> {
         keys.iter()
-            .filter_map(|k| {
-                self.stored
-                    .metadata
-                    .get(k)
-                    .map(|v| (k.clone(), v.clone()))
-            })
+            .filter_map(|k| self.stored.metadata.get(k).map(|v| (k.clone(), v.clone())))
             .collect()
     }
 }
