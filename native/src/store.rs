@@ -279,6 +279,24 @@ impl VectorStoreInner {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
+
+    /// Get metadata for a single key. O(1) lookup.
+    pub fn get_metadata(&self, key: &str) -> Option<String> {
+        self.stored.metadata.get(key).cloned()
+    }
+
+    /// Get metadata for multiple keys. More efficient than calling get_metadata in a loop
+    /// when you need metadata for many specific keys (avoids cloning unused entries).
+    pub fn get_metadata_batch(&self, keys: &[String]) -> Vec<(String, String)> {
+        keys.iter()
+            .filter_map(|k| {
+                self.stored
+                    .metadata
+                    .get(k)
+                    .map(|v| (k.clone(), v.clone()))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]

@@ -131,6 +131,20 @@ impl VectorStore {
             .map(|(key, metadata)| KeyMetadataPair { key, metadata })
             .collect()
     }
+
+    #[napi]
+    pub fn get_metadata(&self, id: String) -> Option<String> {
+        self.inner.get_metadata(&id)
+    }
+
+    #[napi]
+    pub fn get_metadata_batch(&self, ids: Vec<String>) -> Vec<KeyMetadataPair> {
+        self.inner
+            .get_metadata_batch(&ids)
+            .into_iter()
+            .map(|(key, metadata)| KeyMetadataPair { key, metadata })
+            .collect()
+    }
 }
 
 #[napi(object)]

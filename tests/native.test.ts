@@ -261,6 +261,62 @@ const add = (a, b) => a + b;
       expect(metadata.some((m) => m.key === "chunk1")).toBe(true);
       expect(metadata.some((m) => m.key === "chunk2")).toBe(true);
     });
+
+    it("should get metadata for single chunk", () => {
+      store.add("chunk1", [1, 0, 0], {
+        filePath: "test.ts",
+        startLine: 1,
+        endLine: 5,
+        chunkType: "function",
+        language: "typescript",
+        hash: "abc123",
+      });
+
+      const metadata = store.getMetadata("chunk1");
+      expect(metadata).toBeDefined();
+      expect(metadata?.filePath).toBe("test.ts");
+      expect(metadata?.chunkType).toBe("function");
+
+      const missing = store.getMetadata("nonexistent");
+      expect(missing).toBeUndefined();
+    });
+
+    it("should get metadata batch for multiple chunks", () => {
+      store.add("chunk1", [1, 0, 0], {
+        filePath: "a.ts",
+        startLine: 1,
+        endLine: 5,
+        chunkType: "function",
+        language: "typescript",
+        hash: "abc123",
+      });
+
+      store.add("chunk2", [0, 1, 0], {
+        filePath: "b.ts",
+        startLine: 10,
+        endLine: 15,
+        chunkType: "class",
+        language: "typescript",
+        hash: "def456",
+      });
+
+      store.add("chunk3", [0, 0, 1], {
+        filePath: "c.ts",
+        startLine: 20,
+        endLine: 25,
+        chunkType: "method",
+        language: "typescript",
+        hash: "ghi789",
+      });
+
+      const metadataMap = store.getMetadataBatch(["chunk1", "chunk3", "nonexistent"]);
+      
+      expect(metadataMap.size).toBe(2);
+      expect(metadataMap.get("chunk1")?.filePath).toBe("a.ts");
+      expect(metadataMap.get("chunk3")?.filePath).toBe("c.ts");
+      expect(metadataMap.has("chunk2")).toBe(false);
+      expect(metadataMap.has("nonexistent")).toBe(false);
+    });
   });
 
   describe("createEmbeddingText", () => {

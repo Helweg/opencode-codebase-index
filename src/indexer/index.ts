@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, promises as fsPromises } from "fs";
 import * as path from "path";
+import { performance } from "perf_hooks";
 import PQueue from "p-queue";
 import pRetry from "p-retry";
 
@@ -109,6 +110,9 @@ export class Indexer {
   private currentBranch: string = "default";
   private baseBranch: string = "main";
   private logger: Logger;
+  private queryEmbeddingCache: Map<string, { embedding: number[]; timestamp: number }> = new Map();
+  private readonly maxQueryCacheSize = 100;
+  private readonly queryCacheTtlMs = 5 * 60 * 1000;
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
@@ -768,6 +772,29 @@ export class Indexer {
     return stats;
   }
 
+  private async getQueryEmbedding(query: string, provider: EmbeddingProviderInterface): Promise<number[]> {
+    const now = Date.now();
+    const cached = this.queryEmbeddingCache.get(query);
+    
+    if (cached && (now - cached.timestamp) < this.queryCacheTtlMs) {
+      this.logger.cache("debug", "Query embedding cache hit", { query: query.slice(0, 50) });
+      return cached.embedding;
+    }
+    
+    this.logger.cache("debug", "Query embedding cache miss", { query: query.slice(0, 50) });
+    const { embedding } = await provider.embed(query);
+    
+    if (this.queryEmbeddingCache.size >= this.maxQueryCacheSize) {
+      const oldestKey = this.queryEmbeddingCache.keys().next().value;
+      if (oldestKey) {
+        this.queryEmbeddingCache.delete(oldestKey);
+      }
+    }
+    
+    this.queryEmbeddingCache.set(query, { embedding, timestamp: now });
+    return embedding;
+  }
+
   async search(
     query: string,
     limit?: number,
@@ -790,7 +817,7 @@ export class Indexer {
       name?: string;
     }>
   > {
-    const searchStartTime = Date.now();
+    const searchStartTime = performance.now();
     const { store, provider, database } = await this.ensureInitialized();
 
     if (store.count() === 0) {
@@ -809,21 +836,21 @@ export class Indexer {
       filterByBranch,
     });
 
-    const embeddingStartTime = Date.now();
-    const { embedding } = await provider.embed(query);
-    const embeddingMs = Date.now() - embeddingStartTime;
+    const embeddingStartTime = performance.now();
+    const embedding = await this.getQueryEmbedding(query, provider);
+    const embeddingMs = performance.now() - embeddingStartTime;
 
-    const vectorStartTime = Date.now();
+    const vectorStartTime = performance.now();
     const semanticResults = store.search(embedding, maxResults * 4);
-    const vectorMs = Date.now() - vectorStartTime;
+    const vectorMs = performance.now() - vectorStartTime;
 
-    const keywordStartTime = Date.now();
+    const keywordStartTime = performance.now();
     const keywordResults = await this.keywordSearch(query, maxResults * 4);
-    const keywordMs = Date.now() - keywordStartTime;
+    const keywordMs = performance.now() - keywordStartTime;
 
-    const fusionStartTime = Date.now();
+    const fusionStartTime = performance.now();
     const combined = this.fuseResults(semanticResults, keywordResults, hybridWeight, maxResults * 4);
-    const fusionMs = Date.now() - fusionStartTime;
+    const fusionMs = performance.now() - fusionStartTime;
 
     let branchChunkIds: Set<string> | null = null;
     if (filterByBranch && this.currentBranch !== "default") {
@@ -853,7 +880,7 @@ export class Indexer {
       return true;
     }).slice(0, maxResults);
 
-    const totalSearchMs = Date.now() - searchStartTime;
+    const totalSearchMs = performance.now() - searchStartTime;
     this.logger.recordSearch(totalSearchMs, {
       embeddingMs,
       vectorMs,
@@ -863,11 +890,11 @@ export class Indexer {
     this.logger.search("info", "Search complete", {
       query,
       results: filtered.length,
-      totalMs: totalSearchMs,
-      embeddingMs,
-      vectorMs,
-      keywordMs,
-      fusionMs,
+      totalMs: Math.round(totalSearchMs * 100) / 100,
+      embeddingMs: Math.round(embeddingMs * 100) / 100,
+      vectorMs: Math.round(vectorMs * 100) / 100,
+      keywordMs: Math.round(keywordMs * 100) / 100,
+      fusionMs: Math.round(fusionMs * 100) / 100,
     });
 
     return Promise.all(
@@ -920,11 +947,10 @@ export class Indexer {
       return [];
     }
 
-    const allMetadata = store.getAllMetadata();
-    const metadataMap = new Map<string, ChunkMetadata>();
-    for (const { key, metadata } of allMetadata) {
-      metadataMap.set(key, metadata);
-    }
+    // Only fetch metadata for chunks returned by BM25 (O(n) where n = result count)
+    // instead of getAllMetadata() which fetches ALL chunks in the index
+    const chunkIds = Array.from(scores.keys());
+    const metadataMap = store.getMetadataBatch(chunkIds);
 
     const results: Array<{ id: string; score: number; metadata: ChunkMetadata }> = [];
     for (const [chunkId, score] of scores) {

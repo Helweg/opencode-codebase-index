@@ -222,6 +222,23 @@ export class VectorStore {
       metadata: JSON.parse(r.metadata) as ChunkMetadata,
     }));
   }
+
+  getMetadata(id: string): ChunkMetadata | undefined {
+    const result = this.inner.getMetadata(id);
+    if (result === null || result === undefined) {
+      return undefined;
+    }
+    return JSON.parse(result) as ChunkMetadata;
+  }
+
+  getMetadataBatch(ids: string[]): Map<string, ChunkMetadata> {
+    const results = this.inner.getMetadataBatch(ids);
+    const map = new Map<string, ChunkMetadata>();
+    for (const { key, metadata } of results) {
+      map.set(key, JSON.parse(metadata) as ChunkMetadata);
+    }
+    return map;
+  }
 }
 
 // Token estimation: ~4 chars per token for code (conservative)
