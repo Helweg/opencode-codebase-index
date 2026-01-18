@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Rust code formatting (cargo fmt)
+- CI publish workflow: use Node 24 + npm OIDC trusted publishing (no token required)
 
 ## [0.3.1] - 2025-01-18
 
