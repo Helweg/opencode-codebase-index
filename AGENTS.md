@@ -226,3 +226,30 @@ Key options:
 ```bash
 npm run build && npm run typecheck && npm run lint && npm run test:run
 ```
+
+## RELEASE CHECKLIST
+
+When creating a new release:
+
+1. **Update `CHANGELOG.md`** - Add new version section with Added/Changed/Fixed entries
+2. **Bump version in `package.json`** - Follow semver (patch for fixes, minor for features)
+3. **Commit changes** - `git commit -m "chore: bump version to X.Y.Z"`
+4. **Push to origin** - `git push origin main`
+5. **Create git tag** - `git tag vX.Y.Z`
+6. **Push tag** - `git push origin vX.Y.Z`
+7. **Create GitHub release** - `gh release create vX.Y.Z --title "vX.Y.Z - Title" --notes "..."`
+
+Example:
+```bash
+# After updating CHANGELOG.md and package.json
+git add CHANGELOG.md package.json
+git commit -m "chore: bump version to 0.3.1"
+git push origin main
+git tag v0.3.1
+git push origin v0.3.1
+gh release create v0.3.1 --title "v0.3.1 - Search Performance Optimizations" --notes "$(cat <<'EOF'
+## What's New
+...
+EOF
+)"
+```
