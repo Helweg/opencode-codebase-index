@@ -793,7 +793,8 @@ export class Indexer {
     }
     
     this.logger.cache("debug", "Query embedding cache miss", { query: query.slice(0, 50) });
-    const { embedding } = await provider.embed(query);
+    const { embedding, tokensUsed } = await provider.embed(query);
+    this.logger.recordEmbeddingApiCall(tokensUsed);
     
     if (this.queryEmbeddingCache.size >= this.maxQueryCacheSize) {
       const oldestKey = this.queryEmbeddingCache.keys().next().value;
@@ -1185,9 +1186,13 @@ export class Indexer {
           invertedIndex.addChunk(chunk.id, chunk.content);
         }
 
+        this.logger.recordChunksEmbedded(batch.chunks.length);
+        this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
+        
         succeeded += batch.chunks.length;
       } catch (error) {
         failed += batch.chunks.length;
+        this.logger.recordEmbeddingError();
         stillFailing.push({
           ...batch,
           attemptCount: batch.attemptCount + 1,
