@@ -80,6 +80,7 @@ skill/                    # OpenCode skill guidance
 | `default` | Plugin | Main entry: returns tools + config callback |
 | `codebase_search` | Tool | Semantic search by meaning (returns full code content) |
 | `codebase_peek` | Tool | Semantic search returning metadata only (file, line, name) - saves tokens |
+| `find_similar` | Tool | Find code similar to a given snippet (duplicate detection, pattern discovery) |
 | `index_codebase` | Tool | Trigger indexing (force/estimate/verbose) |
 | `index_status` | Tool | Check index health |
 | `index_health_check` | Tool | GC orphaned embeddings/chunks |

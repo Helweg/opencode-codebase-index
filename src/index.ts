@@ -15,6 +15,7 @@ import {
   index_health_check,
   index_metrics,
   index_logs,
+  find_similar,
   initializeTools,
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
@@ -82,6 +83,7 @@ const plugin: Plugin = async ({ directory }) => {
       index_health_check,
       index_metrics,
       index_logs,
+      find_similar,
     },
 
     async config(cfg) {

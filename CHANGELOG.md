@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-01-18
+
 ### Added
+- **`find_similar` tool**: Find code similar to a given snippet for duplicate detection, pattern discovery, and refactoring prep. Paste code and find semantically similar implementations elsewhere in the codebase.
 - **`codebase_peek` tool**: Token-efficient semantic search returning metadata only (file, line, name, type) without code content. Saves ~90% tokens compared to `codebase_search` for discovery workflows.
 
 ## [0.3.2] - 2025-01-18

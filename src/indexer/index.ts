@@ -1248,4 +1248,130 @@ export class Indexer {
   getLogger(): Logger {
     return this.logger;
   }
+
+  async findSimilar(
+    code: string,
+    limit?: number,
+    options?: {
+      fileType?: string;
+      directory?: string;
+      chunkType?: string;
+      excludeFile?: string;
+      filterByBranch?: boolean;
+    }
+  ): Promise<
+    Array<{
+      filePath: string;
+      startLine: number;
+      endLine: number;
+      content: string;
+      score: number;
+      chunkType: string;
+      name?: string;
+    }>
+  > {
+    const searchStartTime = performance.now();
+    const { store, provider, database } = await this.ensureInitialized();
+
+    if (store.count() === 0) {
+      this.logger.search("debug", "Find similar on empty index");
+      return [];
+    }
+
+    const maxResults = limit ?? this.config.search.maxResults;
+    const filterByBranch = options?.filterByBranch ?? true;
+
+    this.logger.search("debug", "Starting find similar", {
+      codeLength: code.length,
+      maxResults,
+      filterByBranch,
+    });
+
+    const embeddingStartTime = performance.now();
+    const { embedding, tokensUsed } = await provider.embed(code);
+    const embeddingMs = performance.now() - embeddingStartTime;
+    this.logger.recordEmbeddingApiCall(tokensUsed);
+
+    const vectorStartTime = performance.now();
+    const semanticResults = store.search(embedding, maxResults * 2);
+    const vectorMs = performance.now() - vectorStartTime;
+
+    let branchChunkIds: Set<string> | null = null;
+    if (filterByBranch && this.currentBranch !== "default") {
+      branchChunkIds = new Set(database.getBranchChunkIds(this.currentBranch));
+    }
+
+    const filtered = semanticResults.filter((r) => {
+      if (r.score < this.config.search.minScore) return false;
+
+      if (branchChunkIds && !branchChunkIds.has(r.id)) return false;
+
+      if (options?.excludeFile) {
+        if (r.metadata.filePath === options.excludeFile) return false;
+      }
+
+      if (options?.fileType) {
+        const ext = r.metadata.filePath.split(".").pop()?.toLowerCase();
+        if (ext !== options.fileType.toLowerCase().replace(/^\./, "")) return false;
+      }
+
+      if (options?.directory) {
+        const normalizedDir = options.directory.replace(/^\/|\/$/g, "");
+        if (!r.metadata.filePath.includes(`/${normalizedDir}/`) && 
+            !r.metadata.filePath.includes(`${normalizedDir}/`)) return false;
+      }
+
+      if (options?.chunkType) {
+        if (r.metadata.chunkType !== options.chunkType) return false;
+      }
+
+      return true;
+    }).slice(0, maxResults);
+
+    const totalSearchMs = performance.now() - searchStartTime;
+    this.logger.recordSearch(totalSearchMs, {
+      embeddingMs,
+      vectorMs,
+      keywordMs: 0,
+      fusionMs: 0,
+    });
+    this.logger.search("info", "Find similar complete", {
+      codeLength: code.length,
+      results: filtered.length,
+      totalMs: Math.round(totalSearchMs * 100) / 100,
+      embeddingMs: Math.round(embeddingMs * 100) / 100,
+      vectorMs: Math.round(vectorMs * 100) / 100,
+    });
+
+    return Promise.all(
+      filtered.map(async (r) => {
+        let content = "";
+        
+        if (this.config.search.includeContext) {
+          try {
+            const fileContent = await fsPromises.readFile(
+              r.metadata.filePath,
+              "utf-8"
+            );
+            const lines = fileContent.split("\n");
+            content = lines
+              .slice(r.metadata.startLine - 1, r.metadata.endLine)
+              .join("\n");
+          } catch {
+            content = "[File not accessible]";
+          }
+        }
+
+        return {
+          filePath: r.metadata.filePath,
+          startLine: r.metadata.startLine,
+          endLine: r.metadata.endLine,
+          content,
+          score: r.score,
+          chunkType: r.metadata.chunkType,
+          name: r.metadata.name,
+        };
+      })
+    );
+  }
 }

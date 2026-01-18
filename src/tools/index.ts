@@ -227,6 +227,42 @@ export const index_logs: ToolDefinition = tool({
   },
 });
 
+export const find_similar: ToolDefinition = tool({
+  description:
+    "Find code similar to a given snippet. Use for duplicate detection, pattern discovery, or refactoring prep. Paste code and find semantically similar implementations elsewhere in the codebase.",
+  args: {
+    code: z.string().describe("The code snippet to find similar code for"),
+    limit: z.number().optional().default(10).describe("Maximum number of results to return"),
+    fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
+    directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
+    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
+    excludeFile: z.string().optional().describe("Exclude results from this file path (useful when searching for duplicates of code from a specific file)"),
+  },
+  async execute(args) {
+    const indexer = getIndexer();
+    const results = await indexer.findSimilar(args.code, args.limit ?? 10, {
+      fileType: args.fileType,
+      directory: args.directory,
+      chunkType: args.chunkType,
+      excludeFile: args.excludeFile,
+    });
+
+    if (results.length === 0) {
+      return "No similar code found. Try a different snippet or run index_codebase first.";
+    }
+
+    const formatted = results.map((r, idx) => {
+      const header = r.name
+        ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
+        : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
+
+      return `${header} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${r.content}\n\`\`\``;
+    });
+
+    return `Found ${results.length} similar code blocks:\n\n${formatted.join("\n\n")}`;
+  },
+});
+
 function formatIndexStats(stats: IndexStats, verbose: boolean = false): string {
   const lines: string[] = [];
   

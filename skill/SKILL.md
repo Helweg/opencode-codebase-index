@@ -11,6 +11,7 @@ description: Semantic code search by meaning. Use codebase_peek to find WHERE co
 |----------|------|-----|
 | Just need file locations | `codebase_peek` | Metadata only, saves ~90% tokens |
 | Need to see actual code | `codebase_search` | Returns full code content |
+| Find duplicates/patterns | `find_similar` | Given code snippet → similar code |
 | Don't know function/class names | `codebase_peek` or `codebase_search` | Natural language → code |
 | Know exact identifier names | `grep` | Faster, more precise |
 | Need ALL occurrences | `grep` | Semantic returns top N only |
@@ -35,6 +36,13 @@ Find code with full content. Use when you need to see implementation.
 
 ```
 codebase_search(query="error handling middleware", fileType="ts", contextLines=2)
+```
+
+### `find_similar`
+Find code similar to a given snippet. Use for duplicate detection, pattern discovery, refactoring.
+
+```
+find_similar(code="function validate(input) { return input.length > 0; }", excludeFile="src/current.ts")
 ```
 
 ### `index_codebase`
