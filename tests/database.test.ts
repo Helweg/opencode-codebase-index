@@ -208,6 +208,46 @@ describe("Database", () => {
     });
   });
 
+  describe("index metadata contract", () => {
+    it("should store index metadata fields", () => {
+      db.setMetadata("index.version", "1");
+      db.setMetadata("index.embeddingProvider", "openai");
+      db.setMetadata("index.embeddingModel", "text-embedding-3-small");
+      db.setMetadata("index.embeddingDimensions", "1536");
+      db.setMetadata("index.createdAt", "2025-01-19T00:00:00Z");
+      db.setMetadata("index.updatedAt", "2025-01-19T00:00:00Z");
+
+      expect(db.getMetadata("index.version")).toBe("1");
+      expect(db.getMetadata("index.embeddingProvider")).toBe("openai");
+      expect(db.getMetadata("index.embeddingModel")).toBe("text-embedding-3-small");
+      expect(db.getMetadata("index.embeddingDimensions")).toBe("1536");
+    });
+
+    it("should persist index metadata across database reopening", () => {
+      const dbPath = path.join(tempDir, "persist-test.db");
+      const db1 = new Database(dbPath);
+      
+      db1.setMetadata("index.embeddingProvider", "ollama");
+      db1.setMetadata("index.embeddingDimensions", "768");
+      
+      const db2 = new Database(dbPath);
+      
+      expect(db2.getMetadata("index.embeddingProvider")).toBe("ollama");
+      expect(db2.getMetadata("index.embeddingDimensions")).toBe("768");
+    });
+
+    it("should update index metadata on reindex", () => {
+      db.setMetadata("index.embeddingProvider", "openai");
+      db.setMetadata("index.embeddingDimensions", "1536");
+      db.setMetadata("index.updatedAt", "2025-01-18T00:00:00Z");
+
+      db.setMetadata("index.updatedAt", "2025-01-19T12:00:00Z");
+
+      expect(db.getMetadata("index.embeddingProvider")).toBe("openai");
+      expect(db.getMetadata("index.updatedAt")).toBe("2025-01-19T12:00:00Z");
+    });
+  });
+
   describe("garbage collection", () => {
     it("should gc orphan embeddings", () => {
       const embedding = Buffer.from(new Float32Array([1.0]).buffer);

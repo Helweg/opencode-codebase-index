@@ -95,6 +95,26 @@ interface FailedBatch {
   lastAttempt: string;
 }
 
+interface IndexMetadata {
+  indexVersion: string;
+  embeddingProvider: string;
+  embeddingModel: string;
+  embeddingDimensions: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface IndexCompatibility {
+  compatible: boolean;
+  reason?: string;
+  storedMetadata?: IndexMetadata;
+  currentProvider?: string;
+  currentModel?: string;
+  currentDimensions?: number;
+}
+
+const INDEX_METADATA_VERSION = "1";
+
 export class Indexer {
   private config: ParsedCodebaseIndexConfig;
   private projectRoot: string;
@@ -114,6 +134,7 @@ export class Indexer {
   private readonly maxQueryCacheSize = 100;
   private readonly queryCacheTtlMs = 5 * 60 * 1000;
   private readonly querySimilarityThreshold = 0.85;
+  private indexCompatibility: IndexCompatibility | null = null;
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
@@ -254,6 +275,19 @@ export class Indexer {
       this.migrateFromLegacyIndex();
     }
 
+    this.indexCompatibility = this.validateIndexCompatibility(this.detectedProvider);
+    if (!this.indexCompatibility.compatible) {
+      this.logger.warn("Index compatibility issue detected", {
+        reason: this.indexCompatibility.reason,
+        storedProvider: this.indexCompatibility.storedMetadata?.embeddingProvider,
+        storedModel: this.indexCompatibility.storedMetadata?.embeddingModel,
+        storedDimensions: this.indexCompatibility.storedMetadata?.embeddingDimensions,
+        currentProvider: this.indexCompatibility.currentProvider,
+        currentModel: this.indexCompatibility.currentModel,
+        currentDimensions: this.indexCompatibility.currentDimensions,
+      });
+    }
+
     if (isGitRepo(this.projectRoot)) {
       this.currentBranch = getBranchOrDefault(this.projectRoot);
       this.baseBranch = getBaseBranch(this.projectRoot);
@@ -337,6 +371,92 @@ export class Indexer {
       this.database.upsertChunksBatch(chunkDataBatch);
     }
     this.database.addChunksToBranchBatch(this.currentBranch || "default", chunkIds);
+  }
+
+  private loadIndexMetadata(): IndexMetadata | null {
+    if (!this.database) return null;
+
+    const version = this.database.getMetadata("index.version");
+    if (!version) return null;
+
+    return {
+      indexVersion: version,
+      embeddingProvider: this.database.getMetadata("index.embeddingProvider") ?? "",
+      embeddingModel: this.database.getMetadata("index.embeddingModel") ?? "",
+      embeddingDimensions: parseInt(this.database.getMetadata("index.embeddingDimensions") ?? "0", 10),
+      createdAt: this.database.getMetadata("index.createdAt") ?? "",
+      updatedAt: this.database.getMetadata("index.updatedAt") ?? "",
+    };
+  }
+
+  private saveIndexMetadata(provider: DetectedProvider): void {
+    if (!this.database) return;
+
+    const now = new Date().toISOString();
+    const existingCreatedAt = this.database.getMetadata("index.createdAt");
+
+    this.database.setMetadata("index.version", INDEX_METADATA_VERSION);
+    this.database.setMetadata("index.embeddingProvider", provider.provider);
+    this.database.setMetadata("index.embeddingModel", provider.modelInfo.model);
+    this.database.setMetadata("index.embeddingDimensions", provider.modelInfo.dimensions.toString());
+    this.database.setMetadata("index.updatedAt", now);
+
+    if (!existingCreatedAt) {
+      this.database.setMetadata("index.createdAt", now);
+    }
+  }
+
+  private validateIndexCompatibility(provider: DetectedProvider): IndexCompatibility {
+    const storedMetadata = this.loadIndexMetadata();
+
+    if (!storedMetadata) {
+      return { compatible: true };
+    }
+
+    const currentProvider = provider.provider;
+    const currentModel = provider.modelInfo.model;
+    const currentDimensions = provider.modelInfo.dimensions;
+
+    if (storedMetadata.embeddingDimensions !== currentDimensions) {
+      return {
+        compatible: false,
+        reason: `Dimension mismatch: index has ${storedMetadata.embeddingDimensions}D vectors (${storedMetadata.embeddingProvider}/${storedMetadata.embeddingModel}), but current provider uses ${currentDimensions}D (${currentProvider}/${currentModel}). Run "index --force" to rebuild.`,
+        storedMetadata,
+        currentProvider,
+        currentModel,
+        currentDimensions,
+      };
+    }
+
+    if (storedMetadata.embeddingModel !== currentModel) {
+      return {
+        compatible: false,
+        reason: `Model mismatch: index was built with "${storedMetadata.embeddingModel}", but current model is "${currentModel}". Embeddings may be incompatible. Run "index --force" to rebuild.`,
+        storedMetadata,
+        currentProvider,
+        currentModel,
+        currentDimensions,
+      };
+    }
+
+    return {
+      compatible: true,
+      storedMetadata,
+      currentProvider,
+      currentModel,
+      currentDimensions,
+    };
+  }
+
+  checkCompatibility(): IndexCompatibility {
+    if (this.indexCompatibility) {
+      return this.indexCompatibility;
+    }
+    return { compatible: true };
+  }
+
+  requiresRebuild(): boolean {
+    return !this.checkCompatibility().compatible;
   }
 
   private async ensureInitialized(): Promise<{
@@ -750,6 +870,9 @@ export class Indexer {
 
     stats.durationMs = Date.now() - startTime;
     
+    this.saveIndexMetadata(detectedProvider);
+    this.indexCompatibility = { compatible: true };
+
     this.logger.recordIndexingEnd();
     this.logger.info("Indexing complete", {
       files: stats.totalFiles,
@@ -884,6 +1007,11 @@ export class Indexer {
       name?: string;
     }>
   > {
+    const compatibility = this.checkCompatibility();
+    if (!compatibility.compatible) {
+      throw new Error(compatibility.reason ?? "Index is incompatible with current embedding provider");
+    }
+
     const searchStartTime = performance.now();
     const { store, provider, database } = await this.ensureInitialized();
 

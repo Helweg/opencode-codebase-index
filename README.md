@@ -131,6 +131,7 @@ graph TD
 - **Native speed**: Core logic written in Rust for maximum performance
 - **Memory efficient**: F16 vector quantization reduces index size by 50%
 - **Branch-aware**: Automatically tracks which chunks exist on each git branch
+- **Provider validation**: Detects embedding provider/model changes and requires rebuild to prevent garbage results
 
 ## 🌿 Branch-Aware Indexing
 

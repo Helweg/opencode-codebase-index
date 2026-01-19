@@ -8,6 +8,7 @@ Common issues and solutions for opencode-codebase-index.
 - [No Embedding Provider Available](#no-embedding-provider-available)
 - [Rate Limiting Errors](#rate-limiting-errors)
 - [Index Corruption / Stale Results](#index-corruption--stale-results)
+- [Embedding Provider Changed](#embedding-provider-changed)
 - [Native Module Build Failures](#native-module-build-failures)
 - [Slow Indexing Performance](#slow-indexing-performance)
 - [Search Returns No Results](#search-returns-no-results)
@@ -186,6 +187,47 @@ rm -rf .opencode/index/
 ```
 
 The next `/index` will rebuild from scratch.
+
+---
+
+## Embedding Provider Changed
+
+**Error message:**
+```
+Index incompatible: <reason>. Run index with force=true to rebuild.
+```
+
+**Cause:** The index was built with a different embedding provider or model than what's currently configured. Embeddings from different providers have different dimensions and are not compatible.
+
+**Common scenarios:**
+- Switched from GitHub Copilot to OpenAI
+- Changed Ollama embedding model
+- Updated to a new version of the embedding model
+
+**Solutions:**
+
+### Force Re-index
+Ask the agent:
+> "Force reindex the codebase"
+
+Or run `/index` with the force option. This will:
+1. Delete all existing embeddings
+2. Re-index all files with the new provider
+
+### Why This Happens
+Different embedding providers produce vectors with different dimensions:
+
+| Provider | Model | Dimensions |
+|----------|-------|------------|
+| GitHub Copilot | text-embedding-3-small | 1536 |
+| OpenAI | text-embedding-3-small | 1536 |
+| Google | text-embedding-004 | 768 |
+| Ollama | nomic-embed-text | 768 |
+
+Mixing embeddings from different providers would produce garbage search results, so the plugin refuses to search until you rebuild the index.
+
+### Check Current Index Metadata
+Run `/status` to see what provider/model the index was built with.
 
 ---
 
@@ -395,6 +437,7 @@ If none of these solutions work:
 | No provider | `export OPENAI_API_KEY=...` or use Ollama |
 | Rate limited | Switch to Ollama for large codebases |
 | Stale results | `rm -rf .opencode/index/` and re-index |
+| Provider changed | Force re-index: ask agent to "force reindex" |
 | Slow indexing | Use Ollama locally |
 | No results | Run `/index` first, use descriptive queries |
 | Native module error | Rebuild with Rust toolchain |
