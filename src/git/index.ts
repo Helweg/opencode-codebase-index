@@ -2,12 +2,63 @@ import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
 
+/**
+ * Resolves the actual git directory path.
+ * 
+ * In a normal repo, `.git` is a directory containing HEAD, refs, etc.
+ * In a worktree, `.git` is a file containing `gitdir: /path/to/actual/git/dir`.
+ * 
+ * @returns The resolved git directory path, or null if not a git repo
+ */
+export function resolveGitDir(repoRoot: string): string | null {
+  const gitPath = path.join(repoRoot, ".git");
+  
+  if (!existsSync(gitPath)) {
+    return null;
+  }
+  
+  try {
+    const stat = statSync(gitPath);
+    
+    if (stat.isDirectory()) {
+      // Normal repo: .git is a directory
+      return gitPath;
+    }
+    
+    if (stat.isFile()) {
+      // Worktree: .git is a file with gitdir pointer
+      const content = readFileSync(gitPath, "utf-8").trim();
+      const match = content.match(/^gitdir:\s*(.+)$/);
+      if (match) {
+        const gitdir = match[1];
+        // Handle relative paths
+        const resolvedPath = path.isAbsolute(gitdir)
+          ? gitdir
+          : path.resolve(repoRoot, gitdir);
+        
+        if (existsSync(resolvedPath)) {
+          return resolvedPath;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors (permission issues, etc.)
+  }
+  
+  return null;
+}
+
 export function isGitRepo(dir: string): boolean {
-  return existsSync(path.join(dir, ".git"));
+  return resolveGitDir(dir) !== null;
 }
 
 export function getCurrentBranch(repoRoot: string): string | null {
-  const headPath = path.join(repoRoot, ".git", "HEAD");
+  const gitDir = resolveGitDir(repoRoot);
+  if (!gitDir) {
+    return null;
+  }
+  
+  const headPath = path.join(gitDir, "HEAD");
   
   if (!existsSync(headPath)) {
     return null;
@@ -16,13 +67,11 @@ export function getCurrentBranch(repoRoot: string): string | null {
   try {
     const headContent = readFileSync(headPath, "utf-8").trim();
     
-    // Check if it's a symbolic reference (normal branch)
     const match = headContent.match(/^ref: refs\/heads\/(.+)$/);
     if (match) {
       return match[1];
     }
 
-    // Detached HEAD - return short commit hash
     if (/^[0-9a-f]{40}$/i.test(headContent)) {
       return headContent.slice(0, 7);
     }
@@ -47,30 +96,30 @@ export function getCurrentCommit(repoRoot: string): string | null {
 }
 
 export function getBaseBranch(repoRoot: string): string {
-  // Try to detect the default branch
+  const gitDir = resolveGitDir(repoRoot);
   const candidates = ["main", "master", "develop", "trunk"];
   
-  for (const candidate of candidates) {
-    const refPath = path.join(repoRoot, ".git", "refs", "heads", candidate);
-    if (existsSync(refPath)) {
-      return candidate;
-    }
-    
-    // Also check packed-refs
-    const packedRefsPath = path.join(repoRoot, ".git", "packed-refs");
-    if (existsSync(packedRefsPath)) {
-      try {
-        const content = readFileSync(packedRefsPath, "utf-8");
-        if (content.includes(`refs/heads/${candidate}`)) {
-          return candidate;
+  if (gitDir) {
+    for (const candidate of candidates) {
+      const refPath = path.join(gitDir, "refs", "heads", candidate);
+      if (existsSync(refPath)) {
+        return candidate;
+      }
+      
+      const packedRefsPath = path.join(gitDir, "packed-refs");
+      if (existsSync(packedRefsPath)) {
+        try {
+          const content = readFileSync(packedRefsPath, "utf-8");
+          if (content.includes(`refs/heads/${candidate}`)) {
+            return candidate;
+          }
+        } catch {
+          // Ignore
         }
-      } catch {
-        // Ignore
       }
     }
   }
 
-  // Try git remote show origin
   try {
     const result = execSync("git remote show origin", {
       cwd: repoRoot,
@@ -85,13 +134,18 @@ export function getBaseBranch(repoRoot: string): string {
     // Ignore - remote might not exist
   }
 
-  // Fallback to current branch or "main"
   return getCurrentBranch(repoRoot) ?? "main";
 }
 
 export function getAllBranches(repoRoot: string): string[] {
   const branches: string[] = [];
-  const refsPath = path.join(repoRoot, ".git", "refs", "heads");
+  const gitDir = resolveGitDir(repoRoot);
+  
+  if (!gitDir) {
+    return branches;
+  }
+  
+  const refsPath = path.join(gitDir, "refs", "heads");
   
   if (!existsSync(refsPath)) {
     return branches;
@@ -111,7 +165,6 @@ export function getAllBranches(repoRoot: string): string[] {
       }
     }
   } catch {
-    // Fallback: read refs directory
     try {
       const entries = readdirSync(refsPath);
       for (const entry of entries) {
@@ -158,5 +211,9 @@ export function getBranchOrDefault(repoRoot: string): string {
 }
 
 export function getHeadPath(repoRoot: string): string {
+  const gitDir = resolveGitDir(repoRoot);
+  if (gitDir) {
+    return path.join(gitDir, "HEAD");
+  }
   return path.join(repoRoot, ".git", "HEAD");
 }

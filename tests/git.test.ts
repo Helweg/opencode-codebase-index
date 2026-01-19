@@ -9,6 +9,7 @@ import {
   getAllBranches,
   getBranchOrDefault,
   getHeadPath,
+  resolveGitDir,
 } from "../src/git/index.js";
 
 describe("git utilities", () => {
@@ -158,6 +159,100 @@ describe("git utilities", () => {
     it("should return correct HEAD path", () => {
       const headPath = getHeadPath(tempDir);
       expect(headPath).toBe(path.join(tempDir, ".git", "HEAD"));
+    });
+  });
+
+  describe("resolveGitDir", () => {
+    it("should return null for non-git directory", () => {
+      expect(resolveGitDir(tempDir)).toBe(null);
+    });
+
+    it("should return .git path for normal repo", () => {
+      fs.mkdirSync(path.join(tempDir, ".git"));
+      expect(resolveGitDir(tempDir)).toBe(path.join(tempDir, ".git"));
+    });
+
+    it("should follow gitdir pointer for worktree with absolute path", () => {
+      const mainGitDir = path.join(tempDir, "main-repo", ".git");
+      const worktreeDir = path.join(tempDir, "worktree");
+      const worktreeGitDir = path.join(mainGitDir, "worktrees", "feature-branch");
+      
+      fs.mkdirSync(mainGitDir, { recursive: true });
+      fs.mkdirSync(worktreeGitDir, { recursive: true });
+      fs.mkdirSync(worktreeDir, { recursive: true });
+      
+      fs.writeFileSync(
+        path.join(worktreeDir, ".git"),
+        `gitdir: ${worktreeGitDir}\n`
+      );
+      fs.writeFileSync(path.join(worktreeGitDir, "HEAD"), "ref: refs/heads/feature-branch\n");
+      
+      expect(resolveGitDir(worktreeDir)).toBe(worktreeGitDir);
+    });
+
+    it("should follow gitdir pointer for worktree with relative path", () => {
+      const worktreeDir = path.join(tempDir, "worktree");
+      const relativeGitDir = "../main-repo/.git/worktrees/feature";
+      const absoluteGitDir = path.resolve(worktreeDir, relativeGitDir);
+      
+      fs.mkdirSync(absoluteGitDir, { recursive: true });
+      fs.mkdirSync(worktreeDir, { recursive: true });
+      
+      fs.writeFileSync(
+        path.join(worktreeDir, ".git"),
+        `gitdir: ${relativeGitDir}\n`
+      );
+      fs.writeFileSync(path.join(absoluteGitDir, "HEAD"), "ref: refs/heads/feature\n");
+      
+      expect(resolveGitDir(worktreeDir)).toBe(absoluteGitDir);
+    });
+
+    it("should return null for invalid gitdir pointer", () => {
+      fs.writeFileSync(path.join(tempDir, ".git"), "gitdir: /nonexistent/path\n");
+      expect(resolveGitDir(tempDir)).toBe(null);
+    });
+
+    it("should return null for malformed .git file", () => {
+      fs.writeFileSync(path.join(tempDir, ".git"), "invalid content\n");
+      expect(resolveGitDir(tempDir)).toBe(null);
+    });
+  });
+
+  describe("worktree support", () => {
+    let mainRepoDir: string;
+    let worktreeDir: string;
+    let worktreeGitDir: string;
+
+    beforeEach(() => {
+      mainRepoDir = path.join(tempDir, "main-repo");
+      worktreeDir = path.join(tempDir, "worktree-feature");
+      worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "feature");
+      
+      fs.mkdirSync(path.join(mainRepoDir, ".git", "refs", "heads"), { recursive: true });
+      fs.mkdirSync(worktreeGitDir, { recursive: true });
+      fs.mkdirSync(worktreeDir, { recursive: true });
+      
+      fs.writeFileSync(path.join(mainRepoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+      fs.writeFileSync(path.join(mainRepoDir, ".git", "refs", "heads", "main"), "abc123");
+      
+      fs.writeFileSync(path.join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
+      fs.writeFileSync(path.join(worktreeGitDir, "HEAD"), "ref: refs/heads/feature\n");
+    });
+
+    it("isGitRepo should return true for worktree", () => {
+      expect(isGitRepo(worktreeDir)).toBe(true);
+    });
+
+    it("getCurrentBranch should work in worktree", () => {
+      expect(getCurrentBranch(worktreeDir)).toBe("feature");
+    });
+
+    it("getHeadPath should return worktree HEAD path", () => {
+      expect(getHeadPath(worktreeDir)).toBe(path.join(worktreeGitDir, "HEAD"));
+    });
+
+    it("getBranchOrDefault should work in worktree", () => {
+      expect(getBranchOrDefault(worktreeDir)).toBe("feature");
     });
   });
 });
