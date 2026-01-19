@@ -246,7 +246,8 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "semanticOnly": false,
     "autoGc": true,
     "gcIntervalDays": 7,
-    "gcOrphanThreshold": 100
+    "gcOrphanThreshold": 100,
+    "requireProjectMarker": true
   },
   "search": {
     "maxResults": 20,
@@ -279,6 +280,7 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 | `autoGc` | `true` | Automatically run garbage collection to remove orphaned embeddings/chunks |
 | `gcIntervalDays` | `7` | Run GC on initialization if last GC was more than N days ago |
 | `gcOrphanThreshold` | `100` | Run GC after indexing if orphan count exceeds this threshold |
+| `requireProjectMarker` | `true` | Require a project marker (`.git`, `package.json`, etc.) to enable file watching and auto-indexing. Prevents accidentally indexing large directories like home. Set to `false` to index any directory. |
 | **search** | | |
 | `maxResults` | `20` | Maximum results to return |
 | `minScore` | `0.1` | Minimum similarity score (0-1). Lower = more results |

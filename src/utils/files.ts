@@ -2,6 +2,32 @@ import ignore, { Ignore } from "ignore";
 import { existsSync, readFileSync, promises as fsPromises } from "fs";
 import * as path from "path";
 
+const PROJECT_MARKERS = [
+  ".git",
+  "package.json",
+  "Cargo.toml",
+  "go.mod",
+  "pyproject.toml",
+  "setup.py",
+  "requirements.txt",
+  "Gemfile",
+  "composer.json",
+  "pom.xml",
+  "build.gradle",
+  "CMakeLists.txt",
+  "Makefile",
+  ".opencode",
+];
+
+export function hasProjectMarker(projectRoot: string): boolean {
+  for (const marker of PROJECT_MARKERS) {
+    if (existsSync(path.join(projectRoot, marker))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface SkippedFile {
   path: string;
   reason: "too_large" | "excluded" | "gitignore" | "no_match";

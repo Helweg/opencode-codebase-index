@@ -15,6 +15,13 @@ export interface IndexingConfig {
   autoGc: boolean;
   gcIntervalDays: number;
   gcOrphanThreshold: number;
+  /** 
+   * When true (default), requires a project marker (.git, package.json, Cargo.toml, etc.) 
+   * to be present before enabling file watching and auto-indexing.
+   * This prevents accidentally watching/indexing large non-project directories like home.
+   * Set to false to allow indexing any directory.
+   */
+  requireProjectMarker: boolean;
 }
 
 export interface SearchConfig {
@@ -96,6 +103,7 @@ function getDefaultIndexingConfig(): IndexingConfig {
     autoGc: true,
     gcIntervalDays: 7,
     gcOrphanThreshold: 100,
+    requireProjectMarker: true,
   };
 }
 
@@ -161,6 +169,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     autoGc: typeof rawIndexing.autoGc === "boolean" ? rawIndexing.autoGc : defaultIndexing.autoGc,
     gcIntervalDays: typeof rawIndexing.gcIntervalDays === "number" ? Math.max(1, rawIndexing.gcIntervalDays) : defaultIndexing.gcIntervalDays,
     gcOrphanThreshold: typeof rawIndexing.gcOrphanThreshold === "number" ? Math.max(0, rawIndexing.gcOrphanThreshold) : defaultIndexing.gcOrphanThreshold,
+    requireProjectMarker: typeof rawIndexing.requireProjectMarker === "boolean" ? rawIndexing.requireProjectMarker : defaultIndexing.requireProjectMarker,
   };
   
   const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;

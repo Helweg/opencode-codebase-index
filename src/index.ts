@@ -19,6 +19,7 @@ import {
   initializeTools,
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
+import { hasProjectMarker } from "./utils/files.js";
 
 function getCommandsDir(): string {
   let currentDir = process.cwd();
@@ -64,13 +65,22 @@ const plugin: Plugin = async ({ directory }) => {
 
   const indexer = new Indexer(projectRoot, config);
 
-  if (config.indexing.autoIndex) {
+  const isValidProject = !config.indexing.requireProjectMarker || hasProjectMarker(projectRoot);
+
+  if (!isValidProject) {
+    console.warn(
+      `[codebase-index] Skipping file watching and auto-indexing: no project marker found in "${projectRoot}". ` +
+      `Set "indexing.requireProjectMarker": false in config to override.`
+    );
+  }
+
+  if (config.indexing.autoIndex && isValidProject) {
     indexer.initialize().then(() => {
       indexer.index().catch(() => {});
     }).catch(() => {});
   }
 
-  if (config.indexing.watchFiles) {
+  if (config.indexing.watchFiles && isValidProject) {
     createWatcherWithIndexer(indexer, projectRoot, config);
   }
 

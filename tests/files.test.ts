@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { collectFiles, createIgnoreFilter, shouldIncludeFile } from "../src/utils/files.js";
+import { collectFiles, createIgnoreFilter, shouldIncludeFile, hasProjectMarker } from "../src/utils/files.js";
 
 describe("files utilities", () => {
   let tempDir: string;
@@ -164,6 +164,48 @@ describe("files utilities", () => {
       expect(result.files.length).toBe(2);
       expect(result.files.some((f) => f.path.endsWith("root.js"))).toBe(true);
       expect(result.files.some((f) => f.path.endsWith("nested.js"))).toBe(true);
+    });
+  });
+
+  describe("hasProjectMarker", () => {
+    it("should return true when .git exists", () => {
+      fs.mkdirSync(path.join(tempDir, ".git"), { recursive: true });
+      expect(hasProjectMarker(tempDir)).toBe(true);
+    });
+
+    it("should return true when package.json exists", () => {
+      fs.writeFileSync(path.join(tempDir, "package.json"), "{}");
+      expect(hasProjectMarker(tempDir)).toBe(true);
+    });
+
+    it("should return true when Cargo.toml exists", () => {
+      fs.writeFileSync(path.join(tempDir, "Cargo.toml"), "[package]");
+      expect(hasProjectMarker(tempDir)).toBe(true);
+    });
+
+    it("should return true when go.mod exists", () => {
+      fs.writeFileSync(path.join(tempDir, "go.mod"), "module test");
+      expect(hasProjectMarker(tempDir)).toBe(true);
+    });
+
+    it("should return true when pyproject.toml exists", () => {
+      fs.writeFileSync(path.join(tempDir, "pyproject.toml"), "[project]");
+      expect(hasProjectMarker(tempDir)).toBe(true);
+    });
+
+    it("should return true when .opencode exists", () => {
+      fs.mkdirSync(path.join(tempDir, ".opencode"), { recursive: true });
+      expect(hasProjectMarker(tempDir)).toBe(true);
+    });
+
+    it("should return false for empty directory", () => {
+      expect(hasProjectMarker(tempDir)).toBe(false);
+    });
+
+    it("should return false for directory with only regular files", () => {
+      fs.writeFileSync(path.join(tempDir, "readme.txt"), "hello");
+      fs.writeFileSync(path.join(tempDir, "data.json"), "{}");
+      expect(hasProjectMarker(tempDir)).toBe(false);
     });
   });
 });

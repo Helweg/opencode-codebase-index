@@ -219,6 +219,7 @@ Key options:
 - `embeddingProvider`: `auto` | `github-copilot` | `openai` | `google` | `ollama`
 - `indexing.watchFiles`: Auto-reindex on file changes
 - `indexing.semanticOnly`: Skip generic blocks, only index functions/classes
+- `indexing.requireProjectMarker`: Require `.git`/`package.json` etc. to enable watching (prevents hanging in home dir)
 - `search.hybridWeight`: 0.0 (semantic) to 1.0 (keyword)
 - `debug.enabled`: Enable debug logging and metrics collection
 - `debug.metrics`: Enable performance metrics (use with `index_metrics` tool)

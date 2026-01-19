@@ -4,6 +4,7 @@ Common issues and solutions for opencode-codebase-index.
 
 ## Table of Contents
 
+- [OpenCode Hangs in Home Directory](#opencode-hangs-in-home-directory)
 - [No Embedding Provider Available](#no-embedding-provider-available)
 - [Rate Limiting Errors](#rate-limiting-errors)
 - [Index Corruption / Stale Results](#index-corruption--stale-results)
@@ -11,6 +12,54 @@ Common issues and solutions for opencode-codebase-index.
 - [Slow Indexing Performance](#slow-indexing-performance)
 - [Search Returns No Results](#search-returns-no-results)
 - [Branch-Related Issues](#branch-related-issues)
+
+---
+
+## OpenCode Hangs in Home Directory
+
+**Symptoms:**
+- OpenCode becomes unresponsive when opened in home directory (`~`)
+- New session starts but nothing happens when typing
+- High CPU or memory usage
+
+**Cause:** The plugin's file watcher attempts to watch the entire home directory, which contains hundreds of thousands of files.
+
+**Solutions:**
+
+### Default Behavior (v0.4.1+)
+The plugin now requires a project marker (`.git`, `package.json`, `Cargo.toml`, etc.) by default. If no marker is found, file watching and auto-indexing are disabled. You'll see this warning:
+```
+[codebase-index] Skipping file watching and auto-indexing: no project marker found
+```
+
+### If You Need to Index a Non-Project Directory
+Set `requireProjectMarker` to `false` in your config:
+```json
+{
+  "indexing": {
+    "requireProjectMarker": false
+  }
+}
+```
+
+**Warning:** Only do this for specific directories you intend to index. Never disable this for your home directory.
+
+### Recognized Project Markers
+The plugin looks for any of these files/directories:
+- `.git`
+- `package.json`
+- `Cargo.toml`
+- `go.mod`
+- `pyproject.toml`
+- `setup.py`
+- `requirements.txt`
+- `Gemfile`
+- `composer.json`
+- `pom.xml`
+- `build.gradle`
+- `CMakeLists.txt`
+- `Makefile`
+- `.opencode`
 
 ---
 
@@ -342,6 +391,7 @@ If none of these solutions work:
 
 | Problem | Quick Fix |
 |---------|-----------|
+| Hangs in home dir | Update to v0.4.1+ (auto-detects non-project dirs) |
 | No provider | `export OPENAI_API_KEY=...` or use Ollama |
 | Rate limited | Switch to Ollama for large codebases |
 | Stale results | `rm -rf .opencode/index/` and re-index |
