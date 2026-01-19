@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, promises as fsPromises } from "fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, promises as fsPromises } from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
 import PQueue from "p-queue";
@@ -135,6 +135,7 @@ export class Indexer {
   private readonly queryCacheTtlMs = 5 * 60 * 1000;
   private readonly querySimilarityThreshold = 0.85;
   private indexCompatibility: IndexCompatibility | null = null;
+  private indexingLockPath: string = "";
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
@@ -142,6 +143,7 @@ export class Indexer {
     this.indexPath = this.getIndexPath();
     this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
     this.failedBatchesPath = path.join(this.indexPath, "failed-batches.json");
+    this.indexingLockPath = path.join(this.indexPath, "indexing.lock");
     this.logger = initializeLogger(config.debug);
   }
 
@@ -170,7 +172,44 @@ export class Indexer {
     for (const [k, v] of this.fileHashCache) {
       obj[k] = v;
     }
-    writeFileSync(this.fileHashCachePath, JSON.stringify(obj));
+    this.atomicWriteSync(this.fileHashCachePath, JSON.stringify(obj));
+  }
+
+  private atomicWriteSync(targetPath: string, data: string): void {
+    const tempPath = `${targetPath}.tmp`;
+    writeFileSync(tempPath, data);
+    renameSync(tempPath, targetPath);
+  }
+
+  private checkForInterruptedIndexing(): boolean {
+    return existsSync(this.indexingLockPath);
+  }
+
+  private acquireIndexingLock(): void {
+    const lockData = {
+      startedAt: new Date().toISOString(),
+      pid: process.pid,
+    };
+    writeFileSync(this.indexingLockPath, JSON.stringify(lockData));
+  }
+
+  private releaseIndexingLock(): void {
+    if (existsSync(this.indexingLockPath)) {
+      unlinkSync(this.indexingLockPath);
+    }
+  }
+
+  private async recoverFromInterruptedIndexing(): Promise<void> {
+    this.logger.warn("Detected interrupted indexing session, recovering...");
+    
+    if (existsSync(this.fileHashCachePath)) {
+      unlinkSync(this.fileHashCachePath);
+    }
+    
+    await this.healthCheck();
+    this.releaseIndexingLock();
+    
+    this.logger.info("Recovery complete, next index will re-process all files");
   }
 
   private loadFailedBatches(): FailedBatch[] {
@@ -246,6 +285,10 @@ export class Indexer {
     );
 
     await fsPromises.mkdir(this.indexPath, { recursive: true });
+
+    if (this.checkForInterruptedIndexing()) {
+      await this.recoverFromInterruptedIndexing();
+    }
 
     const dimensions = this.detectedProvider.modelInfo.dimensions;
     const storePath = path.join(this.indexPath, "vectors");
@@ -494,6 +537,7 @@ export class Indexer {
   async index(onProgress?: ProgressCallback): Promise<IndexStats> {
     const { store, provider, invertedIndex, database, detectedProvider } = await this.ensureInitialized();
 
+    this.acquireIndexingLock();
     this.logger.recordIndexingStart();
     this.logger.info("Starting indexing", { projectRoot: this.projectRoot });
 
@@ -694,6 +738,7 @@ export class Indexer {
         chunksProcessed: 0,
         totalChunks: 0,
       });
+      this.releaseIndexingLock();
       return stats;
     }
 
@@ -712,6 +757,7 @@ export class Indexer {
         chunksProcessed: 0,
         totalChunks: 0,
       });
+      this.releaseIndexingLock();
       return stats;
     }
 
@@ -896,6 +942,7 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
+    this.releaseIndexingLock();
     return stats;
   }
 
