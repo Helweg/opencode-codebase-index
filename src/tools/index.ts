@@ -7,6 +7,17 @@ import type { LogLevel } from "../config/schema.js";
 
 const z = tool.schema;
 
+const MAX_CONTENT_LINES = 30;
+
+function truncateContent(content: string): string {
+  const lines = content.split("\n");
+  if (lines.length <= MAX_CONTENT_LINES) return content;
+  return (
+    lines.slice(0, MAX_CONTENT_LINES).join("\n") +
+    `\n// ... (${lines.length - MAX_CONTENT_LINES} more lines)`
+  );
+}
+
 let sharedIndexer: Indexer | null = null;
 
 export function initializeTools(projectRoot: string, config: ParsedCodebaseIndexConfig): void {
@@ -25,7 +36,7 @@ export const codebase_search: ToolDefinition = tool({
     "Search codebase by MEANING, not keywords. Returns full code content. Use when you need to see actual implementation. For just finding WHERE code is (saves ~90% tokens), use codebase_peek instead. For known identifiers like 'validateToken', use grep - it's faster.",
   args: {
     query: z.string().describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
-    limit: z.number().optional().default(10).describe("Maximum number of results to return"),
+    limit: z.number().optional().default(5).describe("Maximum number of results to return"),
     fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
     chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
@@ -33,7 +44,7 @@ export const codebase_search: ToolDefinition = tool({
   },
   async execute(args) {
     const indexer = getIndexer();
-    const results = await indexer.search(args.query, args.limit ?? 10, {
+    const results = await indexer.search(args.query, args.limit ?? 5, {
       fileType: args.fileType,
       directory: args.directory,
       chunkType: args.chunkType,
@@ -49,7 +60,7 @@ export const codebase_search: ToolDefinition = tool({
         ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
         : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
 
-      return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${r.content}\n\`\`\``;
+      return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
     });
 
     return `Found ${results.length} results for "${args.query}":\n\n${formatted.join("\n\n")}`;
@@ -256,7 +267,7 @@ export const find_similar: ToolDefinition = tool({
         ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
         : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
 
-      return `${header} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${r.content}\n\`\`\``;
+      return `${header} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
     });
 
     return `Found ${results.length} similar code blocks:\n\n${formatted.join("\n\n")}`;
