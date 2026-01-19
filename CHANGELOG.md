@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2025-01-19
+
+### Added
+- **`requireProjectMarker` config option**: Prevents plugin from hanging when opened in non-project directories like home. When `true` (default), requires a project marker (`.git`, `package.json`, `Cargo.toml`, etc.) to enable file watching and auto-indexing.
+
+### Fixed
+- Plugin no longer hangs when OpenCode is opened in home directory or other large non-project directories
+
 ## [0.4.0] - 2025-01-18
 
 ### Added
