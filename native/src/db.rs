@@ -189,29 +189,34 @@ pub fn get_embeddings_batch(
         return Ok(vec![]);
     }
 
-    let placeholders: String = content_hashes
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let query = format!(
-        "SELECT content_hash, embedding FROM embeddings WHERE content_hash IN ({})",
-        placeholders
-    );
-
-    let mut stmt = conn.prepare(&query)?;
-    let params: Vec<&dyn rusqlite::ToSql> = content_hashes
-        .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
-        .collect();
-
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-    })?;
-
+    // SQLite has a limit of 999 variables per query
+    const BATCH_SIZE: usize = 900;
     let mut results = Vec::new();
-    for row in rows {
-        results.push(row?);
+
+    for chunk in content_hashes.chunks(BATCH_SIZE) {
+        let placeholders: String = chunk
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "SELECT content_hash, embedding FROM embeddings WHERE content_hash IN ({})",
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&query)?;
+        let params: Vec<&dyn rusqlite::ToSql> = chunk
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+
+        for row in rows {
+            results.push(row?);
+        }
     }
     Ok(results)
 }
@@ -225,26 +230,34 @@ pub fn get_missing_embeddings(
         return Ok(vec![]);
     }
 
-    let placeholders: String = content_hashes
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let query = format!(
-        "SELECT content_hash FROM embeddings WHERE content_hash IN ({})",
-        placeholders
-    );
+    // SQLite has a limit of 999 variables per query
+    const BATCH_SIZE: usize = 900;
+    let mut existing = std::collections::HashSet::new();
 
-    let mut stmt = conn.prepare(&query)?;
-    let params: Vec<&dyn rusqlite::ToSql> = content_hashes
-        .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
-        .collect();
+    for chunk in content_hashes.chunks(BATCH_SIZE) {
+        let placeholders: String = chunk
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "SELECT content_hash FROM embeddings WHERE content_hash IN ({})",
+            placeholders
+        );
 
-    let existing: std::collections::HashSet<String> = stmt
-        .query_map(params.as_slice(), |row| row.get::<_, String>(0))?
-        .filter_map(|r| r.ok())
-        .collect();
+        let mut stmt = conn.prepare(&query)?;
+        let params: Vec<&dyn rusqlite::ToSql> = chunk
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        let batch_existing: std::collections::HashSet<String> = stmt
+            .query_map(params.as_slice(), |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        
+        existing.extend(batch_existing);
+    }
 
     Ok(content_hashes
         .iter()
