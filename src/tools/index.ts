@@ -214,6 +214,6 @@ export const codebase_search: ToolDefinition = tool({
       return "No matching code found. Try a different query or run index_codebase first.";
     }
 
-    return `Found ${results.length} results for "${args.query}":\n\n${formatSearchResults(results)}`;
+    return `Found ${results.length} results for "${args.query}":\n\n${formatSearchResults(results, "score")}`;
   },
 });

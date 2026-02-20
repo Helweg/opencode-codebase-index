@@ -30,8 +30,10 @@ export function createEmbeddingProvider(
       return new GoogleEmbeddingProvider(configuredProviderInfo.credentials, configuredProviderInfo.modelInfo);
     case "ollama":
       return new OllamaEmbeddingProvider(configuredProviderInfo.credentials, configuredProviderInfo.modelInfo);
-    default:
-      throw new Error(`Unsupported embedding provider: ${configuredProviderInfo}`);
+    default: {
+      const _exhaustive: never = configuredProviderInfo;
+      throw new Error(`Unsupported embedding provider: ${(_exhaustive as ConfiguredProviderInfo).provider}`);
+    }
   }
 }
 

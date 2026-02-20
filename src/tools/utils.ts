@@ -187,13 +187,19 @@ export function formatLogs(logs: LogEntry[]): string {
   }).join("\n");
 }
 
-export function formatSearchResults(results: SearchResult[]): string {
+export type ScoreFormat = "score" | "similarity";
+
+export function formatSearchResults(results: SearchResult[], scoreFormat: ScoreFormat = "similarity"): string {
   const formatted = results.map((r, idx) => {
     const header = r.name
       ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
       : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
 
-    return `${header} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
+    const scoreLabel = scoreFormat === "similarity"
+      ? `(similarity: ${(r.score * 100).toFixed(1)}%)`
+      : `(score: ${r.score.toFixed(2)})`;
+
+    return `${header} ${scoreLabel}\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
   });
 
   return formatted.join("\n\n");

@@ -568,5 +568,38 @@ describe("tools utils", () => {
       expect(result).toContain('"second"');
       expect(result).toContain('"third"');
     });
+
+    it("should use raw score format when scoreFormat is 'score'", () => {
+      const results: SearchResult[] = [{
+        filePath: "src/auth.ts",
+        startLine: 10,
+        endLine: 25,
+        content: "function validateToken() {\n  return true;\n}",
+        score: 0.85,
+        chunkType: "function",
+        name: "validateToken",
+      }];
+      const result = formatSearchResults(results, "score");
+
+      expect(result).toContain("(score: 0.85)");
+      expect(result).not.toContain("similarity");
+      expect(result).not.toContain("%");
+    });
+
+    it("should use similarity percentage format when scoreFormat is 'similarity'", () => {
+      const results: SearchResult[] = [{
+        filePath: "src/auth.ts",
+        startLine: 10,
+        endLine: 25,
+        content: "function validateToken() {\n  return true;\n}",
+        score: 0.92,
+        chunkType: "function",
+        name: "validateToken",
+      }];
+      const result = formatSearchResults(results, "similarity");
+
+      expect(result).toContain("(similarity: 92.0%)");
+      expect(result).not.toContain("(score:");
+    });
   });
 });

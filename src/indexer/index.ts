@@ -135,7 +135,6 @@ interface IndexMetadata {
 enum IncompatibilityCode {
   DIMENSION_MISMATCH = "DIMENSION_MISMATCH",
   MODEL_MISMATCH = "MODEL_MISMATCH",
-  PROVIDER_MISMATCH = "PROVIDER_MISMATCH",
 }
 
 interface IndexCompatibility {
@@ -509,12 +508,10 @@ export class Indexer {
     }
 
     if (storedMetadata.embeddingProvider !== currentProvider) {
-      return {
-        compatible: false,
-        code: IncompatibilityCode.PROVIDER_MISMATCH,
-        reason: `Provider mismatch: index was built with "${storedMetadata.embeddingProvider}", but current provider is "${currentProvider}". Embeddings are incompatible. Run index_codebase with force=true to rebuild.`,
-        storedMetadata,
-      };
+      this.logger.warn("Provider changed", {
+        storedProvider: storedMetadata.embeddingProvider,
+        currentProvider,
+      });
     }
 
     return {
