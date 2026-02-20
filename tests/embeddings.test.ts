@@ -19,8 +19,10 @@ describe("embeddings detector", () => {
       expect(getProviderDisplayName("ollama")).toBe("Ollama (Local)");
     });
 
-    it("should return the provider name as-is for auto", () => {
-      expect(getProviderDisplayName("auto")).toBe("auto");
+    it("should return the provider name as-is for unknown provider (default branch)", () => {
+      // "auto" is no longer a valid EmbeddingProvider, but the default branch
+      // still returns the input string for forward-compatibility
+      expect(getProviderDisplayName("some-future-provider" as never)).toBe("some-future-provider");
     });
   });
 });

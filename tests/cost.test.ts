@@ -106,12 +106,12 @@ describe("cost utilities", () => {
   describe("estimateCost", () => {
     it("should calculate cost for free provider", () => {
       const modelInfo = {
-        provider: "github-copilot" as const,
+        provider: "github-copilot",
         model: "text-embedding-3-small",
         dimensions: 1536,
         maxTokens: 8191,
         costPer1MTokens: 0,
-      };
+      } as const;
 
       const cost = estimateCost(1000000, modelInfo);
       expect(cost).toBe(0);
@@ -119,12 +119,12 @@ describe("cost utilities", () => {
 
     it("should calculate cost for paid provider", () => {
       const modelInfo = {
-        provider: "openai" as const,
+        provider: "openai",
         model: "text-embedding-3-small",
         dimensions: 1536,
         maxTokens: 8191,
         costPer1MTokens: 0.02,
-      };
+      } as const;
 
       const cost = estimateCost(1000000, modelInfo);
       expect(cost).toBe(0.02);
@@ -132,12 +132,12 @@ describe("cost utilities", () => {
 
     it("should calculate proportional cost", () => {
       const modelInfo = {
-        provider: "openai" as const,
+        provider: "openai",
         model: "text-embedding-3-small",
         dimensions: 1536,
         maxTokens: 8191,
         costPer1MTokens: 0.02,
-      };
+      } as const;
 
       const cost = estimateCost(500000, modelInfo);
       expect(cost).toBe(0.01);
@@ -145,12 +145,12 @@ describe("cost utilities", () => {
 
     it("should handle zero tokens", () => {
       const modelInfo = {
-        provider: "openai" as const,
+        provider: "openai",
         model: "text-embedding-3-small",
         dimensions: 1536,
         maxTokens: 8191,
         costPer1MTokens: 0.02,
-      };
+      } as const;
 
       const cost = estimateCost(0, modelInfo);
       expect(cost).toBe(0);

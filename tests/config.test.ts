@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   parseConfig,
-  getDefaultConfig,
   getDefaultModelForProvider,
-  EMBEDDING_MODELS,
+  isValidModel,
 } from "../src/config/schema.js";
+import {
+  EMBEDDING_MODELS,
+  DEFAULT_PROVIDER_MODELS,
+} from "../src/config/constants.js";
 
 describe("config schema", () => {
   describe("parseConfig", () => {
@@ -12,7 +15,7 @@ describe("config schema", () => {
       const config = parseConfig(undefined);
 
       expect(config.embeddingProvider).toBe("auto");
-      expect(config.embeddingModel).toBe("auto");
+      expect(config.embeddingModel).toBeUndefined();
       expect(config.scope).toBe("project");
       expect(config.include).toHaveLength(10);
       expect(config.exclude).toHaveLength(13);
@@ -36,10 +39,10 @@ describe("config schema", () => {
       expect(parseConfig({ embeddingProvider: "google" }).embeddingProvider).toBe("google");
       expect(parseConfig({ embeddingProvider: "ollama" }).embeddingProvider).toBe("ollama");
       expect(parseConfig({ embeddingProvider: "github-copilot" }).embeddingProvider).toBe("github-copilot");
-      expect(parseConfig({ embeddingProvider: "auto" }).embeddingProvider).toBe("auto");
     });
 
     it("should fallback to auto for invalid embeddingProvider", () => {
+      expect(parseConfig({ embeddingProvider: "auto" }).embeddingProvider).toBe("auto");
       expect(parseConfig({ embeddingProvider: "invalid" }).embeddingProvider).toBe("auto");
       expect(parseConfig({ embeddingProvider: 123 }).embeddingProvider).toBe("auto");
       expect(parseConfig({ embeddingProvider: null }).embeddingProvider).toBe("auto");
@@ -55,13 +58,51 @@ describe("config schema", () => {
       expect(parseConfig({ scope: 123 }).scope).toBe("project");
     });
 
-    it("should parse embeddingModel as string", () => {
-      expect(parseConfig({ embeddingModel: "custom-model" }).embeddingModel).toBe("custom-model");
-    });
+    describe("embeddingModel parsing", () => {
+      it("should be undefined when no provider and no model given", () => {
+        expect(parseConfig({}).embeddingModel).toBeUndefined();
+      });
 
-    it("should fallback to auto for non-string embeddingModel", () => {
-      expect(parseConfig({ embeddingModel: 123 }).embeddingModel).toBe("auto");
-      expect(parseConfig({ embeddingModel: null }).embeddingModel).toBe("auto");
+      it("should be undefined when valid provider but no model given", () => {
+        expect(parseConfig({ embeddingProvider: "openai" }).embeddingModel).toBeUndefined();
+      });
+
+      it("should keep valid model for matching provider", () => {
+        const config = parseConfig({ embeddingProvider: "openai", embeddingModel: "text-embedding-3-large" });
+        expect(config.embeddingModel).toBe("text-embedding-3-large");
+      });
+
+      it("should fallback to provider default for invalid model", () => {
+        const config = parseConfig({ embeddingProvider: "openai", embeddingModel: "nonexistent-model" });
+        expect(config.embeddingModel).toBe(DEFAULT_PROVIDER_MODELS["openai"]);
+      });
+
+      it("should fallback to provider default for model belonging to different provider", () => {
+        const config = parseConfig({ embeddingProvider: "openai", embeddingModel: "nomic-embed-text" });
+        expect(config.embeddingModel).toBe(DEFAULT_PROVIDER_MODELS["openai"]);
+      });
+
+      it("should be undefined when provider is invalid even if model is specified", () => {
+        const config = parseConfig({ embeddingProvider: "invalid", embeddingModel: "text-embedding-3-small" });
+        expect(config.embeddingProvider).toBe("auto");
+        expect(config.embeddingModel).toBeUndefined();
+      });
+
+      it("should fallback to provider default for non-string embeddingModel when truthy", () => {
+        expect(parseConfig({ embeddingProvider: "openai", embeddingModel: 123 }).embeddingModel).toBe(DEFAULT_PROVIDER_MODELS["openai"]);
+      });
+
+      it("should be undefined for falsy non-string embeddingModel", () => {
+        expect(parseConfig({ embeddingProvider: "openai", embeddingModel: null }).embeddingModel).toBeUndefined();
+        expect(parseConfig({ embeddingProvider: "openai", embeddingModel: 0 }).embeddingModel).toBeUndefined();
+        expect(parseConfig({ embeddingProvider: "openai", embeddingModel: "" }).embeddingModel).toBeUndefined();
+      });
+
+      it("should handle each provider with its valid model", () => {
+        expect(parseConfig({ embeddingProvider: "github-copilot", embeddingModel: "text-embedding-3-small" }).embeddingModel).toBe("text-embedding-3-small");
+        expect(parseConfig({ embeddingProvider: "google", embeddingModel: "gemini-embedding-001" }).embeddingModel).toBe("gemini-embedding-001");
+        expect(parseConfig({ embeddingProvider: "ollama", embeddingModel: "mxbai-embed-large" }).embeddingModel).toBe("mxbai-embed-large");
+      });
     });
 
     it("should parse include as string array", () => {
@@ -190,18 +231,6 @@ describe("config schema", () => {
     });
   });
 
-  describe("getDefaultConfig", () => {
-    it("should return expected default values", () => {
-      const config = getDefaultConfig();
-
-      expect(config.embeddingProvider).toBe("auto");
-      expect(config.embeddingModel).toBe("auto");
-      expect(config.scope).toBe("project");
-      expect(config.include).toContain("**/*.{ts,tsx,js,jsx,mjs,cjs}");
-      expect(config.exclude).toContain("**/node_modules/**");
-    });
-  });
-
   describe("getDefaultModelForProvider", () => {
     it("should return correct model for github-copilot", () => {
       const model = getDefaultModelForProvider("github-copilot");
@@ -219,7 +248,7 @@ describe("config schema", () => {
     it("should return correct model for google", () => {
       const model = getDefaultModelForProvider("google");
       expect(model.provider).toBe("google");
-      expect(model.model).toBe("text-embedding-004");
+      expect(model.model).toBe("text-embedding-005");
       expect(model.dimensions).toBe(768);
     });
 
@@ -228,32 +257,97 @@ describe("config schema", () => {
       expect(model.provider).toBe("ollama");
       expect(model.model).toBe("nomic-embed-text");
     });
+  });
 
-    it("should return github-copilot model for auto (default case)", () => {
-      const model = getDefaultModelForProvider("auto");
-      expect(model.provider).toBe("github-copilot");
+  describe("isValidModel", () => {
+    it("should return true for valid model of a provider", () => {
+      expect(isValidModel("text-embedding-3-small", "openai")).toBe(true);
+      expect(isValidModel("text-embedding-3-large", "openai")).toBe(true);
+      expect(isValidModel("text-embedding-3-small", "github-copilot")).toBe(true);
+      expect(isValidModel("nomic-embed-text", "ollama")).toBe(true);
+      expect(isValidModel("mxbai-embed-large", "ollama")).toBe(true);
+      expect(isValidModel("text-embedding-005", "google")).toBe(true);
+      expect(isValidModel("gemini-embedding-001", "google")).toBe(true);
+    });
+
+    it("should return false for model belonging to a different provider", () => {
+      expect(isValidModel("nomic-embed-text", "openai")).toBe(false);
+      expect(isValidModel("text-embedding-3-small", "ollama")).toBe(false);
+      expect(isValidModel("gemini-embedding-001", "openai")).toBe(false);
+    });
+
+    it("should return false for non-existent model", () => {
+      expect(isValidModel("nonexistent-model", "openai")).toBe(false);
+      expect(isValidModel("gpt-4", "openai")).toBe(false);
+    });
+
+    it("should return false for non-string values", () => {
+      expect(isValidModel(123, "openai")).toBe(false);
+      expect(isValidModel(null, "openai")).toBe(false);
+      expect(isValidModel(undefined, "openai")).toBe(false);
+      expect(isValidModel(true, "openai")).toBe(false);
     });
   });
 
   describe("EMBEDDING_MODELS", () => {
-    it("should have expected models defined", () => {
-      expect(EMBEDDING_MODELS).toHaveProperty("github-copilot/text-embedding-3-small");
-      expect(EMBEDDING_MODELS).toHaveProperty("openai/text-embedding-3-small");
-      expect(EMBEDDING_MODELS).toHaveProperty("openai/text-embedding-3-large");
-      expect(EMBEDDING_MODELS).toHaveProperty("google/text-embedding-004");
-      expect(EMBEDDING_MODELS).toHaveProperty("ollama/nomic-embed-text");
-      expect(EMBEDDING_MODELS).toHaveProperty("ollama/mxbai-embed-large");
+    it("should have all expected providers", () => {
+      expect(EMBEDDING_MODELS).toHaveProperty("github-copilot");
+      expect(EMBEDDING_MODELS).toHaveProperty("openai");
+      expect(EMBEDDING_MODELS).toHaveProperty("google");
+      expect(EMBEDDING_MODELS).toHaveProperty("ollama");
+    });
+
+    it("should have expected models per provider", () => {
+      expect(EMBEDDING_MODELS["github-copilot"]).toHaveProperty("text-embedding-3-small");
+      expect(EMBEDDING_MODELS["openai"]).toHaveProperty("text-embedding-3-small");
+      expect(EMBEDDING_MODELS["openai"]).toHaveProperty("text-embedding-3-large");
+      expect(EMBEDDING_MODELS["google"]).toHaveProperty("text-embedding-005");
+      expect(EMBEDDING_MODELS["google"]).toHaveProperty("gemini-embedding-001");
+      expect(EMBEDDING_MODELS["ollama"]).toHaveProperty("nomic-embed-text");
+      expect(EMBEDDING_MODELS["ollama"]).toHaveProperty("mxbai-embed-large");
     });
 
     it("should have correct cost for free providers", () => {
-      expect(EMBEDDING_MODELS["github-copilot/text-embedding-3-small"].costPer1MTokens).toBe(0);
-      expect(EMBEDDING_MODELS["google/text-embedding-004"].costPer1MTokens).toBe(0);
-      expect(EMBEDDING_MODELS["ollama/nomic-embed-text"].costPer1MTokens).toBe(0);
+      expect(EMBEDDING_MODELS["github-copilot"]["text-embedding-3-small"].costPer1MTokens).toBe(0);
+      expect(EMBEDDING_MODELS["ollama"]["nomic-embed-text"].costPer1MTokens).toBe(0);
+      expect(EMBEDDING_MODELS["ollama"]["mxbai-embed-large"].costPer1MTokens).toBe(0);
     });
 
     it("should have non-zero cost for paid providers", () => {
-      expect(EMBEDDING_MODELS["openai/text-embedding-3-small"].costPer1MTokens).toBeGreaterThan(0);
-      expect(EMBEDDING_MODELS["openai/text-embedding-3-large"].costPer1MTokens).toBeGreaterThan(0);
+      expect(EMBEDDING_MODELS["openai"]["text-embedding-3-small"].costPer1MTokens).toBeGreaterThan(0);
+      expect(EMBEDDING_MODELS["openai"]["text-embedding-3-large"].costPer1MTokens).toBeGreaterThan(0);
+      expect(EMBEDDING_MODELS["google"]["text-embedding-005"].costPer1MTokens).toBeGreaterThan(0);
+      expect(EMBEDDING_MODELS["google"]["gemini-embedding-001"].costPer1MTokens).toBeGreaterThan(0);
+    });
+
+    it("should have taskAble property on google models", () => {
+      expect(EMBEDDING_MODELS["google"]["text-embedding-005"].taskAble).toBe(false);
+      expect(EMBEDDING_MODELS["google"]["gemini-embedding-001"].taskAble).toBe(true);
+    });
+
+    it("should have valid dimensions for all models", () => {
+      for (const [_provider, models] of Object.entries(EMBEDDING_MODELS)) {
+        for (const [_modelName, info] of Object.entries(models)) {
+          expect(info.dimensions).toBeGreaterThan(0);
+          expect(info.maxTokens).toBeGreaterThan(0);
+        }
+      }
+    });
+  });
+
+  describe("DEFAULT_PROVIDER_MODELS", () => {
+    it("should reference models that exist in EMBEDDING_MODELS", () => {
+      for (const [provider, model] of Object.entries(DEFAULT_PROVIDER_MODELS)) {
+        const providerModels = EMBEDDING_MODELS[provider as keyof typeof EMBEDDING_MODELS];
+        expect(providerModels).toBeDefined();
+        expect(providerModels).toHaveProperty(model);
+      }
+    });
+
+    it("should have an entry for every provider in EMBEDDING_MODELS", () => {
+      const providers = Object.keys(EMBEDDING_MODELS);
+      const defaultProviders = Object.keys(DEFAULT_PROVIDER_MODELS);
+      expect(defaultProviders.sort()).toEqual(providers.sort());
     });
   });
 });

@@ -38,10 +38,7 @@ export const EMBEDDING_MODELS = {
       maxTokens: 2048,
       costPer1MTokens: 0.025,
       taskAble: false,
-      // Note: on realtime, this model allows for task-specific embedding optimization (https://docs.cloud.google.com/vertex-ai/generative-ai/docs/embeddings/task-types  )
-      // but in order to mantain backwards compatibility, we keep it as false
-      //! PROBLEM: we realy need to keep taskAble as false? if the plugin handles migrations we would not have problems
-      //! PROBLEM: by changing the model we should migrate existing indexes if any exist, how does the plugin handle this?
+      // Note: on reality, this model allows for task-specific embeddings. See: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/embeddings/task-types
     },
     "gemini-embedding-001": {
       provider: "google",
