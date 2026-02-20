@@ -6,41 +6,41 @@ This document explains the architecture of opencode-codebase-index, including da
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              OpenCode Agent                                  │
+│                              OpenCode Agent                                 │
 │                                                                             │
-│  Tools: codebase_search, index_codebase, index_status, index_health_check  │
+│  Tools: codebase_search, index_codebase, index_status, index_health_check   │
 │  Commands: /search, /find, /index, /status                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           TypeScript Layer                                   │
+│                           TypeScript Layer                                  │
 │                                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │   Indexer    │  │  Embeddings  │  │   Watcher    │  │     Git      │   │
-│  │              │  │   Provider   │  │              │  │   Detector   │   │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │   Indexer    │  │  Embeddings  │  │   Watcher    │  │     Git      │     │
+│  │              │  │   Provider   │  │              │  │   Detector   │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         Rust Native Module (NAPI)                           │
 │                                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │  Tree-sitter │  │   usearch    │  │    SQLite    │  │     BM25     │   │
-│  │   Parser     │  │   Vectors    │  │   Database   │  │ Inverted Idx │   │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │  Tree-sitter │  │   usearch    │  │    SQLite    │  │     BM25     │     │
+│  │   Parser     │  │   Vectors    │  │   Database   │  │ Inverted Idx │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Storage Layer                                   │
+│                              Storage Layer                                  │
 │                                                                             │
 │  .opencode/index/                                                           │
-│  ├── codebase.db           # SQLite: embeddings, chunks, branch catalog    │
-│  ├── vectors.usearch       # Vector index (uSearch)                        │
-│  ├── inverted-index.json   # BM25 keyword index                            │
-│  └── file-hashes.json      # File change detection                         │
+│  ├── codebase.db           # SQLite: embeddings, chunks, branch catalog     │
+│  ├── vectors.usearch       # Vector index (uSearch)                         │
+│  ├── inverted-index.json   # BM25 keyword index                             │
+│  └── file-hashes.json      # File change detection                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

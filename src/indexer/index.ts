@@ -5,7 +5,7 @@ import PQueue from "p-queue";
 import pRetry from "p-retry";
 
 import { ParsedCodebaseIndexConfig } from "../config/schema.js";
-import { detectEmbeddingProvider, DetectedProvider } from "../embeddings/detector.js";
+import { detectEmbeddingProvider, ConfiguredProviderInfo, tryDetectProvider } from "../embeddings/detector.js";
 import {
   createEmbeddingProvider,
   EmbeddingProviderInterface,
@@ -69,6 +69,34 @@ export interface IndexStats {
   failedBatchesPath?: string;
 }
 
+export interface SearchResult {
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  score: number;
+  chunkType: string;
+  name?: string;
+}
+
+export interface HealthCheckResult {
+  removed: number;
+  filePaths: string[];
+  gcOrphanEmbeddings: number;
+  gcOrphanChunks: number;
+}
+
+export interface StatusResult {
+  indexed: boolean;
+  vectorCount: number;
+  provider: string;
+  model: string;
+  indexPath: string;
+  currentBranch: string;
+  baseBranch: string;
+  compatibility: IndexCompatibility | null;
+}
+
 export interface IndexProgress {
   phase: "scanning" | "parsing" | "embedding" | "storing" | "complete";
   filesProcessed: number;
@@ -104,13 +132,17 @@ interface IndexMetadata {
   updatedAt: string;
 }
 
+enum IncompatibilityCode {
+  DIMENSION_MISMATCH = "DIMENSION_MISMATCH",
+  MODEL_MISMATCH = "MODEL_MISMATCH",
+  PROVIDER_MISMATCH = "PROVIDER_MISMATCH",
+}
+
 interface IndexCompatibility {
   compatible: boolean;
+  code?: IncompatibilityCode;
   reason?: string;
   storedMetadata?: IndexMetadata;
-  currentProvider?: string;
-  currentModel?: string;
-  currentDimensions?: number;
 }
 
 const INDEX_METADATA_VERSION = "1";
@@ -123,7 +155,7 @@ export class Indexer {
   private invertedIndex: InvertedIndex | null = null;
   private database: Database | null = null;
   private provider: EmbeddingProviderInterface | null = null;
-  private detectedProvider: DetectedProvider | null = null;
+  private configuredProviderInfo: ConfiguredProviderInfo | null = null;
   private fileHashCache: Map<string, string> = new Map();
   private fileHashCachePath: string = "";
   private failedBatchesPath: string = "";
@@ -201,14 +233,14 @@ export class Indexer {
 
   private async recoverFromInterruptedIndexing(): Promise<void> {
     this.logger.warn("Detected interrupted indexing session, recovering...");
-    
+
     if (existsSync(this.fileHashCachePath)) {
       unlinkSync(this.fileHashCachePath);
     }
-    
+
     await this.healthCheck();
     this.releaseIndexingLock();
-    
+
     this.logger.info("Recovery complete, next index will re-process all files");
   }
 
@@ -227,7 +259,7 @@ export class Indexer {
   private saveFailedBatches(batches: FailedBatch[]): void {
     if (batches.length === 0) {
       if (existsSync(this.failedBatchesPath)) {
-        fsPromises.unlink(this.failedBatchesPath).catch(() => {});
+        fsPromises.unlink(this.failedBatchesPath).catch(() => { });
       }
       return;
     }
@@ -245,11 +277,11 @@ export class Indexer {
     this.saveFailedBatches(existing);
   }
 
-  private getProviderRateLimits(provider: string): { 
-    concurrency: number; 
-    intervalMs: number; 
-    minRetryMs: number; 
-    maxRetryMs: number; 
+  private getProviderRateLimits(provider: string): {
+    concurrency: number;
+    intervalMs: number;
+    minRetryMs: number;
+    maxRetryMs: number;
   } {
     switch (provider) {
       case "github-copilot":
@@ -266,23 +298,25 @@ export class Indexer {
   }
 
   async initialize(): Promise<void> {
-    this.detectedProvider = await detectEmbeddingProvider(this.config.embeddingProvider);
-    if (!this.detectedProvider) {
+    if (this.config.embeddingProvider === 'auto') {
+      this.configuredProviderInfo = await tryDetectProvider();
+    } else {
+      this.configuredProviderInfo = await detectEmbeddingProvider(this.config.embeddingProvider, this.config.embeddingModel);
+    }
+
+    if (!this.configuredProviderInfo) {
       throw new Error(
         "No embedding provider available. Configure GitHub, OpenAI, Google, or Ollama."
       );
     }
 
     this.logger.info("Initializing indexer", {
-      provider: this.detectedProvider.provider,
-      model: this.detectedProvider.modelInfo.model,
+      provider: this.configuredProviderInfo.provider,
+      model: this.configuredProviderInfo.modelInfo.model,
       scope: this.config.scope,
     });
 
-    this.provider = createEmbeddingProvider(
-      this.detectedProvider.credentials,
-      this.detectedProvider.modelInfo
-    );
+    this.provider = createEmbeddingProvider(this.configuredProviderInfo);
 
     await fsPromises.mkdir(this.indexPath, { recursive: true });
 
@@ -290,7 +324,7 @@ export class Indexer {
       await this.recoverFromInterruptedIndexing();
     }
 
-    const dimensions = this.detectedProvider.modelInfo.dimensions;
+    const dimensions = this.configuredProviderInfo.modelInfo.dimensions;
     const storePath = path.join(this.indexPath, "vectors");
     this.store = new VectorStore(storePath, dimensions);
 
@@ -318,16 +352,12 @@ export class Indexer {
       this.migrateFromLegacyIndex();
     }
 
-    this.indexCompatibility = this.validateIndexCompatibility(this.detectedProvider);
+    this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
     if (!this.indexCompatibility.compatible) {
       this.logger.warn("Index compatibility issue detected", {
         reason: this.indexCompatibility.reason,
-        storedProvider: this.indexCompatibility.storedMetadata?.embeddingProvider,
-        storedModel: this.indexCompatibility.storedMetadata?.embeddingModel,
-        storedDimensions: this.indexCompatibility.storedMetadata?.embeddingDimensions,
-        currentProvider: this.indexCompatibility.currentProvider,
-        currentModel: this.indexCompatibility.currentModel,
-        currentDimensions: this.indexCompatibility.currentDimensions,
+        storedMetadata: this.indexCompatibility.storedMetadata,
+        configuredProviderInfo: this.configuredProviderInfo,
       });
     }
 
@@ -432,7 +462,7 @@ export class Indexer {
     };
   }
 
-  private saveIndexMetadata(provider: DetectedProvider): void {
+  private saveIndexMetadata(provider: ConfiguredProviderInfo): void {
     if (!this.database) return;
 
     const now = new Date().toISOString();
@@ -449,7 +479,7 @@ export class Indexer {
     }
   }
 
-  private validateIndexCompatibility(provider: DetectedProvider): IndexCompatibility {
+  private validateIndexCompatibility(provider: ConfiguredProviderInfo): IndexCompatibility {
     const storedMetadata = this.loadIndexMetadata();
 
     if (!storedMetadata) {
@@ -463,66 +493,68 @@ export class Indexer {
     if (storedMetadata.embeddingDimensions !== currentDimensions) {
       return {
         compatible: false,
-        reason: `Dimension mismatch: index has ${storedMetadata.embeddingDimensions}D vectors (${storedMetadata.embeddingProvider}/${storedMetadata.embeddingModel}), but current provider uses ${currentDimensions}D (${currentProvider}/${currentModel}). Run "index --force" to rebuild.`,
+        code: IncompatibilityCode.DIMENSION_MISMATCH,
+        reason: `Dimension mismatch: index has ${storedMetadata.embeddingDimensions}D vectors (${storedMetadata.embeddingProvider}/${storedMetadata.embeddingModel}), but current provider uses ${currentDimensions}D (${currentProvider}/${currentModel}). Run index_codebase with force=true to rebuild.`,
         storedMetadata,
-        currentProvider,
-        currentModel,
-        currentDimensions,
       };
     }
 
     if (storedMetadata.embeddingModel !== currentModel) {
       return {
         compatible: false,
-        reason: `Model mismatch: index was built with "${storedMetadata.embeddingModel}", but current model is "${currentModel}". Embeddings may be incompatible. Run "index --force" to rebuild.`,
+        code: IncompatibilityCode.MODEL_MISMATCH,
+        reason: `Model mismatch: index was built with "${storedMetadata.embeddingModel}", but current model is "${currentModel}". Embeddings are incompatible. Run index_codebase with force=true to rebuild.`,
         storedMetadata,
-        currentProvider,
-        currentModel,
-        currentDimensions,
+      };
+    }
+
+    if (storedMetadata.embeddingProvider !== currentProvider) {
+      return {
+        compatible: false,
+        code: IncompatibilityCode.PROVIDER_MISMATCH,
+        reason: `Provider mismatch: index was built with "${storedMetadata.embeddingProvider}", but current provider is "${currentProvider}". Embeddings are incompatible. Run index_codebase with force=true to rebuild.`,
+        storedMetadata,
       };
     }
 
     return {
       compatible: true,
       storedMetadata,
-      currentProvider,
-      currentModel,
-      currentDimensions,
     };
   }
 
   checkCompatibility(): IndexCompatibility {
-    if (this.indexCompatibility) {
-      return this.indexCompatibility;
-    }
-    return { compatible: true };
-  }
+    if (!this.indexCompatibility) {
+      if (!this.configuredProviderInfo) {
+        throw new Error('No embedding provider info, you must initialize the indexer first.');
+      }
 
-  requiresRebuild(): boolean {
-    return !this.checkCompatibility().compatible;
+      this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
+    }
+    return this.indexCompatibility;
   }
 
   private async ensureInitialized(): Promise<{
     store: VectorStore;
     provider: EmbeddingProviderInterface;
     invertedIndex: InvertedIndex;
-    detectedProvider: DetectedProvider;
+    configuredProviderInfo: ConfiguredProviderInfo;
     database: Database;
   }> {
-    if (!this.store || !this.provider || !this.invertedIndex || !this.detectedProvider || !this.database) {
+    if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
       await this.initialize();
     }
     return {
       store: this.store!,
       provider: this.provider!,
       invertedIndex: this.invertedIndex!,
-      detectedProvider: this.detectedProvider!,
+      configuredProviderInfo: this.configuredProviderInfo!,
       database: this.database!,
     };
   }
 
   async estimateCost(): Promise<CostEstimate> {
-    const { detectedProvider } = await this.ensureInitialized();
+    const { configuredProviderInfo } = await this.ensureInitialized();
 
     const { files } = await collectFiles(
       this.projectRoot,
@@ -531,11 +563,18 @@ export class Indexer {
       this.config.indexing.maxFileSize
     );
 
-    return createCostEstimate(files, detectedProvider);
+    return createCostEstimate(files, configuredProviderInfo);
   }
 
   async index(onProgress?: ProgressCallback): Promise<IndexStats> {
-    const { store, provider, invertedIndex, database, detectedProvider } = await this.ensureInitialized();
+    const { store, provider, invertedIndex, database, configuredProviderInfo } = await this.ensureInitialized();
+
+    if (!this.indexCompatibility?.compatible) {
+      throw new Error(
+        `${this.indexCompatibility?.reason} ` +
+        `Run index_codebase with force=true to rebuild the index.`
+      );
+    }
 
     this.acquireIndexingLock();
     this.logger.recordIndexingStart();
@@ -588,7 +627,7 @@ export class Indexer {
     for (const f of files) {
       const currentHash = hashFile(f.path);
       currentFileHashes.set(f.path, currentHash);
-      
+
       if (this.fileHashCache.get(f.path) === currentHash) {
         unchangedFilePaths.add(f.path);
         this.logger.recordCacheHit();
@@ -615,7 +654,7 @@ export class Indexer {
     const parseStartTime = performance.now();
     const parsedFiles = parseFiles(changedFiles);
     const parseMs = performance.now() - parseStartTime;
-    
+
     this.logger.recordFilesParsed(parsedFiles.length);
     this.logger.recordParseDuration(parseMs);
     this.logger.debug("Parsed changed files", { parsedCount: parsedFiles.length, parseMs: parseMs.toFixed(2) });
@@ -647,27 +686,27 @@ export class Indexer {
 
     for (const parsed of parsedFiles) {
       currentFilePaths.add(parsed.path);
-      
+
       if (parsed.chunks.length === 0) {
         const relativePath = path.relative(this.projectRoot, parsed.path);
         stats.parseFailures.push(relativePath);
       }
-      
+
       let fileChunkCount = 0;
       for (const chunk of parsed.chunks) {
         if (fileChunkCount >= this.config.indexing.maxChunksPerFile) {
           break;
         }
-        
+
         if (this.config.indexing.semanticOnly && chunk.chunkType === "other") {
           continue;
         }
-        
+
         const id = generateChunkId(parsed.path, chunk);
         const contentHash = generateChunkHash(chunk);
         currentChunkIds.add(id);
 
-        const chunkData: ChunkData = {
+        chunkDataBatch.push({
           chunkId: id,
           contentHash,
           filePath: parsed.path,
@@ -676,8 +715,7 @@ export class Indexer {
           nodeType: chunk.chunkType,
           name: chunk.name,
           language: chunk.language,
-        };
-        chunkDataBatch.push(chunkData);
+        });
 
         if (existingChunks.get(id) === contentHash) {
           fileChunkCount++;
@@ -771,7 +809,7 @@ export class Indexer {
 
     const allContentHashes = pendingChunks.map((c) => c.contentHash);
     const missingHashes = new Set(database.getMissingEmbeddings(allContentHashes));
-    
+
     const chunksNeedingEmbedding = pendingChunks.filter((c) => missingHashes.has(c.contentHash));
     const chunksWithExistingEmbedding = pendingChunks.filter((c) => !missingHashes.has(c.contentHash));
 
@@ -792,11 +830,11 @@ export class Indexer {
       }
     }
 
-    const providerRateLimits = this.getProviderRateLimits(detectedProvider.provider);
-    const queue = new PQueue({ 
-      concurrency: providerRateLimits.concurrency, 
-      interval: providerRateLimits.intervalMs, 
-      intervalCap: providerRateLimits.concurrency 
+    const providerRateLimits = this.getProviderRateLimits(configuredProviderInfo.provider);
+    const queue = new PQueue({
+      concurrency: providerRateLimits.concurrency,
+      interval: providerRateLimits.intervalMs,
+      intervalCap: providerRateLimits.concurrency
     });
     const dynamicBatches = createDynamicBatches(chunksNeedingEmbedding);
     let rateLimitBackoffMs = 0;
@@ -806,7 +844,7 @@ export class Indexer {
         if (rateLimitBackoffMs > 0) {
           await new Promise(resolve => setTimeout(resolve, rateLimitBackoffMs));
         }
-        
+
         try {
           const result = await pRetry(
             async () => {
@@ -836,7 +874,7 @@ export class Indexer {
               },
             }
           );
-          
+
           if (rateLimitBackoffMs > 0) {
             rateLimitBackoffMs = Math.max(0, rateLimitBackoffMs - 2000);
           }
@@ -848,12 +886,12 @@ export class Indexer {
           }));
 
           store.addBatch(items);
-          
+
           const embeddingBatchItems = batch.map((chunk, i) => ({
             contentHash: chunk.contentHash,
             embedding: float32ArrayToBuffer(result.embeddings[i]),
             chunkText: chunk.text,
-            model: detectedProvider.modelInfo.model,
+            model: configuredProviderInfo.modelInfo.model,
           }));
           database.upsertEmbeddingsBatch(embeddingBatchItems);
 
@@ -861,7 +899,7 @@ export class Indexer {
             invertedIndex.removeChunk(chunk.id);
             invertedIndex.addChunk(chunk.id, chunk.content);
           }
-          
+
           stats.indexedChunks += batch.length;
           stats.tokensUsed += result.totalTokensUsed;
 
@@ -915,8 +953,8 @@ export class Indexer {
     }
 
     stats.durationMs = Date.now() - startTime;
-    
-    this.saveIndexMetadata(detectedProvider);
+
+    this.saveIndexMetadata(configuredProviderInfo);
     this.indexCompatibility = { compatible: true };
 
     this.logger.recordIndexingEnd();
@@ -949,16 +987,16 @@ export class Indexer {
   private async getQueryEmbedding(query: string, provider: EmbeddingProviderInterface): Promise<number[]> {
     const now = Date.now();
     const cached = this.queryEmbeddingCache.get(query);
-    
+
     if (cached && (now - cached.timestamp) < this.queryCacheTtlMs) {
       this.logger.cache("debug", "Query embedding cache hit (exact)", { query: query.slice(0, 50) });
       this.logger.recordQueryCacheHit();
       return cached.embedding;
     }
-    
+
     const similarMatch = this.findSimilarCachedQuery(query, now);
     if (similarMatch) {
-      this.logger.cache("debug", "Query embedding cache hit (similar)", { 
+      this.logger.cache("debug", "Query embedding cache hit (similar)", {
         query: query.slice(0, 50),
         similarTo: similarMatch.key.slice(0, 50),
         similarity: similarMatch.similarity.toFixed(3),
@@ -966,45 +1004,45 @@ export class Indexer {
       this.logger.recordQueryCacheSimilarHit();
       return similarMatch.embedding;
     }
-    
+
     this.logger.cache("debug", "Query embedding cache miss", { query: query.slice(0, 50) });
     this.logger.recordQueryCacheMiss();
-    const { embedding, tokensUsed } = await provider.embed(query);
+    const { embedding, tokensUsed } = await provider.embedQuery(query);
     this.logger.recordEmbeddingApiCall(tokensUsed);
-    
+
     if (this.queryEmbeddingCache.size >= this.maxQueryCacheSize) {
       const oldestKey = this.queryEmbeddingCache.keys().next().value;
       if (oldestKey) {
         this.queryEmbeddingCache.delete(oldestKey);
       }
     }
-    
+
     this.queryEmbeddingCache.set(query, { embedding, timestamp: now });
     return embedding;
   }
 
   private findSimilarCachedQuery(
-    query: string, 
+    query: string,
     now: number
   ): { key: string; embedding: number[]; similarity: number } | null {
     const queryTokens = this.tokenize(query);
     if (queryTokens.size === 0) return null;
-    
+
     let bestMatch: { key: string; embedding: number[]; similarity: number } | null = null;
-    
+
     for (const [cachedQuery, { embedding, timestamp }] of this.queryEmbeddingCache) {
       if ((now - timestamp) >= this.queryCacheTtlMs) continue;
-      
+
       const cachedTokens = this.tokenize(cachedQuery);
       const similarity = this.jaccardSimilarity(queryTokens, cachedTokens);
-      
+
       if (similarity >= this.querySimilarityThreshold) {
         if (!bestMatch || similarity > bestMatch.similarity) {
           bestMatch = { key: cachedQuery, embedding, similarity };
         }
       }
     }
-    
+
     return bestMatch;
   }
 
@@ -1021,12 +1059,12 @@ export class Indexer {
   private jaccardSimilarity(a: Set<string>, b: Set<string>): number {
     if (a.size === 0 && b.size === 0) return 1;
     if (a.size === 0 || b.size === 0) return 0;
-    
+
     let intersection = 0;
     for (const token of a) {
       if (b.has(token)) intersection++;
     }
-    
+
     const union = a.size + b.size - intersection;
     return intersection / union;
   }
@@ -1043,24 +1081,18 @@ export class Indexer {
       filterByBranch?: boolean;
       metadataOnly?: boolean;
     }
-  ): Promise<
-    Array<{
-      filePath: string;
-      startLine: number;
-      endLine: number;
-      content: string;
-      score: number;
-      chunkType: string;
-      name?: string;
-    }>
-  > {
+  ): Promise<SearchResult[]> {
+    const { store, provider, database } = await this.ensureInitialized();
+
     const compatibility = this.checkCompatibility();
     if (!compatibility.compatible) {
-      throw new Error(compatibility.reason ?? "Index is incompatible with current embedding provider");
+      throw new Error(
+        `${compatibility.reason ?? "Index is incompatible with current embedding provider."} ` +
+        `A possible solution is to run index_codebase with force=true to rebuild the index.`
+      );
     }
 
     const searchStartTime = performance.now();
-    const { store, provider, database } = await this.ensureInitialized();
 
     if (store.count() === 0) {
       this.logger.search("debug", "Search on empty index", { query });
@@ -1111,8 +1143,8 @@ export class Indexer {
 
       if (options?.directory) {
         const normalizedDir = options.directory.replace(/^\/|\/$/g, "");
-        if (!r.metadata.filePath.includes(`/${normalizedDir}/`) && 
-            !r.metadata.filePath.includes(`${normalizedDir}/`)) return false;
+        if (!r.metadata.filePath.includes(`/${normalizedDir}/`) &&
+          !r.metadata.filePath.includes(`${normalizedDir}/`)) return false;
       }
 
       if (options?.chunkType) {
@@ -1146,7 +1178,7 @@ export class Indexer {
         let content = "";
         let contextStartLine = r.metadata.startLine;
         let contextEndLine = r.metadata.endLine;
-        
+
         if (!metadataOnly && this.config.search.includeContext) {
           try {
             const fileContent = await fsPromises.readFile(
@@ -1155,10 +1187,10 @@ export class Indexer {
             );
             const lines = fileContent.split("\n");
             const contextLines = options?.contextLines ?? this.config.search.contextLines;
-            
+
             contextStartLine = Math.max(1, r.metadata.startLine - contextLines);
             contextEndLine = Math.min(lines.length, r.metadata.endLine + contextLines);
-            
+
             content = lines
               .slice(contextStartLine - 1, contextEndLine)
               .join("\n");
@@ -1186,7 +1218,7 @@ export class Indexer {
   ): Promise<Array<{ id: string; score: number; metadata: ChunkMetadata }>> {
     const { store, invertedIndex } = await this.ensureInitialized();
     const scores = invertedIndex.search(query);
-    
+
     if (scores.size === 0) {
       return [];
     }
@@ -1246,25 +1278,18 @@ export class Indexer {
     return results.slice(0, limit);
   }
 
-  async getStatus(): Promise<{
-    indexed: boolean;
-    vectorCount: number;
-    provider: string;
-    model: string;
-    indexPath: string;
-    currentBranch: string;
-    baseBranch: string;
-  }> {
-    const { store, detectedProvider } = await this.ensureInitialized();
+  async getStatus(): Promise<StatusResult> {
+    const { store, configuredProviderInfo } = await this.ensureInitialized();
 
     return {
       indexed: store.count() > 0,
       vectorCount: store.count(),
-      provider: detectedProvider.provider,
-      model: detectedProvider.modelInfo.model,
+      provider: configuredProviderInfo.provider,
+      model: configuredProviderInfo.modelInfo.model,
       indexPath: this.indexPath,
       currentBranch: this.currentBranch,
       baseBranch: this.baseBranch,
+      compatibility: this.indexCompatibility,
     };
   }
 
@@ -1275,16 +1300,27 @@ export class Indexer {
     store.save();
     invertedIndex.clear();
     invertedIndex.save();
-    
+
     // Clear file hash cache so all files are re-parsed
     this.fileHashCache.clear();
     this.saveFileHashCache();
-    
+
     // Clear branch catalog
     database.clearBranch(this.currentBranch);
+
+    // Clear index metadata so compatibility is re-evaluated from scratch
+    database.deleteMetadata("index.version");
+    database.deleteMetadata("index.embeddingProvider");
+    database.deleteMetadata("index.embeddingModel");
+    database.deleteMetadata("index.embeddingDimensions");
+    database.deleteMetadata("index.createdAt");
+    database.deleteMetadata("index.updatedAt");
+
+    // Re-validate compatibility (no stored metadata = compatible)
+    this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo!);
   }
 
-  async healthCheck(): Promise<{ removed: number; filePaths: string[]; gcOrphanEmbeddings: number; gcOrphanChunks: number }> {
+  async healthCheck(): Promise<HealthCheckResult> {
     const { store, invertedIndex, database } = await this.ensureInitialized();
 
     this.logger.gc("info", "Starting health check");
@@ -1334,7 +1370,7 @@ export class Indexer {
 
   async retryFailedBatches(): Promise<{ succeeded: number; failed: number; remaining: number }> {
     const { store, provider, invertedIndex } = await this.ensureInitialized();
-    
+
     const failedBatches = this.loadFailedBatches();
     if (failedBatches.length === 0) {
       return { succeeded: 0, failed: 0, remaining: 0 };
@@ -1372,7 +1408,7 @@ export class Indexer {
 
         this.logger.recordChunksEmbedded(batch.chunks.length);
         this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
-        
+
         succeeded += batch.chunks.length;
       } catch (error) {
         failed += batch.chunks.length;
@@ -1387,7 +1423,7 @@ export class Indexer {
     }
 
     this.saveFailedBatches(stillFailing);
-    
+
     if (succeeded > 0) {
       store.save();
       invertedIndex.save();
@@ -1426,7 +1462,7 @@ export class Indexer {
 
   async findSimilar(
     code: string,
-    limit?: number,
+    limit: number = this.config.search.maxResults,
     options?: {
       fileType?: string;
       directory?: string;
@@ -1434,41 +1470,39 @@ export class Indexer {
       excludeFile?: string;
       filterByBranch?: boolean;
     }
-  ): Promise<
-    Array<{
-      filePath: string;
-      startLine: number;
-      endLine: number;
-      content: string;
-      score: number;
-      chunkType: string;
-      name?: string;
-    }>
-  > {
-    const searchStartTime = performance.now();
+  ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
+    
+    const compatibility = this.checkCompatibility();
+    if (!compatibility.compatible) {
+      throw new Error(
+        `${compatibility.reason ?? "Index is incompatible with current embedding provider."} ` +
+        `Run index_codebase with force=true to rebuild the index.`
+      );
+    }
+
+    const searchStartTime = performance.now();
 
     if (store.count() === 0) {
       this.logger.search("debug", "Find similar on empty index");
       return [];
     }
 
-    const maxResults = limit ?? this.config.search.maxResults;
     const filterByBranch = options?.filterByBranch ?? true;
 
     this.logger.search("debug", "Starting find similar", {
       codeLength: code.length,
-      maxResults,
+      limit,
       filterByBranch,
     });
 
     const embeddingStartTime = performance.now();
-    const { embedding, tokensUsed } = await provider.embed(code);
+    const { embedding, tokensUsed } = await provider.embedDocument(code);
     const embeddingMs = performance.now() - embeddingStartTime;
     this.logger.recordEmbeddingApiCall(tokensUsed);
 
     const vectorStartTime = performance.now();
-    const semanticResults = store.search(embedding, maxResults * 2);
+    const semanticResults = store.search(embedding, limit * 2);
     const vectorMs = performance.now() - vectorStartTime;
 
     let branchChunkIds: Set<string> | null = null;
@@ -1492,8 +1526,8 @@ export class Indexer {
 
       if (options?.directory) {
         const normalizedDir = options.directory.replace(/^\/|\/$/g, "");
-        if (!r.metadata.filePath.includes(`/${normalizedDir}/`) && 
-            !r.metadata.filePath.includes(`${normalizedDir}/`)) return false;
+        if (!r.metadata.filePath.includes(`/${normalizedDir}/`) &&
+          !r.metadata.filePath.includes(`${normalizedDir}/`)) return false;
       }
 
       if (options?.chunkType) {
@@ -1501,7 +1535,7 @@ export class Indexer {
       }
 
       return true;
-    }).slice(0, maxResults);
+    }).slice(0, limit);
 
     const totalSearchMs = performance.now() - searchStartTime;
     this.logger.recordSearch(totalSearchMs, {
@@ -1521,7 +1555,7 @@ export class Indexer {
     return Promise.all(
       filtered.map(async (r) => {
         let content = "";
-        
+
         if (this.config.search.includeContext) {
           try {
             const fileContent = await fsPromises.readFile(

@@ -1,5 +1,5 @@
-import { EmbeddingModelInfo } from "../config/schema.js";
-import { ProviderCredentials } from "./detector.js";
+import { EmbeddingModelInfo, EmbeddingProviderModelInfo } from "../config/schema.js";
+import { ConfiguredProviderInfo, ProviderCredentials } from "./detector.js";
 
 export interface EmbeddingResult {
   embedding: number[];
@@ -12,34 +12,34 @@ export interface EmbeddingBatchResult {
 }
 
 export interface EmbeddingProviderInterface {
-  embed(text: string): Promise<EmbeddingResult>;
+  embedQuery(query: string): Promise<EmbeddingResult>;
+  embedDocument(document: string): Promise<EmbeddingResult>;
   embedBatch(texts: string[]): Promise<EmbeddingBatchResult>;
   getModelInfo(): EmbeddingModelInfo;
 }
 
 export function createEmbeddingProvider(
-  credentials: ProviderCredentials,
-  modelInfo: EmbeddingModelInfo
+  configuredProviderInfo: ConfiguredProviderInfo,
 ): EmbeddingProviderInterface {
-  switch (credentials.provider) {
+  switch (configuredProviderInfo.provider) {
     case "github-copilot":
-      return new GitHubCopilotEmbeddingProvider(credentials, modelInfo);
+      return new GitHubCopilotEmbeddingProvider(configuredProviderInfo.credentials, configuredProviderInfo.modelInfo);
     case "openai":
-      return new OpenAIEmbeddingProvider(credentials, modelInfo);
+      return new OpenAIEmbeddingProvider(configuredProviderInfo.credentials, configuredProviderInfo.modelInfo);
     case "google":
-      return new GoogleEmbeddingProvider(credentials, modelInfo);
+      return new GoogleEmbeddingProvider(configuredProviderInfo.credentials, configuredProviderInfo.modelInfo);
     case "ollama":
-      return new OllamaEmbeddingProvider(credentials, modelInfo);
+      return new OllamaEmbeddingProvider(configuredProviderInfo.credentials, configuredProviderInfo.modelInfo);
     default:
-      throw new Error(`Unsupported embedding provider: ${credentials.provider}`);
+      throw new Error(`Unsupported embedding provider: ${configuredProviderInfo}`);
   }
 }
 
 class GitHubCopilotEmbeddingProvider implements EmbeddingProviderInterface {
   constructor(
     private credentials: ProviderCredentials,
-    private modelInfo: EmbeddingModelInfo
-  ) {}
+    private modelInfo: EmbeddingProviderModelInfo['github-copilot']
+  ) { }
 
   private getToken(): string {
     if (!this.credentials.refreshToken) {
@@ -48,8 +48,16 @@ class GitHubCopilotEmbeddingProvider implements EmbeddingProviderInterface {
     return this.credentials.refreshToken;
   }
 
-  async embed(text: string): Promise<EmbeddingResult> {
-    const result = await this.embedBatch([text]);
+  async embedQuery(query: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([query]);
+    return {
+      embedding: result.embeddings[0],
+      tokensUsed: result.totalTokensUsed,
+    };
+  }
+
+  async embedDocument(document: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([document]);
     return {
       embedding: result.embeddings[0],
       tokensUsed: result.totalTokensUsed,
@@ -97,11 +105,19 @@ class GitHubCopilotEmbeddingProvider implements EmbeddingProviderInterface {
 class OpenAIEmbeddingProvider implements EmbeddingProviderInterface {
   constructor(
     private credentials: ProviderCredentials,
-    private modelInfo: EmbeddingModelInfo
-  ) {}
+    private modelInfo: EmbeddingProviderModelInfo['openai']
+  ) { }
 
-  async embed(text: string): Promise<EmbeddingResult> {
-    const result = await this.embedBatch([text]);
+  async embedQuery(query: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([query]);
+    return {
+      embedding: result.embeddings[0],
+      tokensUsed: result.totalTokensUsed,
+    };
+  }
+
+  async embedDocument(document: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([document]);
     return {
       embedding: result.embeddings[0],
       tokensUsed: result.totalTokensUsed,
@@ -143,13 +159,25 @@ class OpenAIEmbeddingProvider implements EmbeddingProviderInterface {
 }
 
 class GoogleEmbeddingProvider implements EmbeddingProviderInterface {
+  private static readonly BATCH_SIZE = 20;
+
   constructor(
     private credentials: ProviderCredentials,
-    private modelInfo: EmbeddingModelInfo
-  ) {}
+    private modelInfo: EmbeddingProviderModelInfo['google']
+  ) { }
 
-  async embed(text: string): Promise<EmbeddingResult> {
-    const result = await this.embedBatch([text]);
+  async embedQuery(query: string): Promise<EmbeddingResult> {
+    const taskType = this.modelInfo.taskAble ? "CODE_RETRIEVAL_QUERY" : undefined;
+    const result = await this.embedWithTaskType([query], taskType);
+    return {
+      embedding: result.embeddings[0],
+      tokensUsed: result.totalTokensUsed,
+    };
+  }
+
+  async embedDocument(document: string): Promise<EmbeddingResult> {
+    const taskType = this.modelInfo.taskAble ? "RETRIEVAL_DOCUMENT" : undefined;
+    const result = await this.embedWithTaskType([document], taskType);
     return {
       embedding: result.embeddings[0],
       tokensUsed: result.totalTokensUsed,
@@ -157,8 +185,27 @@ class GoogleEmbeddingProvider implements EmbeddingProviderInterface {
   }
 
   async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
-    const results = await Promise.all(
-      texts.map(async (text) => {
+    const taskType = this.modelInfo.taskAble ? "RETRIEVAL_DOCUMENT" : undefined;
+    return this.embedWithTaskType(texts, taskType);
+  }
+
+  /**
+   * Embeds texts using the Google embedContent API.
+   * Sends multiple texts as parts in batched requests (up to BATCH_SIZE per call).
+   * When taskType is provided (gemini-embedding-001), includes it in the request
+   * for task-specific embedding optimization.
+   */
+  private async embedWithTaskType(
+    texts: string[],
+    taskType?: string
+  ): Promise<EmbeddingBatchResult> {
+    const batches: string[][] = [];
+    for (let i = 0; i < texts.length; i += GoogleEmbeddingProvider.BATCH_SIZE) {
+      batches.push(texts.slice(i, i + GoogleEmbeddingProvider.BATCH_SIZE));
+    }
+
+    const batchResults = await Promise.all(
+      batches.map(async (batch) => {
         const response = await fetch(
           `${this.credentials.baseUrl}/models/${this.modelInfo.model}:embedContent?key=${this.credentials.apiKey}`,
           {
@@ -168,8 +215,10 @@ class GoogleEmbeddingProvider implements EmbeddingProviderInterface {
             },
             body: JSON.stringify({
               content: {
-                parts: [{ text }],
+                parts: batch.map((text) => ({ text })),
               },
+              taskType,
+              outputDimensionality: this.modelInfo.dimensions,
             }),
           }
         );
@@ -179,20 +228,20 @@ class GoogleEmbeddingProvider implements EmbeddingProviderInterface {
           throw new Error(`Google embedding API error: ${response.status} - ${error}`);
         }
 
-        const data = await response.json() as {
-          embedding: { values: number[] };
+        const data = (await response.json()) as {
+          embeddings: Array<{ values: number[] }>;
         };
 
         return {
-          embedding: data.embedding.values,
-          tokensUsed: Math.ceil(text.length / 4),
+          embeddings: data.embeddings.map((e) => e.values),
+          tokensUsed: batch.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0),
         };
       })
     );
 
     return {
-      embeddings: results.map((r) => r.embedding),
-      totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
+      embeddings: batchResults.flatMap((r) => r.embeddings),
+      totalTokensUsed: batchResults.reduce((sum, r) => sum + r.tokensUsed, 0),
     };
   }
 
@@ -204,39 +253,55 @@ class GoogleEmbeddingProvider implements EmbeddingProviderInterface {
 class OllamaEmbeddingProvider implements EmbeddingProviderInterface {
   constructor(
     private credentials: ProviderCredentials,
-    private modelInfo: EmbeddingModelInfo
-  ) {}
+    private modelInfo: EmbeddingProviderModelInfo['ollama']
+  ) { }
 
-  async embed(text: string): Promise<EmbeddingResult> {
-    const response = await fetch(`${this.credentials.baseUrl}/api/embeddings`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.modelInfo.model,
-        prompt: text,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Ollama embedding API error: ${response.status} - ${error}`);
-    }
-
-    const data = await response.json() as {
-      embedding: number[];
-    };
-
+  async embedQuery(query: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([query]);
     return {
-      embedding: data.embedding,
-      tokensUsed: Math.ceil(text.length / 4),
+      embedding: result.embeddings[0],
+      tokensUsed: result.totalTokensUsed,
+    };
+  }
+
+  async embedDocument(document: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([document]);
+    return {
+      embedding: result.embeddings[0],
+      tokensUsed: result.totalTokensUsed,
     };
   }
 
   async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
-    const results = await Promise.all(texts.map((text) => this.embed(text)));
-    
+    const results = await Promise.all(
+      texts.map(async (text) => {
+        const response = await fetch(`${this.credentials.baseUrl}/api/embeddings`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: this.modelInfo.model,
+            prompt: text,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.text();
+          throw new Error(`Ollama embedding API error: ${response.status} - ${error}`);
+        }
+
+        const data = (await response.json()) as {
+          embedding: number[];
+        };
+
+        return {
+          embedding: data.embedding,
+          tokensUsed: Math.ceil(text.length / 4),
+        };
+      })
+    );
+
     return {
       embeddings: results.map((r) => r.embedding),
       totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
