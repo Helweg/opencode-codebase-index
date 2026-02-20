@@ -206,20 +206,23 @@ class GoogleEmbeddingProvider implements EmbeddingProviderInterface {
 
     const batchResults = await Promise.all(
       batches.map(async (batch) => {
+        const requests = batch.map((text) => ({
+          model: `models/${this.modelInfo.model}`,
+          content: {
+            parts: [{ text }],
+          },
+          taskType,
+          outputDimensionality: this.modelInfo.dimensions,
+        }));
+
         const response = await fetch(
-          `${this.credentials.baseUrl}/models/${this.modelInfo.model}:embedContent?key=${this.credentials.apiKey}`,
+          `${this.credentials.baseUrl}/models/${this.modelInfo.model}:batchEmbedContents?key=${this.credentials.apiKey}`,
           {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-              content: {
-                parts: batch.map((text) => ({ text })),
-              },
-              taskType,
-              outputDimensionality: this.modelInfo.dimensions,
-            }),
+            body: JSON.stringify({ requests }),
           }
         );
 
