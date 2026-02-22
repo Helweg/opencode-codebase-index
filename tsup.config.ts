@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/cli.ts"],
   format: ["esm", "cjs"],
   dts: false,
   sourcemap: true,
@@ -17,6 +17,8 @@ export default defineConfig({
     "tiktoken",
   ],
   external: [
+    "@modelcontextprotocol/sdk",
+    "zod",
     "@opencode-ai/plugin",
     /^node:/,
     "fs",
@@ -37,9 +39,18 @@ export default defineConfig({
     "url",
   ],
   esbuildOptions(options, context) {
-    options.banner = {
-      js: "// opencode-codebase-index - Semantic codebase search for OpenCode",
-    };
+    if (context.format === "esm") {
+      options.banner = {
+        js: [
+          "// opencode-codebase-index - Semantic codebase search for OpenCode",
+          "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+        ].join("\n"),
+      };
+    } else {
+      options.banner = {
+        js: "// opencode-codebase-index - Semantic codebase search for OpenCode",
+      };
+    }
     if (context.format === "cjs") {
       options.logOverride = {
         "empty-import-meta": "silent",

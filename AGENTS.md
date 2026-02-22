@@ -36,6 +36,8 @@ cd native && cargo build --release && napi build --release --platform
 ```
 src/
 ├── index.ts              # Plugin entry: exports tools + slash commands
+├── mcp-server.ts         # MCP server: wraps Indexer for Cursor/Claude Code/Windsurf
+├── cli.ts                # CLI entry point for MCP stdio transport
 ├── config/               # Config schema (Zod) + parsing
 ├── embeddings/           # Provider detection (auto/github/openai/google/ollama)
 ├── indexer/              # Core: Indexer class, delta tracking
@@ -72,6 +74,7 @@ skill/                    # OpenCode skill guidance
 | Add database operation | `native/src/db.rs` + expose in `lib.rs` |
 | Add slash command | `commands/` + register in `src/index.ts` config() |
 
+| Add/modify MCP tool | `src/mcp-server.ts` (createMcpServer) |
 ## CODE MAP
 
 ### TypeScript Exports (`src/index.ts`)
@@ -87,6 +90,16 @@ skill/                    # OpenCode skill guidance
 | `index_metrics` | Tool | Get performance metrics (requires debug.enabled + debug.metrics) |
 | `index_logs` | Tool | Get debug logs (requires debug.enabled) |
 
+
+### MCP Server Exports (`src/mcp-server.ts`)
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `createMcpServer` | fn | Creates MCP Server with 8 tools + 4 prompts, lazy Indexer init |
+
+### CLI Entry (`src/cli.ts`)
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `main` | fn | Parses --project/--config args, starts stdio transport, handles shutdown |
 ### Rust NAPI Exports (`native/src/lib.rs`)
 | Symbol | Type | Purpose |
 |--------|------|---------|
@@ -204,6 +217,7 @@ afterEach(() => { fs.rmSync(tempDir, { recursive: true, force: true }); });
 | `commands.test.ts` | Slash command loader, frontmatter parsing |
 | `logger.test.ts` | Logger utility, metrics collection |
 
+| `mcp-server.test.ts` | MCP server: tool/prompt registration, execution via InMemoryTransport |
 ### Benchmarks
 ```bash
 npx tsx benchmarks/run.ts   # Performance testing for native operations
