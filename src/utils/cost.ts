@@ -1,5 +1,5 @@
 import { EmbeddingModelInfo } from "../config/schema.js";
-import { getProviderDisplayName, DetectedProvider } from "../embeddings/detector.js";
+import { getProviderDisplayName, ConfiguredProviderInfo } from "../embeddings/detector.js";
 
 export interface CostEstimate {
   filesCount: number;
@@ -39,7 +39,7 @@ export function estimateCost(
 
 export function createCostEstimate(
   files: Array<{ path: string; size: number }>,
-  provider: DetectedProvider
+  provider: ConfiguredProviderInfo
 ): CostEstimate {
   const filesCount = files.length;
   const totalSizeBytes = files.reduce((sum, f) => sum + f.size, 0);

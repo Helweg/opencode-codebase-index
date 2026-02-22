@@ -1,4 +1,4 @@
-import { EmbeddingProvider, getDefaultModelForProvider, EmbeddingModelInfo } from "../config/schema.js";
+import { type EmbeddingProvider, getDefaultModelForProvider, isValidModel, availableProviders, EmbeddingModelName, EMBEDDING_MODELS } from "../config";
 import { existsSync, readFileSync } from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -12,18 +12,13 @@ export interface ProviderCredentials {
   tokenExpires?: number;
 }
 
-export interface DetectedProvider {
-  provider: EmbeddingProvider;
-  credentials: ProviderCredentials;
-  modelInfo: EmbeddingModelInfo;
-}
-
-const EMBEDDING_CAPABLE_PROVIDERS: EmbeddingProvider[] = [
-  "github-copilot",
-  "openai",
-  "google",
-  "ollama",
-];
+export type ConfiguredProviderInfo = {
+  [P in EmbeddingProvider]: {
+    provider: P;
+    credentials: ProviderCredentials;
+    modelInfo: (typeof EMBEDDING_MODELS)[P][keyof (typeof EMBEDDING_MODELS)[P]];
+  }
+}[EmbeddingProvider]
 
 interface OpenCodeAuthOAuth {
   type: "oauth";
@@ -56,36 +51,49 @@ function loadOpenCodeAuth(): Record<string, OpenCodeAuth> {
   return {};
 }
 
-export async function detectEmbeddingProvider(
-  preferredProvider?: EmbeddingProvider
-): Promise<DetectedProvider> {
-  if (preferredProvider && preferredProvider !== "auto") {
-    const credentials = await getProviderCredentials(preferredProvider);
-    if (credentials) {
+export async function detectEmbeddingProvider<P extends EmbeddingProvider>(
+  preferredProvider: P, model?: EmbeddingModelName
+): Promise<ConfiguredProviderInfo> {
+  const credentials = await getProviderCredentials(preferredProvider);
+  if (credentials) {
+    if (!model) {
       return {
         provider: preferredProvider,
         credentials,
         modelInfo: getDefaultModelForProvider(preferredProvider),
-      };
+      } as ConfiguredProviderInfo;
     }
-    throw new Error(
-      `Preferred provider '${preferredProvider}' is not configured or authenticated`
-    );
+    if (!isValidModel(model, preferredProvider)) {
+      throw new Error(
+        `Model '${model}' is not supported by provider '${preferredProvider}'`
+      );
+    }
+    const providerModels = EMBEDDING_MODELS[preferredProvider];
+    return {
+      provider: preferredProvider,
+      credentials,
+      modelInfo: providerModels[model],
+    } as ConfiguredProviderInfo;
   }
+  throw new Error(
+    `Preferred provider '${preferredProvider}' is not configured or authenticated`
+  );
+}
 
-  for (const provider of EMBEDDING_CAPABLE_PROVIDERS) {
+export async function tryDetectProvider(): Promise<ConfiguredProviderInfo> {
+  for (const provider of availableProviders) {
     const credentials = await getProviderCredentials(provider);
     if (credentials) {
       return {
         provider,
         credentials,
         modelInfo: getDefaultModelForProvider(provider),
-      };
+      } as ConfiguredProviderInfo;
     }
   }
 
   throw new Error(
-    `No embedding-capable provider found. Please authenticate with OpenCode using one of: ${EMBEDDING_CAPABLE_PROVIDERS.join(", ")}.`
+    `No embedding-capable provider found. Please authenticate with OpenCode using one of: ${availableProviders.join(", ")}.`
   );
 }
 

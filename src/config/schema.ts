@@ -1,6 +1,6 @@
 // Config schema without zod dependency to avoid version conflicts with OpenCode SDK
 
-export type EmbeddingProvider = "auto" | "github-copilot" | "openai" | "google" | "ollama";
+import { DEFAULT_INCLUDE, DEFAULT_EXCLUDE, EMBEDDING_MODELS, DEFAULT_PROVIDER_MODELS } from "./constants.js";
 
 export type IndexScope = "project" | "global";
 
@@ -46,8 +46,8 @@ export interface DebugConfig {
 }
 
 export interface CodebaseIndexConfig {
-  embeddingProvider: EmbeddingProvider;
-  embeddingModel: string;
+  embeddingProvider: EmbeddingProvider | 'auto';
+  embeddingModel?: EmbeddingModelName;
   scope: IndexScope;
   indexing?: Partial<IndexingConfig>;
   search?: Partial<SearchConfig>;
@@ -61,35 +61,6 @@ export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
   search: SearchConfig;
   debug: DebugConfig;
 };
-
-const DEFAULT_INCLUDE = [
-  "**/*.{ts,tsx,js,jsx,mjs,cjs}",
-  "**/*.{py,pyi}",
-  "**/*.{go,rs,java,kt,scala}",
-  "**/*.{c,cpp,cc,h,hpp}",
-  "**/*.{rb,php,swift}",
-  "**/*.{vue,svelte,astro}",
-  "**/*.{sql,graphql,proto}",
-  "**/*.{yaml,yml,toml}",
-  "**/*.{md,mdx}",
-  "**/*.{sh,bash,zsh}",
-];
-
-const DEFAULT_EXCLUDE = [
-  "**/node_modules/**",
-  "**/.git/**",
-  "**/dist/**",
-  "**/build/**",
-  "**/*.min.js",
-  "**/*.bundle.js",
-  "**/vendor/**",
-  "**/__pycache__/**",
-  "**/target/**",
-  "**/coverage/**",
-  "**/.next/**",
-  "**/.nuxt/**",
-  "**/.opencode/**",
-];
 
 function getDefaultIndexingConfig(): IndexingConfig {
   return {
@@ -130,12 +101,18 @@ function getDefaultDebugConfig(): DebugConfig {
   };
 }
 
-const VALID_PROVIDERS: EmbeddingProvider[] = ["auto", "github-copilot", "openai", "google", "ollama"];
 const VALID_SCOPES: IndexScope[] = ["project", "global"];
 const VALID_LOG_LEVELS: LogLevel[] = ["error", "warn", "info", "debug"];
 
 function isValidProvider(value: unknown): value is EmbeddingProvider {
-  return typeof value === "string" && VALID_PROVIDERS.includes(value as EmbeddingProvider);
+  return typeof value === "string" && Object.keys(EMBEDDING_MODELS).includes(value);
+}
+
+export function isValidModel<P extends EmbeddingProvider>(
+  value: unknown,
+  provider: P
+): value is ProviderModels[P] {
+  return typeof value === "string" && Object.keys(EMBEDDING_MODELS[provider]).includes(value);
 }
 
 function isValidScope(value: unknown): value is IndexScope {
@@ -152,11 +129,11 @@ function isValidLogLevel(value: unknown): value is LogLevel {
 
 export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  
+
   const defaultIndexing = getDefaultIndexingConfig();
   const defaultSearch = getDefaultSearchConfig();
   const defaultDebug = getDefaultDebugConfig();
-  
+
   const rawIndexing = (input.indexing && typeof input.indexing === "object" ? input.indexing : {}) as Record<string, unknown>;
   const indexing: IndexingConfig = {
     autoIndex: typeof rawIndexing.autoIndex === "boolean" ? rawIndexing.autoIndex : defaultIndexing.autoIndex,
@@ -171,7 +148,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     gcOrphanThreshold: typeof rawIndexing.gcOrphanThreshold === "number" ? Math.max(0, rawIndexing.gcOrphanThreshold) : defaultIndexing.gcOrphanThreshold,
     requireProjectMarker: typeof rawIndexing.requireProjectMarker === "boolean" ? rawIndexing.requireProjectMarker : defaultIndexing.requireProjectMarker,
   };
-  
+
   const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;
   const search: SearchConfig = {
     maxResults: typeof rawSearch.maxResults === "number" ? rawSearch.maxResults : defaultSearch.maxResults,
@@ -180,7 +157,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     hybridWeight: typeof rawSearch.hybridWeight === "number" ? Math.min(1, Math.max(0, rawSearch.hybridWeight)) : defaultSearch.hybridWeight,
     contextLines: typeof rawSearch.contextLines === "number" ? Math.min(50, Math.max(0, rawSearch.contextLines)) : defaultSearch.contextLines,
   };
-  
+
   const rawDebug = (input.debug && typeof input.debug === "object" ? input.debug : {}) as Record<string, unknown>;
   const debug: DebugConfig = {
     enabled: typeof rawDebug.enabled === "boolean" ? rawDebug.enabled : defaultDebug.enabled,
@@ -192,10 +169,22 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     logBranch: typeof rawDebug.logBranch === "boolean" ? rawDebug.logBranch : defaultDebug.logBranch,
     metrics: typeof rawDebug.metrics === "boolean" ? rawDebug.metrics : defaultDebug.metrics,
   };
+
+  let embeddingProvider: EmbeddingProvider | 'auto';
+  let embeddingModel: EmbeddingModelName | undefined = undefined;
   
+  if (isValidProvider(input.embeddingProvider)) {
+    embeddingProvider = input.embeddingProvider;
+    if (input.embeddingModel) {
+      embeddingModel = isValidModel(input.embeddingModel, embeddingProvider) ? input.embeddingModel : DEFAULT_PROVIDER_MODELS[embeddingProvider];
+    }
+  } else {
+    embeddingProvider = 'auto';
+  }
+
   return {
-    embeddingProvider: isValidProvider(input.embeddingProvider) ? input.embeddingProvider : "auto",
-    embeddingModel: typeof input.embeddingModel === "string" ? input.embeddingModel : "auto",
+    embeddingProvider,
+    embeddingModel,
     scope: isValidScope(input.scope) ? input.scope : "project",
     include: isStringArray(input.include) ? input.include : DEFAULT_INCLUDE,
     exclude: isStringArray(input.exclude) ? input.exclude : DEFAULT_EXCLUDE,
@@ -205,80 +194,24 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   };
 }
 
-export function getDefaultConfig(): CodebaseIndexConfig {
-  return {
-    embeddingProvider: "auto",
-    embeddingModel: "auto",
-    scope: "project",
-    include: DEFAULT_INCLUDE,
-    exclude: DEFAULT_EXCLUDE,
-  };
-}
-
-export interface EmbeddingModelInfo {
-  provider: EmbeddingProvider;
-  model: string;
-  dimensions: number;
-  maxTokens: number;
-  costPer1MTokens: number;
-}
-
-export const EMBEDDING_MODELS: Record<string, EmbeddingModelInfo> = {
-  "github-copilot/text-embedding-3-small": {
-    provider: "github-copilot",
-    model: "text-embedding-3-small",
-    dimensions: 1536,
-    maxTokens: 8191,
-    costPer1MTokens: 0.00,
-  },
-  "openai/text-embedding-3-small": {
-    provider: "openai",
-    model: "text-embedding-3-small",
-    dimensions: 1536,
-    maxTokens: 8191,
-    costPer1MTokens: 0.02,
-  },
-  "openai/text-embedding-3-large": {
-    provider: "openai",
-    model: "text-embedding-3-large",
-    dimensions: 3072,
-    maxTokens: 8191,
-    costPer1MTokens: 0.13,
-  },
-  "google/text-embedding-004": {
-    provider: "google",
-    model: "text-embedding-004",
-    dimensions: 768,
-    maxTokens: 2048,
-    costPer1MTokens: 0.00,
-  },
-  "ollama/nomic-embed-text": {
-    provider: "ollama",
-    model: "nomic-embed-text",
-    dimensions: 768,
-    maxTokens: 8192,
-    costPer1MTokens: 0.00,
-  },
-  "ollama/mxbai-embed-large": {
-    provider: "ollama",
-    model: "mxbai-embed-large",
-    dimensions: 1024,
-    maxTokens: 512,
-    costPer1MTokens: 0.00,
-  },
-};
-
 export function getDefaultModelForProvider(provider: EmbeddingProvider): EmbeddingModelInfo {
-  switch (provider) {
-    case "github-copilot":
-      return EMBEDDING_MODELS["github-copilot/text-embedding-3-small"];
-    case "openai":
-      return EMBEDDING_MODELS["openai/text-embedding-3-small"];
-    case "google":
-      return EMBEDDING_MODELS["google/text-embedding-004"];
-    case "ollama":
-      return EMBEDDING_MODELS["ollama/nomic-embed-text"];
-    default:
-      return EMBEDDING_MODELS["github-copilot/text-embedding-3-small"];
-  }
+  const models = EMBEDDING_MODELS[provider]
+  const providerDefault = DEFAULT_PROVIDER_MODELS[provider]
+  return models[providerDefault as keyof typeof models]
 }
+
+export type EmbeddingProvider = keyof typeof EMBEDDING_MODELS;
+
+export const availableProviders: EmbeddingProvider[] = Object.keys(EMBEDDING_MODELS) as EmbeddingProvider[]
+
+export type ProviderModels = {
+  [P in keyof typeof EMBEDDING_MODELS]: keyof (typeof EMBEDDING_MODELS)[P]
+}
+
+export type EmbeddingModelName = ProviderModels[keyof ProviderModels]
+
+export type EmbeddingProviderModelInfo = {
+  [P in EmbeddingProvider]: (typeof EMBEDDING_MODELS)[P][keyof (typeof EMBEDDING_MODELS)[P]]
+}
+
+export type EmbeddingModelInfo = EmbeddingProviderModelInfo[EmbeddingProvider]

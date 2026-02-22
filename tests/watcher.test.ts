@@ -7,7 +7,7 @@ import { ParsedCodebaseIndexConfig } from "../src/config/schema.js";
 
 const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): ParsedCodebaseIndexConfig => ({
   embeddingProvider: "auto",
-  embeddingModel: "auto",
+  embeddingModel: undefined,
   scope: "project",
   include: ["**/*.ts", "**/*.js"],
   exclude: [],
@@ -22,6 +22,7 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
     autoGc: true,
     gcIntervalDays: 7,
     gcOrphanThreshold: 100,
+    requireProjectMarker: true,
   },
   search: {
     maxResults: 20,
@@ -29,6 +30,16 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
     includeContext: true,
     hybridWeight: 0.5,
     contextLines: 0,
+  },
+  debug: {
+    enabled: false,
+    logLevel: "info",
+    logSearch: true,
+    logEmbedding: true,
+    logCache: true,
+    logGc: true,
+    logBranch: true,
+    metrics: true,
   },
   ...overrides,
 });

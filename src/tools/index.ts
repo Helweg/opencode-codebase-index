@@ -1,22 +1,21 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
-import { Indexer, IndexStats, IndexProgress } from "../indexer/index.js";
+import { Indexer } from "../indexer/index.js";
 import { ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
 import type { LogLevel } from "../config/schema.js";
+import {
+  formatProgressTitle,
+  formatIndexStats,
+  formatStatus,
+  calculatePercentage,
+  formatCodebasePeek,
+  formatHealthCheck,
+  formatLogs,
+  formatSearchResults,
+} from "./utils.js";
 
 const z = tool.schema;
-
-const MAX_CONTENT_LINES = 30;
-
-function truncateContent(content: string): string {
-  const lines = content.split("\n");
-  if (lines.length <= MAX_CONTENT_LINES) return content;
-  return (
-    lines.slice(0, MAX_CONTENT_LINES).join("\n") +
-    `\n// ... (${lines.length - MAX_CONTENT_LINES} more lines)`
-  );
-}
 
 let sharedIndexer: Indexer | null = null;
 
@@ -30,42 +29,6 @@ function getIndexer(): Indexer {
   }
   return sharedIndexer;
 }
-
-export const codebase_search: ToolDefinition = tool({
-  description:
-    "Search codebase by MEANING, not keywords. Returns full code content. Use when you need to see actual implementation. For just finding WHERE code is (saves ~90% tokens), use codebase_peek instead. For known identifiers like 'validateToken', use grep - it's faster.",
-  args: {
-    query: z.string().describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
-    limit: z.number().optional().default(5).describe("Maximum number of results to return"),
-    fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
-    directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
-    contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
-  },
-  async execute(args) {
-    const indexer = getIndexer();
-    const results = await indexer.search(args.query, args.limit ?? 5, {
-      fileType: args.fileType,
-      directory: args.directory,
-      chunkType: args.chunkType,
-      contextLines: args.contextLines,
-    });
-
-    if (results.length === 0) {
-      return "No matching code found. Try a different query or run index_codebase first.";
-    }
-
-    const formatted = results.map((r, idx) => {
-      const header = r.name
-        ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-        : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
-
-      return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
-    });
-
-    return `Found ${results.length} results for "${args.query}":\n\n${formatted.join("\n\n")}`;
-  },
-});
 
 export const codebase_peek: ToolDefinition = tool({
   description:
@@ -86,17 +49,7 @@ export const codebase_peek: ToolDefinition = tool({
       metadataOnly: true,
     });
 
-    if (results.length === 0) {
-      return "No matching code found. Try a different query or run index_codebase first.";
-    }
-
-    const formatted = results.map((r, idx) => {
-      const location = `${r.filePath}:${r.startLine}-${r.endLine}`;
-      const name = r.name ? `"${r.name}"` : "(anonymous)";
-      return `[${idx + 1}] ${r.chunkType} ${name} at ${location} (score: ${r.score.toFixed(2)})`;
-    });
-
-    return `Found ${results.length} locations for "${args.query}":\n\n${formatted.join("\n")}\n\nUse Read tool to examine specific files.`;
+    return formatCodebasePeek(results, args.query);
   },
 });
 
@@ -156,29 +109,7 @@ export const index_health_check: ToolDefinition = tool({
     const indexer = getIndexer();
     const result = await indexer.healthCheck();
 
-    if (result.removed === 0 && result.gcOrphanEmbeddings === 0 && result.gcOrphanChunks === 0) {
-      return "Index is healthy. No stale entries found.";
-    }
-
-    const lines = [`Health check complete:`];
-    
-    if (result.removed > 0) {
-      lines.push(`  Removed stale entries: ${result.removed}`);
-    }
-    
-    if (result.gcOrphanEmbeddings > 0) {
-      lines.push(`  Garbage collected orphan embeddings: ${result.gcOrphanEmbeddings}`);
-    }
-    
-    if (result.gcOrphanChunks > 0) {
-      lines.push(`  Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
-    }
-
-    if (result.filePaths.length > 0) {
-      lines.push(`  Cleaned paths: ${result.filePaths.join(", ")}`);
-    }
-
-    return lines.join("\n");
+    return formatHealthCheck(result);
   },
 });
 
@@ -227,14 +158,7 @@ export const index_logs: ToolDefinition = tool({
       logs = logger.getLogs(args.limit);
     }
 
-    if (logs.length === 0) {
-      return "No logs recorded yet. Logs are captured during indexing and search operations.";
-    }
-
-    return logs.map(l => {
-      const dataStr = l.data ? ` ${JSON.stringify(l.data)}` : "";
-      return `[${l.timestamp}] [${l.level.toUpperCase()}] [${l.category}] ${l.message}${dataStr}`;
-    }).join("\n");
+    return formatLogs(logs);
   },
 });
 
@@ -251,7 +175,7 @@ export const find_similar: ToolDefinition = tool({
   },
   async execute(args) {
     const indexer = getIndexer();
-    const results = await indexer.findSimilar(args.code, args.limit ?? 10, {
+    const results = await indexer.findSimilar(args.code, args.limit, {
       fileType: args.fileType,
       directory: args.directory,
       chunkType: args.chunkType,
@@ -262,132 +186,34 @@ export const find_similar: ToolDefinition = tool({
       return "No similar code found. Try a different snippet or run index_codebase first.";
     }
 
-    const formatted = results.map((r, idx) => {
-      const header = r.name
-        ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-        : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
-
-      return `${header} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
-    });
-
-    return `Found ${results.length} similar code blocks:\n\n${formatted.join("\n\n")}`;
+    return `Found ${results.length} similar code blocks:\n\n${formatSearchResults(results)}`;
   },
 });
 
-function formatIndexStats(stats: IndexStats, verbose: boolean = false): string {
-  const lines: string[] = [];
-  
-  if (stats.indexedChunks === 0 && stats.removedChunks === 0) {
-    lines.push(`Indexed. ${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`);
-  } else if (stats.indexedChunks === 0) {
-    lines.push(`Indexed. ${stats.totalFiles} files, removed ${stats.removedChunks} stale chunks, ${stats.existingChunks} chunks remain.`);
-  } else {
-    let main = `Indexed. ${stats.totalFiles} files processed, ${stats.indexedChunks} new chunks embedded.`;
-    if (stats.existingChunks > 0) {
-      main += ` ${stats.existingChunks} unchanged chunks skipped.`;
-    }
-    lines.push(main);
+export const codebase_search: ToolDefinition = tool({
+  description:
+    "Search codebase by MEANING, not keywords. Returns full code content. Use when you need to see actual implementation. For just finding WHERE code is (saves ~90% tokens), use codebase_peek instead. For known identifiers like 'validateToken', use grep - it's faster.",
+  args: {
+    query: z.string().describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
+    limit: z.number().optional().default(5).describe("Maximum number of results to return"),
+    fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
+    directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
+    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
+    contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
+  },
+  async execute(args) {
+    const indexer = getIndexer();
+    const results = await indexer.search(args.query, args.limit ?? 5, {
+      fileType: args.fileType,
+      directory: args.directory,
+      chunkType: args.chunkType,
+      contextLines: args.contextLines,
+    });
 
-    if (stats.removedChunks > 0) {
-      lines.push(`Removed ${stats.removedChunks} stale chunks.`);
-    }
-
-    if (stats.failedChunks > 0) {
-      lines.push(`Failed: ${stats.failedChunks} chunks.`);
-    }
-
-    lines.push(`Tokens: ${stats.tokensUsed.toLocaleString()}, Duration: ${(stats.durationMs / 1000).toFixed(1)}s`);
-  }
-
-  if (verbose) {
-    if (stats.skippedFiles.length > 0) {
-      const tooLarge = stats.skippedFiles.filter(f => f.reason === "too_large");
-      const excluded = stats.skippedFiles.filter(f => f.reason === "excluded");
-      const gitignored = stats.skippedFiles.filter(f => f.reason === "gitignore");
-      
-      lines.push("");
-      lines.push(`Skipped files: ${stats.skippedFiles.length}`);
-      if (tooLarge.length > 0) {
-        lines.push(`  Too large (${tooLarge.length}): ${tooLarge.slice(0, 5).map(f => f.path).join(", ")}${tooLarge.length > 5 ? "..." : ""}`);
-      }
-      if (excluded.length > 0) {
-        lines.push(`  Excluded (${excluded.length}): ${excluded.slice(0, 5).map(f => f.path).join(", ")}${excluded.length > 5 ? "..." : ""}`);
-      }
-      if (gitignored.length > 0) {
-        lines.push(`  Gitignored (${gitignored.length}): ${gitignored.slice(0, 5).map(f => f.path).join(", ")}${gitignored.length > 5 ? "..." : ""}`);
-      }
+    if (results.length === 0) {
+      return "No matching code found. Try a different query or run index_codebase first.";
     }
 
-    if (stats.parseFailures.length > 0) {
-      lines.push("");
-      lines.push(`Files with no extractable chunks (${stats.parseFailures.length}): ${stats.parseFailures.slice(0, 10).join(", ")}${stats.parseFailures.length > 10 ? "..." : ""}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
-function formatStatus(status: {
-  indexed: boolean;
-  vectorCount: number;
-  provider: string;
-  model: string;
-  indexPath: string;
-  currentBranch: string;
-  baseBranch: string;
-}): string {
-  if (!status.indexed) {
-    return "Codebase is not indexed. Run index_codebase to create an index.";
-  }
-
-  const lines = [
-    `Index status:`,
-    `  Indexed chunks: ${status.vectorCount.toLocaleString()}`,
-    `  Provider: ${status.provider}`,
-    `  Model: ${status.model}`,
-    `  Location: ${status.indexPath}`,
-  ];
-
-  if (status.currentBranch !== "default") {
-    lines.push(`  Current branch: ${status.currentBranch}`);
-    lines.push(`  Base branch: ${status.baseBranch}`);
-  }
-
-  return lines.join("\n");
-}
-
-function formatProgressTitle(progress: IndexProgress): string {
-  switch (progress.phase) {
-    case "scanning":
-      return "Scanning files...";
-    case "parsing":
-      return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files`;
-    case "embedding":
-      return `Embedding: ${progress.chunksProcessed}/${progress.totalChunks} chunks`;
-    case "storing":
-      return "Storing index...";
-    case "complete":
-      return "Indexing complete";
-    default:
-      return "Indexing...";
-  }
-}
-
-function calculatePercentage(progress: IndexProgress): number {
-  if (progress.phase === "scanning") return 0;
-  if (progress.phase === "complete") return 100;
-  
-  if (progress.phase === "parsing") {
-    if (progress.totalFiles === 0) return 5;
-    return Math.round(5 + (progress.filesProcessed / progress.totalFiles) * 15);
-  }
-  
-  if (progress.phase === "embedding") {
-    if (progress.totalChunks === 0) return 20;
-    return Math.round(20 + (progress.chunksProcessed / progress.totalChunks) * 70);
-  }
-  
-  if (progress.phase === "storing") return 95;
-  
-  return 0;
-}
+    return `Found ${results.length} results for "${args.query}":\n\n${formatSearchResults(results, "score")}`;
+  },
+});
