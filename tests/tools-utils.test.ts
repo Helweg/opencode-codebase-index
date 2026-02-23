@@ -377,6 +377,8 @@ describe("tools utils", () => {
         filePaths: [],
         gcOrphanEmbeddings: 0,
         gcOrphanChunks: 0,
+        gcOrphanSymbols: 0,
+        gcOrphanCallEdges: 0,
       });
 
       expect(result).toBe("Index is healthy. No stale entries found.");
@@ -388,6 +390,8 @@ describe("tools utils", () => {
         filePaths: ["src/old.ts", "src/deleted.ts"],
         gcOrphanEmbeddings: 0,
         gcOrphanChunks: 0,
+        gcOrphanSymbols: 0,
+        gcOrphanCallEdges: 0,
       });
 
       expect(result).toContain("Removed stale entries: 5");
@@ -401,6 +405,8 @@ describe("tools utils", () => {
         filePaths: [],
         gcOrphanEmbeddings: 10,
         gcOrphanChunks: 0,
+        gcOrphanSymbols: 0,
+        gcOrphanCallEdges: 0,
       });
 
       expect(result).toContain("orphan embeddings: 10");
@@ -412,6 +418,8 @@ describe("tools utils", () => {
         filePaths: [],
         gcOrphanEmbeddings: 0,
         gcOrphanChunks: 3,
+        gcOrphanSymbols: 0,
+        gcOrphanCallEdges: 0,
       });
 
       expect(result).toContain("orphan chunks: 3");
@@ -423,6 +431,8 @@ describe("tools utils", () => {
         filePaths: ["a.ts"],
         gcOrphanEmbeddings: 5,
         gcOrphanChunks: 3,
+        gcOrphanSymbols: 0,
+        gcOrphanCallEdges: 0,
       });
 
       expect(result).toContain("Removed stale entries: 2");

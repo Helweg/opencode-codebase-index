@@ -217,3 +217,37 @@ export const codebase_search: ToolDefinition = tool({
     return `Found ${results.length} results for "${args.query}":\n\n${formatSearchResults(results, "score")}`;
   },
 });
+
+export const call_graph: ToolDefinition = tool({
+  description:
+    "Query the call graph to find callers or callees of a function/method. Use to understand code flow and dependencies between functions.",
+  args: {
+    name: z.string().describe("Function or method name to query"),
+    direction: z.enum(["callers", "callees"]).default("callers").describe("Direction: 'callers' finds who calls this function, 'callees' finds what this function calls"),
+    symbolId: z.string().optional().describe("Symbol ID (required for 'callees' direction, returned by previous call_graph queries)"),
+  },
+  async execute(args) {
+    const indexer = getIndexer();
+    if (args.direction === "callees") {
+      if (!args.symbolId) {
+        return "Error: 'symbolId' is required when direction is 'callees'. First use direction='callers' to find the symbol ID.";
+      }
+      const callees = await indexer.getCallees(args.symbolId);
+      if (callees.length === 0) {
+        return `No callees found for symbol ${args.symbolId}. The function may not call any other tracked functions.`;
+      }
+      const formatted = callees.map((e, i) =>
+        `[${i + 1}] \u2192 ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
+      );
+      return `${args.name} calls ${callees.length} function(s):\n\n${formatted.join("\n")}`;
+    }
+    const callers = await indexer.getCallers(args.name);
+    if (callers.length === 0) {
+      return `No callers found for "${args.name}". It may not be called by any tracked function, or the index needs updating.`;
+    }
+    const formatted = callers.map((e, i) =>
+      `[${i + 1}] \u2190 from symbol ${e.fromSymbolId} (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`
+    );
+    return `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}`;
+  },
+});

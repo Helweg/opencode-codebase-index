@@ -90,6 +90,39 @@ export interface ParsedFile {
   hash: string;
 }
 
+
+export type CallType = "Call" | "MethodCall" | "Constructor" | "Import";
+
+export interface CallSiteData {
+  calleeName: string;
+  line: number;
+  column: number;
+  callType: CallType;
+}
+
+export interface SymbolData {
+  id: string;
+  filePath: string;
+  name: string;
+  kind: string;
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
+  language: string;
+}
+
+export interface CallEdgeData {
+  id: string;
+  fromSymbolId: string;
+  targetName: string;
+  toSymbolId?: string;
+  callType: string;
+  line: number;
+  col: number;
+  isResolved: boolean;
+}
+
 export interface SearchResult {
   id: string;
   score: number;
@@ -137,6 +170,11 @@ export function hashContent(content: string): string {
 
 export function hashFile(filePath: string): string {
   return native.hashFile(filePath);
+}
+
+
+export function extractCalls(content: string, language: string): CallSiteData[] {
+  return native.extractCalls(content, language);
 }
 
 export class VectorStore {
@@ -533,6 +571,8 @@ export interface DatabaseStats {
   chunkCount: number;
   branchChunkCount: number;
   branchCount: number;
+  symbolCount: number;
+  callEdgeCount: number;
 }
 
 export class Database {
@@ -647,5 +687,80 @@ export class Database {
 
   getStats(): DatabaseStats {
     return this.inner.getStats();
+  }
+
+  // ── Symbol methods ──────────────────────────────────────────────
+
+  upsertSymbol(symbol: SymbolData): void {
+    this.inner.upsertSymbol(symbol);
+  }
+
+  upsertSymbolsBatch(symbols: SymbolData[]): void {
+    if (symbols.length === 0) return;
+    this.inner.upsertSymbolsBatch(symbols);
+  }
+
+  getSymbolsByFile(filePath: string): SymbolData[] {
+    return this.inner.getSymbolsByFile(filePath);
+  }
+
+  deleteSymbolsByFile(filePath: string): number {
+    return this.inner.deleteSymbolsByFile(filePath);
+  }
+
+  // ── Call Edge methods ────────────────────────────────────────────
+
+  upsertCallEdge(edge: CallEdgeData): void {
+    this.inner.upsertCallEdge(edge);
+  }
+
+  upsertCallEdgesBatch(edges: CallEdgeData[]): void {
+    if (edges.length === 0) return;
+    this.inner.upsertCallEdgesBatch(edges);
+  }
+
+  getCallers(targetName: string, branch: string): CallEdgeData[] {
+    return this.inner.getCallers(targetName, branch);
+  }
+
+  getCallees(symbolId: string): CallEdgeData[] {
+    return this.inner.getCallees(symbolId);
+  }
+
+  deleteCallEdgesByFile(filePath: string): number {
+    return this.inner.deleteCallEdgesByFile(filePath);
+  }
+
+  resolveCallEdge(edgeId: string, toSymbolId: string): void {
+    this.inner.resolveCallEdge(edgeId, toSymbolId);
+  }
+
+  // ── Branch Symbol methods ────────────────────────────────────────
+
+  addSymbolsToBranch(branch: string, symbolIds: string[]): void {
+    this.inner.addSymbolsToBranch(branch, symbolIds);
+  }
+
+  addSymbolsToBranchBatch(branch: string, symbolIds: string[]): void {
+    if (symbolIds.length === 0) return;
+    this.inner.addSymbolsToBranchBatch(branch, symbolIds);
+  }
+
+  getBranchSymbolIds(branch: string): string[] {
+    return this.inner.getBranchSymbolIds(branch);
+  }
+
+  clearBranchSymbols(branch: string): number {
+    return this.inner.clearBranchSymbols(branch);
+  }
+
+  // ── GC methods for symbols/edges ─────────────────────────────────
+
+  gcOrphanSymbols(): number {
+    return this.inner.gcOrphanSymbols();
+  }
+
+  gcOrphanCallEdges(): number {
+    return this.inner.gcOrphanCallEdges();
   }
 }

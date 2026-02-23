@@ -79,4 +79,27 @@ impl Language {
             Language::Unknown => "unknown",
         }
     }
+
+    pub fn from_string(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "typescript" | "ts" => Language::TypeScript,
+            "tsx" => Language::TypeScriptTsx,
+            "javascript" | "js" => Language::JavaScript,
+            "jsx" => Language::JavaScriptJsx,
+            "python" | "py" => Language::Python,
+            "rust" | "rs" => Language::Rust,
+            "go" => Language::Go,
+            "java" => Language::Java,
+            "csharp" | "cs" | "c#" => Language::CSharp,
+            "ruby" | "rb" => Language::Ruby,
+            "c" => Language::C,
+            "cpp" | "c++" => Language::Cpp,
+            "json" => Language::Json,
+            "toml" => Language::Toml,
+            "yaml" | "yml" => Language::Yaml,
+            "bash" | "sh" | "zsh" => Language::Bash,
+            "markdown" | "md" => Language::Markdown,
+            _ => Language::Unknown,
+        }
+    }
 }

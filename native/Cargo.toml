@@ -37,6 +37,7 @@ walkdir = "2.5"
 ignore = "0.4"
 thiserror = "1.0"
 anyhow = "1.0"
+streaming-iterator = "0.1"
 # On Linux/macOS: use default features (simsimd + fp16lib) for SIMD-accelerated vector ops
 # On Windows: disable simsimd — MSVC lacks _mm512_reduce_add_ph intrinsic (usearch#325)
 [target.'cfg(not(target_os = "windows"))'.dependencies]

@@ -151,7 +151,7 @@ export function formatCodebasePeek(results: SearchResult[], query: string): stri
 }
 
 export function formatHealthCheck(result: HealthCheckResult): string {
-  if (result.removed === 0 && result.gcOrphanEmbeddings === 0 && result.gcOrphanChunks === 0) {
+  if (result.removed === 0 && result.gcOrphanEmbeddings === 0 && result.gcOrphanChunks === 0 && result.gcOrphanSymbols === 0 && result.gcOrphanCallEdges === 0) {
     return "Index is healthy. No stale entries found.";
   }
 
@@ -167,6 +167,14 @@ export function formatHealthCheck(result: HealthCheckResult): string {
   
   if (result.gcOrphanChunks > 0) {
     lines.push(`  Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
+  }
+
+  if (result.gcOrphanSymbols > 0) {
+    lines.push(`  Garbage collected orphan symbols: ${result.gcOrphanSymbols}`);
+  }
+
+  if (result.gcOrphanCallEdges > 0) {
+    lines.push(`  Garbage collected orphan call edges: ${result.gcOrphanCallEdges}`);
   }
 
   if (result.filePaths.length > 0) {
