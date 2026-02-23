@@ -40,9 +40,9 @@ anyhow = "1.0"
 # On Linux/macOS: use default features (simsimd + fp16lib) for SIMD-accelerated vector ops
 # On Windows: disable simsimd — MSVC lacks _mm512_reduce_add_ph intrinsic (usearch#325)
 [target.'cfg(not(target_os = "windows"))'.dependencies]
-usearch = "2.23"
+usearch = "=2.23.0"
 [target.'cfg(target_os = "windows")'.dependencies]
-usearch = { version = "2.23", default-features = false, features = ["fp16lib"] }
+usearch = { version = "=2.23.0", default-features = false, features = ["fp16lib"] }
 
 [build-dependencies]
 napi-build = "2.1"
