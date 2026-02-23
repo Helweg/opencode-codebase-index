@@ -15,6 +15,10 @@ pub type DbResult<T> = Result<T, DbError>;
 /// Schema version for migrations
 const SCHEMA_VERSION: i32 = 1;
 
+/// Maximum number of SQL bind parameters per query.
+/// SQLite defaults to 999 (SQLITE_MAX_VARIABLE_NUMBER). We use 900 to stay safely under.
+const SQL_BIND_PARAM_BATCH_SIZE: usize = 900;
+
 /// Initialize the database with the required schema
 pub fn init_db(db_path: &Path) -> DbResult<Connection> {
     // Ensure parent directory exists
@@ -188,30 +192,31 @@ pub fn get_embeddings_batch(
     if content_hashes.is_empty() {
         return Ok(vec![]);
     }
-
-    let placeholders: String = content_hashes
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let query = format!(
-        "SELECT content_hash, embedding FROM embeddings WHERE content_hash IN ({})",
-        placeholders
-    );
-
-    let mut stmt = conn.prepare(&query)?;
-    let params: Vec<&dyn rusqlite::ToSql> = content_hashes
-        .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
-        .collect();
-
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-    })?;
-
     let mut results = Vec::new();
-    for row in rows {
-        results.push(row?);
+    for chunk in content_hashes.chunks(SQL_BIND_PARAM_BATCH_SIZE) {
+        let placeholders: String = chunk
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "SELECT content_hash, embedding FROM embeddings WHERE content_hash IN ({})",
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&query)?;
+        let params: Vec<&dyn rusqlite::ToSql> = chunk
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+
+        for row in rows {
+            results.push(row?);
+        }
     }
     Ok(results)
 }
@@ -224,27 +229,31 @@ pub fn get_missing_embeddings(
     if content_hashes.is_empty() {
         return Ok(vec![]);
     }
+    let mut existing = std::collections::HashSet::new();
+    for chunk in content_hashes.chunks(SQL_BIND_PARAM_BATCH_SIZE) {
+        let placeholders: String = chunk
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "SELECT content_hash FROM embeddings WHERE content_hash IN ({})",
+            placeholders
+        );
 
-    let placeholders: String = content_hashes
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let query = format!(
-        "SELECT content_hash FROM embeddings WHERE content_hash IN ({})",
-        placeholders
-    );
+        let mut stmt = conn.prepare(&query)?;
+        let params: Vec<&dyn rusqlite::ToSql> = chunk
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
 
-    let mut stmt = conn.prepare(&query)?;
-    let params: Vec<&dyn rusqlite::ToSql> = content_hashes
-        .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
-        .collect();
-
-    let existing: std::collections::HashSet<String> = stmt
-        .query_map(params.as_slice(), |row| row.get::<_, String>(0))?
-        .filter_map(|r| r.ok())
-        .collect();
+        let batch_existing: std::collections::HashSet<String> = stmt
+            .query_map(params.as_slice(), |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        
+        existing.extend(batch_existing);
+    }
 
     Ok(content_hashes
         .iter()
