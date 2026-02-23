@@ -8,7 +8,7 @@
 
 > **Stop grepping for concepts. Start searching for meaning.**
 
-**opencode-codebase-index** brings semantic understanding to your [OpenCode](https://opencode.ai) workflow. Instead of guessing function names or grepping for keywords, ask your codebase questions in plain English.
+**opencode-codebase-index** brings semantic understanding to your [OpenCode](https://opencode.ai) workflow — and now to any MCP-compatible client like Cursor, Claude Code, and Windsurf. Instead of guessing function names or grepping for keywords, ask your codebase questions in plain English.
 
 ## 🚀 Why Use This?
 
@@ -16,7 +16,8 @@
 - ⚡ **Blazing Fast Indexing**: Powered by a Rust native module using `tree-sitter` and `usearch`. Incremental updates take milliseconds.
 - 🌿 **Branch-Aware**: Seamlessly handles git branch switches — reuses embeddings, filters stale results.
 - 🔒 **Privacy Focused**: Your vector index is stored locally in your project.
-- 🔌 **Model Agnostic**: Works out-of-the-box with GitHub Copilot, OpenAI, Gemini, or local Ollama models.
+ 🔌 **Model Agnostic**: Works out-of-the-box with GitHub Copilot, OpenAI, Gemini, or local Ollama models.
+ 🌐 **MCP Server**: Use with Cursor, Claude Code, Windsurf, or any MCP-compatible client — index once, search from anywhere.
 
 ## ⚡ Quick Start
 
@@ -38,6 +39,52 @@
 4. **Start Searching**
    Ask:
    > "Find the function that handles credit card validation errors"
+
+## 🌐 MCP Server (Cursor, Claude Code, Windsurf, etc.)
+
+Use the same semantic search from any MCP-compatible client. Index once, search from anywhere.
+
+1. **Install dependencies**
+   ```bash
+   npm install opencode-codebase-index @modelcontextprotocol/sdk zod
+   ```
+
+2. **Configure your MCP client**
+
+   **Cursor** (`.cursor/mcp.json`):
+   ```json
+   {
+     "mcpServers": {
+       "codebase-index": {
+         "command": "npx",
+         "args": ["opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
+       }
+     }
+   }
+   ```
+
+   **Claude Code** (`claude_desktop_config.json`):
+   ```json
+   {
+     "mcpServers": {
+       "codebase-index": {
+         "command": "npx",
+         "args": ["opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
+       }
+     }
+   }
+   ```
+
+3. **CLI options**
+   ```bash
+   npx opencode-codebase-index-mcp --project /path/to/repo    # specify project root
+   npx opencode-codebase-index-mcp --config /path/to/config   # custom config file
+   npx opencode-codebase-index-mcp                            # uses current directory
+   ```
+
+The MCP server exposes all 8 tools (`codebase_search`, `codebase_peek`, `find_similar`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 4 prompts (`search`, `find`, `index`, `status`).
+
+The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) are optional peer dependencies — they're only needed if you use the MCP server.
 
 ## 🔍 See It In Action
 
@@ -494,6 +541,8 @@ CI will automatically run tests and type checking on your PR.
 ```
 ├── src/
 │   ├── index.ts              # Plugin entry point
+│   ├── mcp-server.ts         # MCP server (Cursor, Claude Code, Windsurf)
+│   ├── cli.ts                # CLI entry for MCP stdio transport
 │   ├── config/               # Configuration schema
 │   ├── embeddings/           # Provider detection and API calls
 │   ├── indexer/              # Core indexing logic + inverted index
