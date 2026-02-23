@@ -33,7 +33,7 @@ coverage/
 *.tsbuildinfo
 
 # Native build artifacts
-native/Cargo.lock
+
 native/index.d.ts
 native/index.js
 
