@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Google `gemini-embedding-001` model**: Support for Google's latest embedding model with Matryoshka truncation (3072D → 1536D) and task-specific embeddings (`CODE_RETRIEVAL_QUERY` / `RETRIEVAL_DOCUMENT`)
 - **Google batch embedding**: Batch requests up to 20 texts per API call via `batchEmbedContents` endpoint
 - **Compatibility warnings**: Provider mismatch (same model + dimensions) now logs a warning instead of forcing a rebuild
+- **Windows support**: Native binaries now build on Windows MSVC across all 5 platform targets (macOS x86/ARM, Linux x86/ARM, Windows x86)
 
 ### Changed
 - **Embedding API split**: `embed()` replaced by `embedQuery()` and `embedDocument()` to support task-specific embeddings (Google)
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Google embedding API endpoints**: Corrected single and batch request URLs
 - **Index compatibility on force rebuild**: `clearIndex()` now deletes stale index metadata so provider changes take effect
 - **Search/findSimilar initialization**: Both now call `ensureInitialized()` before compatibility check
+- **Windows MSVC build**: Disabled usearch `simsimd` feature on Windows — MSVC lacks `_mm512_reduce_add_ph` intrinsic. Pinned usearch to 2.23.0 to avoid 2.24.0 `MAP_FAILED` regression. Committed `Cargo.lock` for reproducible CI builds.
 
 ## [0.4.1] - 2025-01-19
 

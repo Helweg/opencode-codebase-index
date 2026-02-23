@@ -16,8 +16,8 @@
 - ⚡ **Blazing Fast Indexing**: Powered by a Rust native module using `tree-sitter` and `usearch`. Incremental updates take milliseconds.
 - 🌿 **Branch-Aware**: Seamlessly handles git branch switches — reuses embeddings, filters stale results.
 - 🔒 **Privacy Focused**: Your vector index is stored locally in your project.
- 🔌 **Model Agnostic**: Works out-of-the-box with GitHub Copilot, OpenAI, Gemini, or local Ollama models.
- 🌐 **MCP Server**: Use with Cursor, Claude Code, Windsurf, or any MCP-compatible client — index once, search from anywhere.
+- 🔌 **Model Agnostic**: Works out-of-the-box with GitHub Copilot, OpenAI, Gemini, or local Ollama models.
+- 🌐 **MCP Server**: Use with Cursor, Claude Code, Windsurf, or any MCP-compatible client — index once, search from anywhere.
 
 ## ⚡ Quick Start
 
@@ -569,6 +569,20 @@ The Rust native module handles performance-critical operations:
 - **xxhash**: Fast content hashing for change detection
 
 Rebuild with: `npm run build:native` (requires Rust toolchain)
+
+### Platform Support
+
+Pre-built native binaries are published for:
+
+| Platform | Architecture | SIMD Acceleration |
+|----------|-------------|--------------------|
+| macOS | x86_64 | ✅ simsimd |
+| macOS | ARM64 (Apple Silicon) | ✅ simsimd |
+| Linux | x86_64 (GNU) | ✅ simsimd |
+| Linux | ARM64 (GNU) | ✅ simsimd |
+| Windows | x86_64 (MSVC) | ❌ scalar fallback |
+
+Windows builds use scalar distance functions instead of SIMD — functionally identical, marginally slower for very large indexes. This is due to MSVC lacking support for certain AVX-512 intrinsics used by simsimd.
 
 ## License
 
