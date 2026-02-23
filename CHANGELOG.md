@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-23
+
+### Added
+- **MCP server**: Standalone MCP server (`opencode-codebase-index-mcp` CLI) exposing all 8 tools and 4 prompts over stdio transport, enabling integration with Cursor, Claude Code, and Windsurf
+- **Crash-safe indexing**: Lock file and atomic writes prevent index corruption from interrupted indexing sessions, with automatic recovery on next run
+- **Git worktree support**: Branch detection now works correctly in git worktrees by resolving `.git` file pointers to the actual git directory
+- **Index metadata contract**: Stores embedding provider, model, and dimensions in the database; blocks searches against incompatible indexes with clear error messages and `force=true` rebuild instructions
+- **Google `gemini-embedding-001` model**: Support for Google's latest embedding model with Matryoshka truncation (3072D → 1536D) and task-specific embeddings (`CODE_RETRIEVAL_QUERY` / `RETRIEVAL_DOCUMENT`)
+- **Google batch embedding**: Batch requests up to 20 texts per API call via `batchEmbedContents` endpoint
+- **Compatibility warnings**: Provider mismatch (same model + dimensions) now logs a warning instead of forcing a rebuild
+
+### Changed
+- **Embedding API split**: `embed()` replaced by `embedQuery()` and `embedDocument()` to support task-specific embeddings (Google)
+- **Type-safe embedding models**: `EMBEDDING_MODELS` constant as single source of truth; `EmbeddingProvider`, `EmbeddingModelName`, and related types derived at compile time
+- **Google default model**: Updated from deprecated `text-embedding-004` to `text-embedding-005`
+- **Tool formatting**: Extracted all formatting functions from `src/tools/index.ts` to `src/tools/utils.ts`
+- **Exhaustive provider check**: `createEmbeddingProvider` uses `never` exhaustive check instead of default branch
+- **ESM compatibility**: Build config adds `createRequire` shim for ESM entry points
+
+### Fixed
+- **SQLite bind parameter limit**: `get_missing_embeddings` and `get_embeddings_batch` now batch `IN (...)` queries to stay under `SQLITE_MAX_VARIABLE_NUMBER` (999) — fixes crash on large codebases (thanks @zb1749)
+- **Google embedding API endpoints**: Corrected single and batch request URLs
+- **Index compatibility on force rebuild**: `clearIndex()` now deletes stale index metadata so provider changes take effect
+- **Search/findSimilar initialization**: Both now call `ensureInitialized()` before compatibility check
+
 ## [0.4.1] - 2025-01-19
 
 ### Added
@@ -149,6 +174,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
+[0.5.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Helweg/opencode-codebase-index/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.2.1...v0.3.0
