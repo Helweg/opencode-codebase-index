@@ -194,21 +194,15 @@ pub fn get_embeddings_batch(
     }
     let mut results = Vec::new();
     for chunk in content_hashes.chunks(SQL_BIND_PARAM_BATCH_SIZE) {
-        let placeholders: String = chunk
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
+        let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let query = format!(
             "SELECT content_hash, embedding FROM embeddings WHERE content_hash IN ({})",
             placeholders
         );
 
         let mut stmt = conn.prepare(&query)?;
-        let params: Vec<&dyn rusqlite::ToSql> = chunk
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
         let rows = stmt.query_map(params.as_slice(), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
@@ -231,27 +225,21 @@ pub fn get_missing_embeddings(
     }
     let mut existing = std::collections::HashSet::new();
     for chunk in content_hashes.chunks(SQL_BIND_PARAM_BATCH_SIZE) {
-        let placeholders: String = chunk
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
+        let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let query = format!(
             "SELECT content_hash FROM embeddings WHERE content_hash IN ({})",
             placeholders
         );
 
         let mut stmt = conn.prepare(&query)?;
-        let params: Vec<&dyn rusqlite::ToSql> = chunk
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
         let batch_existing: std::collections::HashSet<String> = stmt
             .query_map(params.as_slice(), |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
             .collect();
-        
+
         existing.extend(batch_existing);
     }
 
