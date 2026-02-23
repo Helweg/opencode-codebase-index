@@ -15,6 +15,10 @@ pub type DbResult<T> = Result<T, DbError>;
 /// Schema version for migrations
 const SCHEMA_VERSION: i32 = 1;
 
+/// Maximum number of SQL bind parameters per query.
+/// SQLite defaults to 999 (SQLITE_MAX_VARIABLE_NUMBER). We use 900 to stay safely under.
+const SQL_BIND_PARAM_BATCH_SIZE: usize = 900;
+
 /// Initialize the database with the required schema
 pub fn init_db(db_path: &Path) -> DbResult<Connection> {
     // Ensure parent directory exists
@@ -188,12 +192,8 @@ pub fn get_embeddings_batch(
     if content_hashes.is_empty() {
         return Ok(vec![]);
     }
-
-    // SQLite has a limit of 999 variables per query
-    const BATCH_SIZE: usize = 900;
     let mut results = Vec::new();
-
-    for chunk in content_hashes.chunks(BATCH_SIZE) {
+    for chunk in content_hashes.chunks(SQL_BIND_PARAM_BATCH_SIZE) {
         let placeholders: String = chunk
             .iter()
             .map(|_| "?")
@@ -229,12 +229,8 @@ pub fn get_missing_embeddings(
     if content_hashes.is_empty() {
         return Ok(vec![]);
     }
-
-    // SQLite has a limit of 999 variables per query
-    const BATCH_SIZE: usize = 900;
     let mut existing = std::collections::HashSet::new();
-
-    for chunk in content_hashes.chunks(BATCH_SIZE) {
+    for chunk in content_hashes.chunks(SQL_BIND_PARAM_BATCH_SIZE) {
         let placeholders: String = chunk
             .iter()
             .map(|_| "?")
