@@ -104,7 +104,6 @@ fn migrate_schema(conn: &Connection, from_version: i32) -> DbResult<()> {
         )?;
     }
 
-
     if from_version < 2 {
         // v2: Call graph tables
         conn.execute_batch(
@@ -584,7 +583,6 @@ pub fn get_all_branches(conn: &Connection) -> DbResult<Vec<String>> {
     Ok(results)
 }
 
-
 // ============================================================================
 // Symbol Operations (Call Graph)
 // ============================================================================
@@ -733,7 +731,10 @@ pub fn _get_symbol_by_name(
 
 /// Delete all symbols for a file
 pub fn delete_symbols_by_file(conn: &Connection, file_path: &str) -> DbResult<usize> {
-    let count = conn.execute("DELETE FROM symbols WHERE file_path = ?", params![file_path])?;
+    let count = conn.execute(
+        "DELETE FROM symbols WHERE file_path = ?",
+        params![file_path],
+    )?;
     Ok(count)
 }
 
@@ -873,11 +874,7 @@ pub fn delete_call_edges_by_file(conn: &Connection, file_path: &str) -> DbResult
 }
 
 /// Resolve a call edge by setting the target symbol
-pub fn resolve_call_edge(
-    conn: &Connection,
-    edge_id: &str,
-    to_symbol_id: &str,
-) -> DbResult<()> {
+pub fn resolve_call_edge(conn: &Connection, edge_id: &str, to_symbol_id: &str) -> DbResult<()> {
     conn.execute(
         "UPDATE call_edges SET to_symbol_id = ?, is_resolved = 1 WHERE id = ?",
         params![to_symbol_id, edge_id],
@@ -1015,7 +1012,6 @@ pub fn gc_orphan_chunks(conn: &Connection) -> DbResult<usize> {
     Ok(count)
 }
 
-
 /// Delete orphaned symbols (not referenced by any branch)
 pub fn gc_orphan_symbols(conn: &Connection) -> DbResult<usize> {
     // First, delete call edges referencing orphan symbols to avoid FK violation
@@ -1066,8 +1062,7 @@ pub fn get_stats(conn: &Connection) -> DbResult<DbStats> {
         [],
         |row| row.get(0),
     )?;
-    let symbol_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM symbols", [], |row| row.get(0))?;
+    let symbol_count: i64 = conn.query_row("SELECT COUNT(*) FROM symbols", [], |row| row.get(0))?;
     let call_edge_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM call_edges", [], |row| row.get(0))?;
     Ok(DbStats {
@@ -1259,7 +1254,10 @@ mod tests {
                 file_path: "src/a.ts".to_string(),
                 name: "foo".to_string(),
                 kind: "function".to_string(),
-                start_line: 1, start_col: 0, end_line: 5, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 5,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
             SymbolRow {
@@ -1267,7 +1265,10 @@ mod tests {
                 file_path: "src/a.ts".to_string(),
                 name: "bar".to_string(),
                 kind: "function".to_string(),
-                start_line: 7, start_col: 0, end_line: 12, end_col: 1,
+                start_line: 7,
+                start_col: 0,
+                end_line: 12,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
             SymbolRow {
@@ -1275,7 +1276,10 @@ mod tests {
                 file_path: "src/b.ts".to_string(),
                 name: "baz".to_string(),
                 kind: "class".to_string(),
-                start_line: 1, start_col: 0, end_line: 50, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 50,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
         ];
@@ -1300,7 +1304,10 @@ mod tests {
                 file_path: "src/main.ts".to_string(),
                 name: "main".to_string(),
                 kind: "function".to_string(),
-                start_line: 1, start_col: 0, end_line: 10, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 10,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
             SymbolRow {
@@ -1308,14 +1315,22 @@ mod tests {
                 file_path: "src/helper.ts".to_string(),
                 name: "helper".to_string(),
                 kind: "function".to_string(),
-                start_line: 1, start_col: 0, end_line: 5, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 5,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
         ];
         upsert_symbols_batch(&mut conn, &symbols).unwrap();
 
         // Add symbols to branch
-        add_symbols_to_branch(&conn, "main", &["sym_main".to_string(), "sym_helper".to_string()]).unwrap();
+        add_symbols_to_branch(
+            &conn,
+            "main",
+            &["sym_main".to_string(), "sym_helper".to_string()],
+        )
+        .unwrap();
 
         // Create call edge: main -> helper
         let edge = CallEdgeRow {
@@ -1364,7 +1379,10 @@ mod tests {
                 file_path: "src/a.ts".to_string(),
                 name: "foo".to_string(),
                 kind: "function".to_string(),
-                start_line: 1, start_col: 0, end_line: 5, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 5,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
             SymbolRow {
@@ -1372,14 +1390,18 @@ mod tests {
                 file_path: "src/b.ts".to_string(),
                 name: "bar".to_string(),
                 kind: "function".to_string(),
-                start_line: 1, start_col: 0, end_line: 5, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 5,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
         ];
         upsert_symbols_batch(&mut conn, &symbols).unwrap();
 
         // Add to branch
-        add_symbols_to_branch_batch(&mut conn, "main", &["s1".to_string(), "s2".to_string()]).unwrap();
+        add_symbols_to_branch_batch(&mut conn, "main", &["s1".to_string(), "s2".to_string()])
+            .unwrap();
 
         let ids = get_branch_symbol_ids(&conn, "main").unwrap();
         assert_eq!(ids.len(), 2);
@@ -1402,7 +1424,10 @@ mod tests {
                 file_path: "src/a.ts".to_string(),
                 name: "used_fn".to_string(),
                 kind: "function".to_string(),
-                start_line: 1, start_col: 0, end_line: 5, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 5,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
             SymbolRow {
@@ -1410,7 +1435,10 @@ mod tests {
                 file_path: "src/b.ts".to_string(),
                 name: "orphan_fn".to_string(),
                 kind: "function".to_string(),
-                start_line: 1, start_col: 0, end_line: 5, end_col: 1,
+                start_line: 1,
+                start_col: 0,
+                end_line: 5,
+                end_col: 1,
                 language: "typescript".to_string(),
             },
         ];
@@ -1427,7 +1455,8 @@ mod tests {
                 target_name: "something".to_string(),
                 to_symbol_id: None,
                 call_type: "Call".to_string(),
-                line: 3, col: 4,
+                line: 3,
+                col: 4,
                 is_resolved: false,
             },
             CallEdgeRow {
@@ -1436,7 +1465,8 @@ mod tests {
                 target_name: "other".to_string(),
                 to_symbol_id: None,
                 call_type: "Call".to_string(),
-                line: 2, col: 0,
+                line: 2,
+                col: 0,
                 is_resolved: false,
             },
         ];
@@ -1472,7 +1502,10 @@ mod tests {
             file_path: "src/a.ts".to_string(),
             name: "test".to_string(),
             kind: "function".to_string(),
-            start_line: 1, start_col: 0, end_line: 5, end_col: 1,
+            start_line: 1,
+            start_col: 0,
+            end_line: 5,
+            end_col: 1,
             language: "typescript".to_string(),
         };
         upsert_symbol(&conn, &symbol).unwrap();
@@ -1483,7 +1516,8 @@ mod tests {
             target_name: "foo".to_string(),
             to_symbol_id: None,
             call_type: "Call".to_string(),
-            line: 3, col: 0,
+            line: 3,
+            col: 0,
             is_resolved: false,
         };
         upsert_call_edge(&conn, &edge).unwrap();

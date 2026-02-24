@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+mod call_extractor;
 mod chunker;
 mod db;
 mod hasher;
@@ -7,7 +8,6 @@ mod inverted_index;
 mod parser;
 mod store;
 mod types;
-mod call_extractor;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -777,8 +777,7 @@ impl Database {
                 is_resolved: e.is_resolved,
             })
             .collect();
-        db::upsert_call_edges_batch(&mut conn, &rows)
-            .map_err(|e| Error::from_reason(e.to_string()))
+        db::upsert_call_edges_batch(&mut conn, &rows).map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
@@ -810,8 +809,8 @@ impl Database {
             .conn
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        let rows = db::get_callees(&conn, &symbol_id)
-            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let rows =
+            db::get_callees(&conn, &symbol_id).map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(rows
             .into_iter()
             .map(|r| CallEdgeData {
@@ -880,8 +879,7 @@ impl Database {
             .conn
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        db::get_branch_symbol_ids(&conn, &branch)
-            .map_err(|e| Error::from_reason(e.to_string()))
+        db::get_branch_symbol_ids(&conn, &branch).map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
@@ -903,8 +901,7 @@ impl Database {
             .conn
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        let count =
-            db::gc_orphan_symbols(&conn).map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::gc_orphan_symbols(&conn).map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(count as u32)
     }
 
