@@ -379,6 +379,22 @@ export class Indexer {
       this.migrateFromLegacyIndex();
     }
 
+    // Detect legacy indexes with absolute paths in stored chunks.
+    // The file hash cache check (loadFileHashCache) catches the cache file,
+    // but chunks already in SQLite/VectorStore may still have absolute paths.
+    // Sample a few entries to detect and warn early.
+    if (!dbIsNew && this.store.count() > 0) {
+      const sample = this.store.getAllMetadata().slice(0, 5);
+      const hasAbsoluteChunkPaths = sample.some(({ metadata }) => path.isAbsolute(metadata.filePath));
+      if (hasAbsoluteChunkPaths) {
+        console.warn(
+          "[codebase-index] Detected legacy index with absolute file paths in stored chunks. " +
+          "Search results may be incorrect until you rebuild. " +
+          "Run index_codebase with force=true for a clean rebuild."
+        );
+      }
+    }
+
     this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
     if (!this.indexCompatibility.compatible) {
       this.logger.warn("Index compatibility issue detected", {
@@ -714,6 +730,8 @@ export class Indexer {
       currentFilePaths.add(parsed.path);
 
       if (parsed.chunks.length === 0) {
+        // parsed.path is already relative at this point (converted in delta tracking),
+        // so no additional path.relative() call is needed here.
         stats.parseFailures.push(parsed.path);
       }
 
