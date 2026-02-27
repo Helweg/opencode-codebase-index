@@ -477,4 +477,88 @@ describe("Database", () => {
       expect(chunk!.startLine).toBe(10);
     });
   });
+
+  describe("relative path round-trip", () => {
+    it("should store and retrieve chunks with relative paths", () => {
+      const projectRoot = "/Users/dev/my-project";
+      const absolutePath = "/Users/dev/my-project/src/utils/helper.ts";
+      const relativePath = path.relative(projectRoot, absolutePath);
+
+      expect(relativePath).toBe(path.join("src", "utils", "helper.ts"));
+
+      const chunk: ChunkData = {
+        chunkId: "rel_chunk_1",
+        contentHash: "hash_rel",
+        filePath: relativePath,
+        startLine: 1,
+        endLine: 10,
+        nodeType: "function",
+        name: "helper",
+        language: "typescript",
+      };
+
+      db.upsertChunk(chunk);
+      const retrieved = db.getChunk("rel_chunk_1");
+
+      expect(retrieved).not.toBeNull();
+      expect(retrieved!.filePath).toBe(relativePath);
+
+      // Verify absolute path can be reconstructed
+      const reconstructed = path.join(projectRoot, retrieved!.filePath);
+      expect(reconstructed).toBe(absolutePath);
+    });
+
+    it("should filter chunks by relative file path", () => {
+      const relPath = path.join("src", "index.ts");
+
+      db.upsertChunksBatch([
+        {
+          chunkId: "rel_a",
+          contentHash: "h1",
+          filePath: relPath,
+          startLine: 1,
+          endLine: 5,
+          language: "typescript",
+        },
+        {
+          chunkId: "rel_b",
+          contentHash: "h2",
+          filePath: relPath,
+          startLine: 10,
+          endLine: 20,
+          language: "typescript",
+        },
+        {
+          chunkId: "rel_c",
+          contentHash: "h3",
+          filePath: path.join("src", "other.ts"),
+          startLine: 1,
+          endLine: 3,
+          language: "typescript",
+        },
+      ]);
+
+      const chunks = db.getChunksByFile(relPath);
+      expect(chunks).toHaveLength(2);
+      expect(chunks.every((c) => c.filePath === relPath)).toBe(true);
+    });
+
+    it("should delete chunks by relative file path", () => {
+      const relPath = path.join("src", "delete-me.ts");
+
+      db.upsertChunk({
+        chunkId: "del_rel",
+        contentHash: "h_del",
+        filePath: relPath,
+        startLine: 1,
+        endLine: 5,
+        language: "typescript",
+      });
+
+      expect(db.getChunk("del_rel")).not.toBeNull();
+
+      db.deleteChunksByFile(relPath);
+      expect(db.getChunk("del_rel")).toBeNull();
+    });
+  });
 });
