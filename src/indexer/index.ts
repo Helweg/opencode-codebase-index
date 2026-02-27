@@ -178,6 +178,18 @@ export class Indexer {
     this.logger = initializeLogger(config.debug);
   }
 
+  // Convert absolute path to relative (for storage). After this change,
+  // all paths stored in SQLite, VectorStore metadata, file hash cache, and
+  // inverted index are relative to projectRoot. Users must force-rebuild
+  // existing indexes (force=true) since chunk IDs change.
+  private toRelativePath(absolutePath: string): string {
+    return path.relative(this.projectRoot, absolutePath);
+  }
+
+  private toAbsolutePath(relativePath: string): string {
+    return path.join(this.projectRoot, relativePath);
+  }
+
   private getIndexPath(): string {
     if (this.config.scope === "global") {
       const homeDir = process.env.HOME || process.env.USERPROFILE || "";
@@ -428,7 +440,7 @@ export class Indexer {
       const chunkData: ChunkData = {
         chunkId: key,
         contentHash: metadata.hash,
-        filePath: metadata.filePath,
+        filePath: this.toRelativePath(metadata.filePath),
         startLine: metadata.startLine,
         endLine: metadata.endLine,
         nodeType: metadata.chunkType,
@@ -622,15 +634,16 @@ export class Indexer {
     const currentFileHashes = new Map<string, string>();
 
     for (const f of files) {
+      const relativePath = this.toRelativePath(f.path);
       const currentHash = hashFile(f.path);
-      currentFileHashes.set(f.path, currentHash);
+      currentFileHashes.set(relativePath, currentHash);
 
-      if (this.fileHashCache.get(f.path) === currentHash) {
-        unchangedFilePaths.add(f.path);
+      if (this.fileHashCache.get(relativePath) === currentHash) {
+        unchangedFilePaths.add(relativePath);
         this.logger.recordCacheHit();
       } else {
         const content = await fsPromises.readFile(f.path, "utf-8");
-        changedFiles.push({ path: f.path, content, hash: currentHash });
+        changedFiles.push({ path: relativePath, content, hash: currentHash });
         this.logger.recordCacheMiss();
       }
     }
@@ -685,8 +698,7 @@ export class Indexer {
       currentFilePaths.add(parsed.path);
 
       if (parsed.chunks.length === 0) {
-        const relativePath = path.relative(this.projectRoot, parsed.path);
-        stats.parseFailures.push(relativePath);
+        stats.parseFailures.push(parsed.path);
       }
 
       let fileChunkCount = 0;
@@ -1179,7 +1191,7 @@ export class Indexer {
         if (!metadataOnly && this.config.search.includeContext) {
           try {
             const fileContent = await fsPromises.readFile(
-              r.metadata.filePath,
+              this.toAbsolutePath(r.metadata.filePath),
               "utf-8"
             );
             const lines = fileContent.split("\n");
@@ -1335,7 +1347,7 @@ export class Indexer {
     let removedCount = 0;
 
     for (const [filePath, chunkKeys] of filePathsToChunkKeys) {
-      if (!existsSync(filePath)) {
+      if (!existsSync(this.toAbsolutePath(filePath))) {
         for (const key of chunkKeys) {
           store.remove(key);
           invertedIndex.removeChunk(key);
@@ -1556,7 +1568,7 @@ export class Indexer {
         if (this.config.search.includeContext) {
           try {
             const fileContent = await fsPromises.readFile(
-              r.metadata.filePath,
+              this.toAbsolutePath(r.metadata.filePath),
               "utf-8"
             );
             const lines = fileContent.split("\n");
