@@ -181,7 +181,8 @@ describe("call-graph", () => {
       ];
       db.upsertCallEdgesBatch(edges);
 
-      const callees = db.getCallees("sym_a");
+      db.addSymbolsToBranchBatch("test", ["sym_a", "sym_b"]);
+      const callees = db.getCallees("sym_a", "test");
       expect(callees.length).toBe(1);
       expect(callees[0].targetName).toBe("callee");
       expect(callees[0].callType).toBe("Call");
@@ -274,7 +275,8 @@ describe("call-graph", () => {
       db.resolveCallEdge("edge_resolve", "sym_target");
 
       // Verify resolution
-      const callees = db.getCallees("sym_caller");
+      db.addSymbolsToBranchBatch("test", ["sym_caller", "sym_target"]);
+      const callees = db.getCallees("sym_caller", "test");
       expect(callees.length).toBe(1);
       expect(callees[0].isResolved).toBe(true);
       expect(callees[0].toSymbolId).toBe("sym_target");
@@ -312,7 +314,8 @@ describe("call-graph", () => {
       db.upsertCallEdgesBatch(edges);
 
       // Don't resolve — it's cross-file
-      const callees = db.getCallees("sym_local");
+      db.addSymbolsToBranchBatch("test", ["sym_local"]);
+      const callees = db.getCallees("sym_local", "test");
       expect(callees.length).toBe(1);
       expect(callees[0].isResolved).toBe(false);
       expect(callees[0].toSymbolId).toBeUndefined();
@@ -374,7 +377,8 @@ describe("call-graph", () => {
       // Resolve to only one of the targets
       db.resolveCallEdge("edge_multi", "sym_helper_a");
 
-      const callees = db.getCallees("sym_caller_m");
+      db.addSymbolsToBranchBatch("test", ["sym_caller_m", "sym_helper_a", "sym_helper_b"]);
+      const callees = db.getCallees("sym_caller_m", "test");
       expect(callees.length).toBe(1);
       expect(callees[0].isResolved).toBe(true);
       expect(callees[0].toSymbolId).toBe("sym_helper_a");
@@ -596,7 +600,7 @@ describe("call-graph", () => {
       // Verify entryPoint's callees
       const entryPointSymbol = symbols.find((s) => s.name === "entryPoint");
       expect(entryPointSymbol).toBeDefined();
-      const entryCallees = db.getCallees(entryPointSymbol!.id);
+      const entryCallees = db.getCallees(entryPointSymbol!.id, "main");
       expect(entryCallees.length).toBeGreaterThan(0);
 
       const entryCalleeNames = entryCallees.map((e) => e.targetName);

@@ -831,16 +831,19 @@ pub fn get_callers(
     Ok(results)
 }
 
-/// Get all call edges from a symbol
-pub fn get_callees(conn: &Connection, symbol_id: &str) -> DbResult<Vec<CallEdgeRow>> {
+/// Get all call edges from a symbol (filtered by branch)
+pub fn get_callees(conn: &Connection, symbol_id: &str, branch: &str) -> DbResult<Vec<CallEdgeRow>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT id, from_symbol_id, target_name, to_symbol_id, call_type, line, col, is_resolved
-        FROM call_edges WHERE from_symbol_id = ?
+        SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+        FROM call_edges ce
+        INNER JOIN symbols s ON ce.from_symbol_id = s.id
+        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
+        WHERE ce.from_symbol_id = ?
         "#,
     )?;
 
-    let rows = stmt.query_map(params![symbol_id], |row| {
+    let rows = stmt.query_map(params![branch, symbol_id], |row| {
         Ok(CallEdgeRow {
             id: row.get(0)?,
             from_symbol_id: row.get(1)?,
@@ -1346,7 +1349,7 @@ mod tests {
         upsert_call_edge(&conn, &edge).unwrap();
 
         // Get callees of main
-        let callees = get_callees(&conn, "sym_main").unwrap();
+        let callees = get_callees(&conn, "sym_main", "main").unwrap();
         assert_eq!(callees.len(), 1);
         assert_eq!(callees[0].target_name, "helper");
         assert!(!callees[0].is_resolved);
@@ -1358,14 +1361,14 @@ mod tests {
 
         // Resolve the edge
         resolve_call_edge(&conn, "edge1", "sym_helper").unwrap();
-        let callees = get_callees(&conn, "sym_main").unwrap();
+        let callees = get_callees(&conn, "sym_main", "main").unwrap();
         assert!(callees[0].is_resolved);
         assert_eq!(callees[0].to_symbol_id, Some("sym_helper".to_string()));
 
         // Delete by file
         let deleted = delete_call_edges_by_file(&conn, "src/main.ts").unwrap();
         assert_eq!(deleted, 1);
-        let callees = get_callees(&conn, "sym_main").unwrap();
+        let callees = get_callees(&conn, "sym_main", "main").unwrap();
         assert!(callees.is_empty());
     }
 
@@ -1483,7 +1486,7 @@ mod tests {
         let removed_edges = gc_orphan_call_edges(&conn).unwrap();
         assert_eq!(removed_edges, 0);
         // Edge from 'used' still exists
-        let remaining_edges = get_callees(&conn, "used").unwrap();
+        let remaining_edges = get_callees(&conn, "used", "main").unwrap();
         assert_eq!(remaining_edges.len(), 1);
     }
 

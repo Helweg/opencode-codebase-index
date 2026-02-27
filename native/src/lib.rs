@@ -804,13 +804,13 @@ impl Database {
     }
 
     #[napi]
-    pub fn get_callees(&self, symbol_id: String) -> Result<Vec<CallEdgeData>> {
+    pub fn get_callees(&self, symbol_id: String, branch: String) -> Result<Vec<CallEdgeData>> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         let rows =
-            db::get_callees(&conn, &symbol_id).map_err(|e| Error::from_reason(e.to_string()))?;
+            db::get_callees(&conn, &symbol_id, &branch).map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(rows
             .into_iter()
             .map(|r| CallEdgeData {

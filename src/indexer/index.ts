@@ -1698,6 +1698,6 @@ export class Indexer {
 
   async getCallees(symbolId: string): Promise<CallEdgeData[]> {
     const { database } = await this.ensureInitialized();
-    return database.getCallees(symbolId);
+    return database.getCallees(symbolId, this.currentBranch);
   }
 }

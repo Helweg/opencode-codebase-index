@@ -723,8 +723,8 @@ export class Database {
     return this.inner.getCallers(targetName, branch);
   }
 
-  getCallees(symbolId: string): CallEdgeData[] {
-    return this.inner.getCallees(symbolId);
+  getCallees(symbolId: string, branch: string): CallEdgeData[] {
+    return this.inner.getCallees(symbolId, branch);
   }
 
   deleteCallEdgesByFile(filePath: string): number {
