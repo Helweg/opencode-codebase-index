@@ -25,8 +25,14 @@ import {
   ChunkData,
   createDynamicBatches,
   hashFile,
+  hashContent,
+  extractCalls,
 } from "../native/index.js";
+import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
+
+const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust"]);
+const SEMANTIC_CHUNK_TYPES = new Set(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module"]);
 
 function float32ArrayToBuffer(arr: number[]): Buffer {
   const float32 = new Float32Array(arr);
@@ -84,6 +90,8 @@ export interface HealthCheckResult {
   filePaths: string[];
   gcOrphanEmbeddings: number;
   gcOrphanChunks: number;
+  gcOrphanSymbols: number;
+  gcOrphanCallEdges: number;
 }
 
 export interface StatusResult {
@@ -739,6 +747,97 @@ export class Indexer {
       database.upsertChunksBatch(chunkDataBatch);
     }
 
+
+    // ── Call Graph Extraction ────────────────────────────────────────
+    // Extract symbols and call edges from changed files.
+    const allSymbolIds = new Set<string>();
+    const symbolsByFile = new Map<string, SymbolData[]>();
+
+    // For changed files: delete old symbols/edges, extract new ones
+    for (let i = 0; i < parsedFiles.length; i++) {
+      const parsed = parsedFiles[i];
+      const changedFile = changedFiles[i];
+
+      // Clean up old call graph data for this file
+      database.deleteCallEdgesByFile(parsed.path);
+      database.deleteSymbolsByFile(parsed.path);
+
+      // Build symbols from parsed chunks
+      const fileSymbols: SymbolData[] = [];
+
+      for (const chunk of parsed.chunks) {
+        if (!chunk.name || !SEMANTIC_CHUNK_TYPES.has(chunk.chunkType)) continue;
+
+        const symbolId = `sym_${hashContent(parsed.path + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`;
+        const symbol: SymbolData = {
+          id: symbolId,
+          filePath: parsed.path,
+          name: chunk.name,
+          kind: chunk.chunkType,
+          startLine: chunk.startLine,
+          startCol: 0,
+          endLine: chunk.endLine,
+          endCol: 0,
+          language: chunk.language,
+        };
+        fileSymbols.push(symbol);
+        allSymbolIds.add(symbolId);
+      }
+
+      if (fileSymbols.length > 0) {
+        database.upsertSymbolsBatch(fileSymbols);
+        symbolsByFile.set(parsed.path, fileSymbols);
+      }
+
+      // Extract call sites from file content (only for supported languages)
+      const fileLanguage = parsed.chunks[0]?.language;
+      if (!fileLanguage || !CALL_GRAPH_LANGUAGES.has(fileLanguage)) continue;
+
+      const callSites = extractCalls(changedFile.content, fileLanguage);
+      if (callSites.length === 0) continue;
+
+      // Map each call site to its enclosing symbol
+      const edges: CallEdgeData[] = [];
+      for (const site of callSites) {
+        // Find the enclosing symbol (function/method that contains this call)
+        const enclosingSymbol = fileSymbols.find(
+          (sym) => site.line >= sym.startLine && site.line <= sym.endLine
+        );
+        if (!enclosingSymbol) continue;
+
+        const edgeId = `edge_${hashContent(enclosingSymbol.id + ":" + site.calleeName + ":" + site.line + ":" + site.column).slice(0, 16)}`;
+        edges.push({
+          id: edgeId,
+          fromSymbolId: enclosingSymbol.id,
+          targetName: site.calleeName,
+          callType: site.callType,
+          line: site.line,
+          col: site.column,
+          isResolved: false,
+        });
+      }
+
+      if (edges.length > 0) {
+        database.upsertCallEdgesBatch(edges);
+
+        // Resolve same-file calls
+        for (const edge of edges) {
+          const matchingSymbol = fileSymbols.find((sym) => sym.name === edge.targetName);
+          if (matchingSymbol) {
+            database.resolveCallEdge(edge.id, matchingSymbol.id);
+          }
+        }
+      }
+    }
+
+    // Collect symbol IDs from unchanged files for branch association
+    for (const filePath of unchangedFilePaths) {
+      const existingSymbols = database.getSymbolsByFile(filePath);
+      for (const sym of existingSymbols) {
+        allSymbolIds.add(sym.id);
+      }
+    }
+
     let removedCount = 0;
     for (const [chunkId] of existingChunks) {
       if (!currentChunkIds.has(chunkId)) {
@@ -763,6 +862,8 @@ export class Indexer {
     if (pendingChunks.length === 0 && removedCount === 0) {
       database.clearBranch(this.currentBranch);
       database.addChunksToBranchBatch(this.currentBranch, Array.from(currentChunkIds));
+      database.clearBranchSymbols(this.currentBranch);
+      database.addSymbolsToBranchBatch(this.currentBranch, Array.from(allSymbolIds));
       this.fileHashCache = currentFileHashes;
       this.saveFileHashCache();
       stats.durationMs = Date.now() - startTime;
@@ -780,6 +881,8 @@ export class Indexer {
     if (pendingChunks.length === 0) {
       database.clearBranch(this.currentBranch);
       database.addChunksToBranchBatch(this.currentBranch, Array.from(currentChunkIds));
+      database.clearBranchSymbols(this.currentBranch);
+      database.addSymbolsToBranchBatch(this.currentBranch, Array.from(allSymbolIds));
       store.save();
       invertedIndex.save();
       this.fileHashCache = currentFileHashes;
@@ -938,6 +1041,8 @@ export class Indexer {
 
     database.clearBranch(this.currentBranch);
     database.addChunksToBranchBatch(this.currentBranch, Array.from(currentChunkIds));
+    database.clearBranchSymbols(this.currentBranch);
+    database.addSymbolsToBranchBatch(this.currentBranch, Array.from(allSymbolIds));
 
     store.save();
     invertedIndex.save();
@@ -1304,6 +1409,7 @@ export class Indexer {
 
     // Clear branch catalog
     database.clearBranch(this.currentBranch);
+    database.clearBranchSymbols(this.currentBranch);
 
     // Clear index metadata so compatibility is re-evaluated from scratch
     database.deleteMetadata("index.version");
@@ -1342,6 +1448,8 @@ export class Indexer {
           removedCount++;
         }
         database.deleteChunksByFile(filePath);
+        database.deleteCallEdgesByFile(filePath);
+        database.deleteSymbolsByFile(filePath);
         removedFilePaths.push(filePath);
       }
     }
@@ -1353,6 +1461,8 @@ export class Indexer {
 
     const gcOrphanEmbeddings = database.gcOrphanEmbeddings();
     const gcOrphanChunks = database.gcOrphanChunks();
+    const gcOrphanSymbols = database.gcOrphanSymbols();
+    const gcOrphanCallEdges = database.gcOrphanCallEdges();
 
     this.logger.recordGc(removedCount, gcOrphanChunks, gcOrphanEmbeddings);
     this.logger.gc("info", "Health check complete", {
@@ -1362,7 +1472,7 @@ export class Indexer {
       removedFiles: removedFilePaths.length,
     });
 
-    return { removed: removedCount, filePaths: removedFilePaths, gcOrphanEmbeddings, gcOrphanChunks };
+    return { removed: removedCount, filePaths: removedFilePaths, gcOrphanEmbeddings, gcOrphanChunks, gcOrphanSymbols, gcOrphanCallEdges };
   }
 
   async retryFailedBatches(): Promise<{ succeeded: number; failed: number; remaining: number }> {
@@ -1579,5 +1689,15 @@ export class Indexer {
         };
       })
     );
+  }
+
+  async getCallers(targetName: string): Promise<CallEdgeData[]> {
+    const { database } = await this.ensureInitialized();
+    return database.getCallers(targetName, this.currentBranch);
+  }
+
+  async getCallees(symbolId: string): Promise<CallEdgeData[]> {
+    const { database } = await this.ensureInitialized();
+    return database.getCallees(symbolId, this.currentBranch);
   }
 }

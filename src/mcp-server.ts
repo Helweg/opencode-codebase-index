@@ -233,7 +233,7 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
       await ensureInitialized();
       const result = await indexer.healthCheck();
 
-      if (result.removed === 0 && result.gcOrphanEmbeddings === 0 && result.gcOrphanChunks === 0) {
+      if (result.removed === 0 && result.gcOrphanEmbeddings === 0 && result.gcOrphanChunks === 0 && result.gcOrphanSymbols === 0 && result.gcOrphanCallEdges === 0) {
         return { content: [{ type: "text", text: "Index is healthy. No stale entries found." }] };
       }
 
@@ -249,6 +249,14 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
 
       if (result.gcOrphanChunks > 0) {
         lines.push(`  Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
+      }
+
+      if (result.gcOrphanSymbols > 0) {
+        lines.push(`  Garbage collected orphan symbols: ${result.gcOrphanSymbols}`);
+      }
+
+      if (result.gcOrphanCallEdges > 0) {
+        lines.push(`  Garbage collected orphan call edges: ${result.gcOrphanCallEdges}`);
       }
 
       if (result.filePaths.length > 0) {
@@ -349,6 +357,41 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
       });
 
       return { content: [{ type: "text", text: `Found ${results.length} similar code blocks:\n\n${formatted.join("\n\n")}` }] };
+    },
+  );
+
+
+  server.tool(
+    "call_graph",
+    "Query the call graph to find callers or callees of a function/method. Use to understand code flow and dependencies.",
+    {
+      name: z.string().describe("Function or method name to query"),
+      direction: z.enum(["callers", "callees"]).default("callers").describe("Direction: 'callers' finds who calls this function, 'callees' finds what this function calls"),
+      symbolId: z.string().optional().describe("Symbol ID (required for 'callees' direction)"),
+    },
+    async (args) => {
+      await ensureInitialized();
+      if (args.direction === "callees") {
+        if (!args.symbolId) {
+          return { content: [{ type: "text", text: "Error: 'symbolId' is required when direction is 'callees'." }] };
+        }
+        const callees = await indexer.getCallees(args.symbolId);
+        if (callees.length === 0) {
+          return { content: [{ type: "text", text: `No callees found for symbol ${args.symbolId}.` }] };
+        }
+        const formatted = callees.map((e, i) =>
+          `[${i + 1}] \u2192 ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
+        );
+        return { content: [{ type: "text", text: `Callees (${callees.length}):\n\n${formatted.join("\n")}` }] };
+      }
+      const callers = await indexer.getCallers(args.name);
+      if (callers.length === 0) {
+        return { content: [{ type: "text", text: `No callers found for "${args.name}".` }] };
+      }
+      const formatted = callers.map((e, i) =>
+        `[${i + 1}] \u2190 from symbol ${e.fromSymbolId} (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`
+      );
+      return { content: [{ type: "text", text: `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}` }] };
     },
   );
 

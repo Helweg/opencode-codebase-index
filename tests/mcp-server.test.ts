@@ -54,6 +54,8 @@ vi.mock("../src/indexer/index.js", () => {
       removed: 0,
       gcOrphanEmbeddings: 0,
       gcOrphanChunks: 0,
+      gcOrphanSymbols: 0,
+      gcOrphanCallEdges: 0,
       filePaths: [],
     });
     clearIndex = vi.fn().mockResolvedValue(undefined);
@@ -117,13 +119,14 @@ describe("MCP server tools and prompts", () => {
     await client.close();
   });
 
-  it("should register all 8 tools", async () => {
+  it("should register all 9 tools", async () => {
     const tools = await client.listTools();
 
-    expect(tools.tools).toHaveLength(8);
+    expect(tools.tools).toHaveLength(9);
 
     const toolNames = tools.tools.map(t => t.name).sort();
     const expectedNames = [
+      "call_graph",
       "codebase_peek",
       "codebase_search",
       "find_similar",

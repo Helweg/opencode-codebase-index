@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+mod call_extractor;
 mod chunker;
 mod db;
 mod hasher;
@@ -37,6 +38,23 @@ pub fn hash_content(content: String) -> String {
 #[napi]
 pub fn hash_file(file_path: String) -> Result<String> {
     hasher::xxhash_file(&file_path).map_err(|e| Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn extract_calls(content: String, language: String) -> Result<Vec<CallSiteData>> {
+    call_extractor::extract_calls(&content, &language)
+        .map(|sites| {
+            sites
+                .into_iter()
+                .map(|s| CallSiteData {
+                    callee_name: s.callee_name,
+                    line: s.line,
+                    column: s.column,
+                    call_type: format!("{:?}", s.call_type),
+                })
+                .collect()
+        })
+        .map_err(|e| Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -184,6 +202,39 @@ pub struct KeyMetadataPair {
 }
 
 #[napi(object)]
+pub struct CallSiteData {
+    pub callee_name: String,
+    pub line: u32,
+    pub column: u32,
+    pub call_type: String,
+}
+
+#[napi(object)]
+pub struct SymbolData {
+    pub id: String,
+    pub file_path: String,
+    pub name: String,
+    pub kind: String,
+    pub start_line: u32,
+    pub start_col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
+    pub language: String,
+}
+
+#[napi(object)]
+pub struct CallEdgeData {
+    pub id: String,
+    pub from_symbol_id: String,
+    pub target_name: String,
+    pub to_symbol_id: Option<String>,
+    pub call_type: String,
+    pub line: u32,
+    pub col: u32,
+    pub is_resolved: bool,
+}
+
+#[napi(object)]
 pub struct KeywordSearchResult {
     pub chunk_id: String,
     pub score: f64,
@@ -290,6 +341,8 @@ pub struct DatabaseStats {
     pub chunk_count: u32,
     pub branch_chunk_count: u32,
     pub branch_count: u32,
+    pub symbol_count: u32,
+    pub call_edge_count: u32,
 }
 
 #[napi]
@@ -599,6 +652,267 @@ impl Database {
             chunk_count: stats.chunk_count as u32,
             branch_chunk_count: stats.branch_chunk_count as u32,
             branch_count: stats.branch_count as u32,
+            symbol_count: stats.symbol_count as u32,
+            call_edge_count: stats.call_edge_count as u32,
         })
+    }
+
+    // ── Symbol methods ──────────────────────────────────────────────
+
+    #[napi]
+    pub fn upsert_symbol(&self, symbol: SymbolData) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let row = db::SymbolRow {
+            id: symbol.id,
+            file_path: symbol.file_path,
+            name: symbol.name,
+            kind: symbol.kind,
+            start_line: symbol.start_line,
+            start_col: symbol.start_col,
+            end_line: symbol.end_line,
+            end_col: symbol.end_col,
+            language: symbol.language,
+        };
+        db::upsert_symbol(&conn, &row).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn upsert_symbols_batch(&self, symbols: Vec<SymbolData>) -> Result<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let rows: Vec<db::SymbolRow> = symbols
+            .into_iter()
+            .map(|s| db::SymbolRow {
+                id: s.id,
+                file_path: s.file_path,
+                name: s.name,
+                kind: s.kind,
+                start_line: s.start_line,
+                start_col: s.start_col,
+                end_line: s.end_line,
+                end_col: s.end_col,
+                language: s.language,
+            })
+            .collect();
+        db::upsert_symbols_batch(&mut conn, &rows).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_symbols_by_file(&self, file_path: String) -> Result<Vec<SymbolData>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let rows = db::get_symbols_by_file(&conn, &file_path)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| SymbolData {
+                id: r.id,
+                file_path: r.file_path,
+                name: r.name,
+                kind: r.kind,
+                start_line: r.start_line,
+                start_col: r.start_col,
+                end_line: r.end_line,
+                end_col: r.end_col,
+                language: r.language,
+            })
+            .collect())
+    }
+
+    #[napi]
+    pub fn delete_symbols_by_file(&self, file_path: String) -> Result<u32> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::delete_symbols_by_file(&conn, &file_path)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    // ── Call Edge methods ────────────────────────────────────────────
+
+    #[napi]
+    pub fn upsert_call_edge(&self, edge: CallEdgeData) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let row = db::CallEdgeRow {
+            id: edge.id,
+            from_symbol_id: edge.from_symbol_id,
+            target_name: edge.target_name,
+            to_symbol_id: edge.to_symbol_id,
+            call_type: edge.call_type,
+            line: edge.line,
+            col: edge.col,
+            is_resolved: edge.is_resolved,
+        };
+        db::upsert_call_edge(&conn, &row).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn upsert_call_edges_batch(&self, edges: Vec<CallEdgeData>) -> Result<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let rows: Vec<db::CallEdgeRow> = edges
+            .into_iter()
+            .map(|e| db::CallEdgeRow {
+                id: e.id,
+                from_symbol_id: e.from_symbol_id,
+                target_name: e.target_name,
+                to_symbol_id: e.to_symbol_id,
+                call_type: e.call_type,
+                line: e.line,
+                col: e.col,
+                is_resolved: e.is_resolved,
+            })
+            .collect();
+        db::upsert_call_edges_batch(&mut conn, &rows).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_callers(&self, symbol_name: String, branch: String) -> Result<Vec<CallEdgeData>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let rows = db::get_callers(&conn, &symbol_name, &branch)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| CallEdgeData {
+                id: r.id,
+                from_symbol_id: r.from_symbol_id,
+                target_name: r.target_name,
+                to_symbol_id: r.to_symbol_id,
+                call_type: r.call_type,
+                line: r.line,
+                col: r.col,
+                is_resolved: r.is_resolved,
+            })
+            .collect())
+    }
+
+    #[napi]
+    pub fn get_callees(&self, symbol_id: String, branch: String) -> Result<Vec<CallEdgeData>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let rows =
+            db::get_callees(&conn, &symbol_id, &branch).map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| CallEdgeData {
+                id: r.id,
+                from_symbol_id: r.from_symbol_id,
+                target_name: r.target_name,
+                to_symbol_id: r.to_symbol_id,
+                call_type: r.call_type,
+                line: r.line,
+                col: r.col,
+                is_resolved: r.is_resolved,
+            })
+            .collect())
+    }
+
+    #[napi]
+    pub fn delete_call_edges_by_file(&self, file_path: String) -> Result<u32> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::delete_call_edges_by_file(&conn, &file_path)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    #[napi]
+    pub fn resolve_call_edge(&self, edge_id: String, to_symbol_id: String) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        db::resolve_call_edge(&conn, &edge_id, &to_symbol_id)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    // ── Branch Symbol methods ────────────────────────────────────────
+
+    #[napi]
+    pub fn add_symbols_to_branch(&self, branch: String, symbol_ids: Vec<String>) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        db::add_symbols_to_branch(&conn, &branch, &symbol_ids)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn add_symbols_to_branch_batch(
+        &self,
+        branch: String,
+        symbol_ids: Vec<String>,
+    ) -> Result<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        db::add_symbols_to_branch_batch(&mut conn, &branch, &symbol_ids)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn get_branch_symbol_ids(&self, branch: String) -> Result<Vec<String>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        db::get_branch_symbol_ids(&conn, &branch).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn clear_branch_symbols(&self, branch: String) -> Result<u32> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::clear_branch_symbols(&conn, &branch)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    // ── GC methods for symbols/edges ─────────────────────────────────
+
+    #[napi]
+    pub fn gc_orphan_symbols(&self) -> Result<u32> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let count = db::gc_orphan_symbols(&conn).map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
+    }
+
+    #[napi]
+    pub fn gc_orphan_call_edges(&self) -> Result<u32> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let count =
+            db::gc_orphan_call_edges(&conn).map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(count as u32)
     }
 }
