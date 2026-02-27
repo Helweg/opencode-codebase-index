@@ -281,6 +281,18 @@ describe("MCP server tools and prompts", () => {
     expect(msgContent.text).toContain("index_status");
   });
 
+  it("should get status prompt without arguments (issue #13)", async () => {
+    const prompt = await client.getPrompt({
+      name: "status",
+    });
+
+    expect(prompt.messages).toBeDefined();
+    expect(prompt.messages).toHaveLength(1);
+    expect(prompt.messages[0].role).toBe("user");
+    const msgContent = prompt.messages[0].content as { type: string; text?: string };
+    expect(msgContent.text).toContain("index_status");
+  });
+
   it("should execute index_metrics tool", async () => {
     const result = await client.callTool({
       name: "index_metrics",
