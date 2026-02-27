@@ -394,6 +394,7 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
       return { content: [{ type: "text", text: `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}` }] };
     },
   );
+
   // --- Prompts ---
 
   server.prompt(

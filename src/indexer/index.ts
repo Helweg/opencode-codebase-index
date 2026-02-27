@@ -31,6 +31,9 @@ import {
 import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 
+const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust"]);
+const SEMANTIC_CHUNK_TYPES = new Set(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module"]);
+
 function float32ArrayToBuffer(arr: number[]): Buffer {
   const float32 = new Float32Array(arr);
   return Buffer.from(float32.buffer);
@@ -747,10 +750,8 @@ export class Indexer {
 
     // ── Call Graph Extraction ────────────────────────────────────────
     // Extract symbols and call edges from changed files.
-    const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust"]);
     const allSymbolIds = new Set<string>();
     const symbolsByFile = new Map<string, SymbolData[]>();
-    const semanticChunkTypes = new Set(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module"]);
 
     // For changed files: delete old symbols/edges, extract new ones
     for (let i = 0; i < parsedFiles.length; i++) {
@@ -765,7 +766,7 @@ export class Indexer {
       const fileSymbols: SymbolData[] = [];
 
       for (const chunk of parsed.chunks) {
-        if (!chunk.name || !semanticChunkTypes.has(chunk.chunkType)) continue;
+        if (!chunk.name || !SEMANTIC_CHUNK_TYPES.has(chunk.chunkType)) continue;
 
         const symbolId = `sym_${hashContent(parsed.path + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`;
         const symbol: SymbolData = {
