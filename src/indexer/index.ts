@@ -203,7 +203,23 @@ export class Indexer {
       if (existsSync(this.fileHashCachePath)) {
         const data = readFileSync(this.fileHashCachePath, "utf-8");
         const parsed = JSON.parse(data);
-        this.fileHashCache = new Map(Object.entries(parsed));
+        const entries = Object.entries(parsed) as [string, string][];
+
+        // Detect legacy absolute paths from pre-relative-path indexes.
+        // If any cached path is absolute, the index was built before the
+        // relative-path change and must be rebuilt.
+        const hasAbsolutePaths = entries.some(([key]) => path.isAbsolute(key));
+        if (hasAbsolutePaths) {
+          console.warn(
+            "[codebase-index] Detected legacy index with absolute file paths. " +
+            "Clearing file hash cache \u2014 next index run will re-process all files. " +
+            "Run index_codebase with force=true for a clean rebuild."
+          );
+          this.fileHashCache = new Map();
+          return;
+        }
+
+        this.fileHashCache = new Map(entries);
       }
     } catch {
       this.fileHashCache = new Map();
