@@ -315,7 +315,7 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `embeddingProvider` | `"auto"` | Which AI to use: `auto`, `github-copilot`, `openai`, `google`, `ollama` |
+| `embeddingProvider` | `"auto"` | Which AI to use: `auto`, `github-copilot`, `openai`, `google`, `ollama`, `custom` |
 | `scope` | `"project"` | `project` = index per repo, `global` = shared index across repos |
 | **indexing** | | |
 | `autoIndex` | `false` | Automatically index on plugin load |
@@ -351,6 +351,8 @@ The plugin automatically detects available credentials in this order:
 3. **Google** (Gemini Embeddings)
 4. **Ollama** (Local/Private - requires `nomic-embed-text`)
 
+You can also use **Custom** to connect any OpenAI-compatible embedding endpoint (llama.cpp, vLLM, text-embeddings-inference, LiteLLM, etc.).
+
 ### Rate Limits by Provider
 
 Each provider has different rate limits. The plugin automatically adjusts concurrency and delays:
@@ -361,6 +363,7 @@ Each provider has different rate limits. The plugin automatically adjusts concur
 | **OpenAI** | 3 | 500ms | Medium codebases |
 | **Google** | 5 | 200ms | Medium-large codebases |
 | **Ollama** | 5 | None | Large codebases (10k+ files) |
+| **Custom** | 3 | 1s | Any OpenAI-compatible endpoint |
 
 **For large codebases**, use Ollama locally to avoid rate limits:
 
@@ -460,6 +463,7 @@ Use this decision tree to pick the right embedding provider:
 | **GitHub Copilot** | Slow (rate limited) | Free* | Cloud | Small codebases, existing subscribers |
 | **OpenAI** | Medium | ~$0.0001/1K tokens | Cloud | General use |
 | **Google** | Fast | Free tier available | Cloud | Medium-large codebases |
+| **Custom** | Varies | Varies | Varies | Self-hosted or third-party endpoints |
 
 *Requires active Copilot subscription
 
@@ -494,6 +498,23 @@ No setup needed if you have an active Copilot subscription.
 ```json
 { "embeddingProvider": "github-copilot" }
 ```
+
+**Custom (OpenAI-compatible)**
+Works with any server that implements the OpenAI `/v1/embeddings` API format (llama.cpp, vLLM, text-embeddings-inference, LiteLLM, etc.).
+```json
+{
+  "embeddingProvider": "custom",
+  "customProvider": {
+    "baseUrl": "http://localhost:11434/v1",
+    "model": "nomic-embed-text",
+    "dimensions": 768,
+    "apiKey": "optional-api-key",
+    "maxTokens": 8192,
+    "timeoutMs": 30000
+  }
+}
+```
+Required fields: `baseUrl`, `model`, `dimensions` (positive integer). Optional: `apiKey`, `maxTokens`, `timeoutMs` (default: 30000).
 
 ## ⚠️ Tradeoffs
 
