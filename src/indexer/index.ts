@@ -5,10 +5,11 @@ import PQueue from "p-queue";
 import pRetry from "p-retry";
 
 import { ParsedCodebaseIndexConfig } from "../config/schema.js";
-import { detectEmbeddingProvider, ConfiguredProviderInfo, tryDetectProvider } from "../embeddings/detector.js";
+import { detectEmbeddingProvider, ConfiguredProviderInfo, tryDetectProvider, createCustomProviderInfo } from "../embeddings/detector.js";
 import {
   createEmbeddingProvider,
   EmbeddingProviderInterface,
+  CustomProviderNonRetryableError,
 } from "../embeddings/provider.js";
 import { collectFiles, SkippedFile } from "../utils/files.js";
 import { createCostEstimate, CostEstimate } from "../utils/cost.js";
@@ -178,18 +179,6 @@ export class Indexer {
     this.logger = initializeLogger(config.debug);
   }
 
-  // Convert absolute path to relative (for storage). After this change,
-  // all paths stored in SQLite, VectorStore metadata, file hash cache, and
-  // inverted index are relative to projectRoot. Users must force-rebuild
-  // existing indexes (force=true) since chunk IDs change.
-  private toRelativePath(absolutePath: string): string {
-    return path.relative(this.projectRoot, absolutePath);
-  }
-
-  private toAbsolutePath(relativePath: string): string {
-    return path.join(this.projectRoot, relativePath);
-  }
-
   private getIndexPath(): string {
     if (this.config.scope === "global") {
       const homeDir = process.env.HOME || process.env.USERPROFILE || "";
@@ -203,23 +192,7 @@ export class Indexer {
       if (existsSync(this.fileHashCachePath)) {
         const data = readFileSync(this.fileHashCachePath, "utf-8");
         const parsed = JSON.parse(data);
-        const entries = Object.entries(parsed) as [string, string][];
-
-        // Detect legacy absolute paths from pre-relative-path indexes.
-        // If any cached path is absolute, the index was built before the
-        // relative-path change and must be rebuilt.
-        const hasAbsolutePaths = entries.some(([key]) => path.isAbsolute(key));
-        if (hasAbsolutePaths) {
-          console.warn(
-            "[codebase-index] Detected legacy index with absolute file paths. " +
-            "Clearing file hash cache \u2014 next index run will re-process all files. " +
-            "Run index_codebase with force=true for a clean rebuild."
-          );
-          this.fileHashCache = new Map();
-          return;
-        }
-
-        this.fileHashCache = new Map(entries);
+        this.fileHashCache = new Map(Object.entries(parsed));
       }
     } catch {
       this.fileHashCache = new Map();
@@ -319,13 +292,30 @@ export class Indexer {
         return { concurrency: 5, intervalMs: 200, minRetryMs: 1000, maxRetryMs: 30000 };
       case "ollama":
         return { concurrency: 5, intervalMs: 0, minRetryMs: 500, maxRetryMs: 5000 };
+      case "custom": {
+        // Custom providers allow user-configurable concurrency and request interval.
+        // Defaults are conservative (3 concurrent, 1s interval) for cloud endpoints;
+        // users running local servers should set concurrency higher and intervalMs to 0.
+        const customConfig = this.config.customProvider;
+        return {
+          concurrency: customConfig?.concurrency ?? 3,
+          intervalMs: customConfig?.requestIntervalMs ?? 1000,
+          minRetryMs: 1000,
+          maxRetryMs: 30000,
+        };
+      }
       default:
         return { concurrency: 3, intervalMs: 1000, minRetryMs: 1000, maxRetryMs: 30000 };
     }
   }
 
   async initialize(): Promise<void> {
-    if (this.config.embeddingProvider === 'auto') {
+    if (this.config.embeddingProvider === 'custom') {
+      if (!this.config.customProvider) {
+        throw new Error("embeddingProvider is 'custom' but customProvider config is missing.");
+      }
+      this.configuredProviderInfo = createCustomProviderInfo(this.config.customProvider);
+    } else if (this.config.embeddingProvider === 'auto') {
       this.configuredProviderInfo = await tryDetectProvider();
     } else {
       this.configuredProviderInfo = await detectEmbeddingProvider(this.config.embeddingProvider, this.config.embeddingModel);
@@ -333,7 +323,7 @@ export class Indexer {
 
     if (!this.configuredProviderInfo) {
       throw new Error(
-        "No embedding provider available. Configure GitHub, OpenAI, Google, or Ollama."
+        "No embedding provider available. Configure GitHub Copilot, OpenAI, Google, Ollama, or a custom OpenAI-compatible endpoint."
       );
     }
 
@@ -377,22 +367,6 @@ export class Indexer {
 
     if (dbIsNew && this.store.count() > 0) {
       this.migrateFromLegacyIndex();
-    }
-
-    // Detect legacy indexes with absolute paths in stored chunks.
-    // The file hash cache check (loadFileHashCache) catches the cache file,
-    // but chunks already in SQLite/VectorStore may still have absolute paths.
-    // Sample a few entries to detect and warn early.
-    if (!dbIsNew && this.store.count() > 0) {
-      const sample = this.store.getAllMetadata().slice(0, 5);
-      const hasAbsoluteChunkPaths = sample.some(({ metadata }) => path.isAbsolute(metadata.filePath));
-      if (hasAbsoluteChunkPaths) {
-        console.warn(
-          "[codebase-index] Detected legacy index with absolute file paths in stored chunks. " +
-          "Search results may be incorrect until you rebuild. " +
-          "Run index_codebase with force=true for a clean rebuild."
-        );
-      }
     }
 
     this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
@@ -472,7 +446,7 @@ export class Indexer {
       const chunkData: ChunkData = {
         chunkId: key,
         contentHash: metadata.hash,
-        filePath: this.toRelativePath(metadata.filePath),
+        filePath: metadata.filePath,
         startLine: metadata.startLine,
         endLine: metadata.endLine,
         nodeType: metadata.chunkType,
@@ -666,16 +640,15 @@ export class Indexer {
     const currentFileHashes = new Map<string, string>();
 
     for (const f of files) {
-      const relativePath = this.toRelativePath(f.path);
       const currentHash = hashFile(f.path);
-      currentFileHashes.set(relativePath, currentHash);
+      currentFileHashes.set(f.path, currentHash);
 
-      if (this.fileHashCache.get(relativePath) === currentHash) {
-        unchangedFilePaths.add(relativePath);
+      if (this.fileHashCache.get(f.path) === currentHash) {
+        unchangedFilePaths.add(f.path);
         this.logger.recordCacheHit();
       } else {
         const content = await fsPromises.readFile(f.path, "utf-8");
-        changedFiles.push({ path: relativePath, content, hash: currentHash });
+        changedFiles.push({ path: f.path, content, hash: currentHash });
         this.logger.recordCacheMiss();
       }
     }
@@ -730,9 +703,8 @@ export class Indexer {
       currentFilePaths.add(parsed.path);
 
       if (parsed.chunks.length === 0) {
-        // parsed.path is already relative at this point (converted in delta tracking),
-        // so no additional path.relative() call is needed here.
-        stats.parseFailures.push(parsed.path);
+        const relativePath = path.relative(this.projectRoot, parsed.path);
+        stats.parseFailures.push(relativePath);
       }
 
       let fileChunkCount = 0;
@@ -899,6 +871,7 @@ export class Indexer {
               minTimeout: Math.max(this.config.indexing.retryDelayMs, providerRateLimits.minRetryMs),
               maxTimeout: providerRateLimits.maxRetryMs,
               factor: 2,
+              shouldRetry: (error) => !((error as { error?: Error }).error instanceof CustomProviderNonRetryableError),
               onFailedAttempt: (error) => {
                 const message = getErrorMessage(error);
                 if (isRateLimitError(error)) {
@@ -1225,7 +1198,7 @@ export class Indexer {
         if (!metadataOnly && this.config.search.includeContext) {
           try {
             const fileContent = await fsPromises.readFile(
-              this.toAbsolutePath(r.metadata.filePath),
+              r.metadata.filePath,
               "utf-8"
             );
             const lines = fileContent.split("\n");
@@ -1381,7 +1354,7 @@ export class Indexer {
     let removedCount = 0;
 
     for (const [filePath, chunkKeys] of filePathsToChunkKeys) {
-      if (!existsSync(this.toAbsolutePath(filePath))) {
+      if (!existsSync(filePath)) {
         for (const key of chunkKeys) {
           store.remove(key);
           invertedIndex.removeChunk(key);
@@ -1602,7 +1575,7 @@ export class Indexer {
         if (this.config.search.includeContext) {
           try {
             const fileContent = await fsPromises.readFile(
-              this.toAbsolutePath(r.metadata.filePath),
+              r.metadata.filePath,
               "utf-8"
             );
             const lines = fileContent.split("\n");

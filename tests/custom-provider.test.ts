@@ -1,0 +1,394 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createEmbeddingProvider, CustomProviderNonRetryableError } from "../src/embeddings/provider.js";
+import { createCustomProviderInfo } from "../src/embeddings/detector.js";
+import { Indexer } from "../src/indexer/index.js";
+import { parseConfig } from "../src/config/schema.js";
+import pRetry from "p-retry";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
+describe("CustomEmbeddingProvider", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  function createProvider(overrides?: { apiKey?: string; baseUrl?: string }) {
+    const info = createCustomProviderInfo({
+      baseUrl: overrides?.baseUrl ?? "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimensions: 768,
+      apiKey: overrides?.apiKey,
+    });
+    return createEmbeddingProvider(info);
+  }
+
+  it("should call the correct URL with model and input", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(768).fill(0.1) }],
+      usage: { total_tokens: 10 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    const result = await provider.embedQuery("test query");
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:11434/v1/embeddings");
+    expect(options.method).toBe("POST");
+    const body = JSON.parse(options.body as string);
+    expect(body.model).toBe("nomic-embed-text");
+    expect(body.input).toEqual(["test query"]);
+    expect(result.embedding).toHaveLength(768);
+    expect(result.tokensUsed).toBe(10);
+  });
+
+  it("should include Authorization header when apiKey is provided", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(768).fill(0) }],
+      usage: { total_tokens: 5 },
+    }), { status: 200 }));
+
+    const provider = createProvider({ apiKey: "sk-test-123" });
+    await provider.embedQuery("test");
+
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer sk-test-123");
+  });
+
+  it("should not include Authorization header when no apiKey", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(768).fill(0) }],
+      usage: { total_tokens: 5 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    await provider.embedQuery("test");
+
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBeUndefined();
+  });
+
+  it("should handle batch embedding", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [
+        { embedding: new Array(768).fill(0.1) },
+        { embedding: new Array(768).fill(0.2) },
+        { embedding: new Array(768).fill(0.3) },
+      ],
+      usage: { total_tokens: 30 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    const result = await provider.embedBatch(["text1", "text2", "text3"]);
+
+    expect(result.embeddings).toHaveLength(3);
+    expect(result.totalTokensUsed).toBe(30);
+  });
+
+  it("should estimate tokens when usage is not provided", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(768).fill(0) }],
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    const result = await provider.embedBatch(["hello world"]);
+
+    expect(result.embeddings).toHaveLength(1);
+    expect(result.totalTokensUsed).toBeGreaterThan(0);
+  });
+
+  it("should throw on non-OK response", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("Rate limited", { status: 429 }));
+
+    const provider = createProvider();
+    await expect(provider.embedQuery("test")).rejects.toThrow("Custom embedding API error: 429");
+  });
+
+  it("should throw on unexpected response format", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      unexpected: "format",
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    await expect(provider.embedQuery("test")).rejects.toThrow("unexpected response format");
+  });
+
+  it("should strip trailing slashes from baseUrl", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(768).fill(0) }],
+      usage: { total_tokens: 5 },
+    }), { status: 200 }));
+
+    const provider = createProvider({ baseUrl: "http://localhost:11434/v1///" });
+    await provider.embedQuery("test");
+
+    const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:11434/v1/embeddings");
+  });
+
+  it("should return correct model info", () => {
+    const provider = createProvider();
+    const info = provider.getModelInfo();
+    expect(info.model).toBe("nomic-embed-text");
+    expect(info.dimensions).toBe(768);
+    expect(info.costPer1MTokens).toBe(0);
+  });
+
+  it("should handle empty texts array", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [],
+      usage: { total_tokens: 0 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    const result = await provider.embedBatch([]);
+
+    expect(result.embeddings).toHaveLength(0);
+    expect(result.totalTokensUsed).toBe(0);
+  });
+
+  it("should throw on dimension mismatch between config and API response", async () => {
+    // API returns 1024-dim vectors but config says 768
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(1024).fill(0.1) }],
+      usage: { total_tokens: 10 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    await expect(provider.embedQuery("test")).rejects.toThrow(
+      "Dimension mismatch: customProvider.dimensions is 768, but the API returned vectors with 1024 dimensions"
+    );
+  });
+
+  it("should always throw on dimension mismatch, even after a successful call", async () => {
+    // First call: correct dimensions
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(768).fill(0.1) }],
+      usage: { total_tokens: 10 },
+    }), { status: 200 }));
+    // Second call: wrong dimensions — should throw, not warn
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(512).fill(0.1) }],
+      usage: { total_tokens: 10 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    const result1 = await provider.embedQuery("first");
+    expect(result1.embedding).toHaveLength(768);
+
+    // Second call throws on dimension mismatch
+    await expect(provider.embedQuery("second")).rejects.toThrow(
+      "Dimension mismatch: customProvider.dimensions is 768, but the API returned vectors with 512 dimensions"
+    );
+  });
+
+  it("should use configurable timeout", async () => {
+    const info = createCustomProviderInfo({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimensions: 768,
+      timeoutMs: 5000,
+    });
+    const provider = createEmbeddingProvider(info);
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ embedding: new Array(768).fill(0) }],
+      usage: { total_tokens: 5 },
+    }), { status: 200 }));
+
+    await provider.embedQuery("test");
+
+    // Verify the AbortSignal was passed (timeout is set internally)
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(options.signal).toBeDefined();
+  });
+
+  it("should default timeout to 30000ms", () => {
+    const info = createCustomProviderInfo({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimensions: 768,
+    });
+    expect(info.modelInfo.timeoutMs).toBe(30000);
+  });
+
+  it("should use custom timeout value from config", () => {
+    const info = createCustomProviderInfo({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimensions: 768,
+      timeoutMs: 60000,
+    });
+    expect(info.modelInfo.timeoutMs).toBe(60000);
+  });
+
+  it("should throw non-retryable error on 4xx responses (except 429)", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }));
+    const provider = createProvider();
+    const error = await provider.embedQuery("test").catch((e: Error) => e);
+    expect(error).toBeInstanceOf(CustomProviderNonRetryableError);
+    expect(error.message).toContain("non-retryable");
+    expect(error.message).toContain("401");
+  });
+
+  it("should throw non-retryable error on 400 Bad Request", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("Bad model name", { status: 400 }));
+    const provider = createProvider();
+    const error = await provider.embedQuery("test").catch((e: Error) => e);
+    expect(error).toBeInstanceOf(CustomProviderNonRetryableError);
+  });
+
+  it("should throw non-retryable error on 403 Forbidden", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("Forbidden", { status: 403 }));
+    const provider = createProvider();
+    const error = await provider.embedQuery("test").catch((e: Error) => e);
+    expect(error).toBeInstanceOf(CustomProviderNonRetryableError);
+  });
+
+  it("should throw retryable error on 429 rate limit", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("Rate limited", { status: 429 }));
+    const provider = createProvider();
+    const error = await provider.embedQuery("test").catch((e: Error) => e);
+    expect(error).not.toBeInstanceOf(CustomProviderNonRetryableError);
+    expect(error.message).toContain("429");
+  });
+
+  it("should throw retryable error on 5xx server errors", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("Internal Server Error", { status: 500 }));
+    const provider = createProvider();
+    const error = await provider.embedQuery("test").catch((e: Error) => e);
+    expect(error).not.toBeInstanceOf(CustomProviderNonRetryableError);
+    expect(error.message).toContain("500");
+  });
+
+  it("should throw on embedding count mismatch (fewer than expected)", async () => {
+    // Send 3 texts but server returns only 2 embeddings
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [
+        { embedding: new Array(768).fill(0.1) },
+        { embedding: new Array(768).fill(0.2) },
+      ],
+      usage: { total_tokens: 20 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    await expect(provider.embedBatch(["text1", "text2", "text3"])).rejects.toThrow(
+      "Embedding count mismatch: sent 3 texts but received 2 embeddings"
+    );
+  });
+
+  it("should throw on embedding count mismatch (more than expected)", async () => {
+    // Send 1 text but server returns 2 embeddings
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [
+        { embedding: new Array(768).fill(0.1) },
+        { embedding: new Array(768).fill(0.2) },
+      ],
+      usage: { total_tokens: 10 },
+    }), { status: 200 }));
+
+    const provider = createProvider();
+    await expect(provider.embedBatch(["text1"])).rejects.toThrow(
+      "Embedding count mismatch: sent 1 texts but received 2 embeddings"
+    );
+  });
+
+  it("should throw AbortError with timeout message when fetch is aborted", async () => {
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "AbortError";
+    fetchSpy.mockRejectedValueOnce(abortError);
+
+    const info = createCustomProviderInfo({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimensions: 768,
+      timeoutMs: 5000,
+    });
+    const provider = createEmbeddingProvider(info);
+
+    await expect(provider.embedQuery("test")).rejects.toThrow(
+      "Custom embedding API request timed out after 5000ms for http://localhost:11434/v1/embeddings"
+    );
+  });
+
+  it("should re-throw non-AbortError fetch failures as-is", async () => {
+    fetchSpy.mockRejectedValueOnce(new TypeError("fetch failed"));
+
+    const provider = createProvider();
+    await expect(provider.embedQuery("test")).rejects.toThrow("fetch failed");
+  });
+
+  it("should not retry on CustomProviderNonRetryableError via pRetry shouldRetry", async () => {
+    // This tests the exact shouldRetry pattern used in src/indexer/index.ts
+    // pRetry passes a plain object { error, attemptNumber, retriesLeft, retriesConsumed } to shouldRetry,
+    // NOT the original Error — so we must access .error to get the original error's name.
+    const shouldRetry = (error: unknown) => (error as { error?: Error }).error?.name !== "CustomProviderNonRetryableError";
+
+    let attempts = 0;
+    const nonRetryableError = new Error("Custom embedding API error (non-retryable): 401 - Unauthorized");
+    nonRetryableError.name = "CustomProviderNonRetryableError";
+
+    await expect(
+      pRetry(
+        async () => {
+          attempts++;
+          throw nonRetryableError;
+        },
+        { retries: 3, minTimeout: 10, shouldRetry }
+      )
+    ).rejects.toThrow("non-retryable");
+
+    // Should have been called exactly once — pRetry should not retry
+    expect(attempts).toBe(1);
+  });
+
+  it("should retry on regular errors via pRetry shouldRetry", async () => {
+    const shouldRetry = (error: unknown) => (error as { error?: Error }).error?.name !== "CustomProviderNonRetryableError";
+
+    let attempts = 0;
+    await expect(
+      pRetry(
+        async () => {
+          attempts++;
+          throw new Error("Custom embedding API error: 500 - Internal Server Error");
+        },
+        { retries: 2, minTimeout: 10, shouldRetry }
+      )
+    ).rejects.toThrow("500");
+
+    // Should have been called 3 times (1 initial + 2 retries)
+    expect(attempts).toBe(3);
+  });
+});
+
+describe("Indexer custom provider initialization", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "indexer-custom-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("should throw when embeddingProvider is 'custom' but customProvider is missing", async () => {
+    // Manually construct a config where embeddingProvider is 'custom' but customProvider is undefined.
+    // parseConfig() would normally reject this, but initialize() has its own guard for safety.
+    const baseConfig = parseConfig({ embeddingProvider: "openai" });
+    const config = { ...baseConfig, embeddingProvider: "custom" as const, customProvider: undefined };
+    const indexer = new Indexer(tempDir, config);
+    await expect(indexer.initialize()).rejects.toThrow(
+      "embeddingProvider is 'custom' but customProvider config is missing"
+    );
+  });
+});

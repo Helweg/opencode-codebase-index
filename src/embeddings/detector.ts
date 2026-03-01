@@ -1,15 +1,20 @@
-import { type EmbeddingProvider, getDefaultModelForProvider, isValidModel, availableProviders, EmbeddingModelName, EMBEDDING_MODELS } from "../config";
+import { type EmbeddingProvider, type CustomProviderConfig, type BaseModelInfo, getDefaultModelForProvider, isValidModel, availableProviders, EmbeddingModelName, EMBEDDING_MODELS } from "../config";
 import { existsSync, readFileSync } from "fs";
 import * as path from "path";
 import * as os from "os";
 
 export interface ProviderCredentials {
-  provider: EmbeddingProvider;
+  provider: EmbeddingProvider | 'custom';
   apiKey?: string;
   baseUrl?: string;
   refreshToken?: string;
   accessToken?: string;
   tokenExpires?: number;
+}
+
+export interface CustomModelInfo extends BaseModelInfo {
+  provider: 'custom';
+  timeoutMs: number;
 }
 
 export type ConfiguredProviderInfo = {
@@ -18,7 +23,11 @@ export type ConfiguredProviderInfo = {
     credentials: ProviderCredentials;
     modelInfo: (typeof EMBEDDING_MODELS)[P][keyof (typeof EMBEDDING_MODELS)[P]];
   }
-}[EmbeddingProvider]
+}[EmbeddingProvider] | {
+  provider: 'custom';
+  credentials: ProviderCredentials;
+  modelInfo: CustomModelInfo;
+}
 
 interface OpenCodeAuthOAuth {
   type: "oauth";
@@ -203,7 +212,7 @@ async function getOllamaCredentials(): Promise<ProviderCredentials | null> {
   return null;
 }
 
-export function getProviderDisplayName(provider: EmbeddingProvider): string {
+export function getProviderDisplayName(provider: EmbeddingProvider | 'custom'): string {
   switch (provider) {
     case "github-copilot":
       return "GitHub Copilot";
@@ -213,7 +222,31 @@ export function getProviderDisplayName(provider: EmbeddingProvider): string {
       return "Google (Gemini)";
     case "ollama":
       return "Ollama (Local)";
+    case "custom":
+      return "Custom (OpenAI-compatible)";
     default:
       return provider;
   }
+}
+
+export function createCustomProviderInfo(config: CustomProviderConfig): ConfiguredProviderInfo {
+  // Normalize baseUrl defensively — parseConfig() already strips trailing slashes,
+  // but direct callers (e.g. tests) may pass unnormalized URLs.
+  const baseUrl = config.baseUrl.replace(/\/+$/, '');
+  return {
+    provider: 'custom',
+    credentials: {
+      provider: 'custom',
+      baseUrl,
+      apiKey: config.apiKey,
+    },
+    modelInfo: {
+      provider: 'custom',
+      model: config.model,
+      dimensions: config.dimensions,
+      maxTokens: config.maxTokens ?? 8192,
+      costPer1MTokens: 0,
+      timeoutMs: config.timeoutMs ?? 30_000,
+    },
+  };
 }
