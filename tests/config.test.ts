@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   parseConfig,
   getDefaultModelForProvider,
@@ -227,6 +227,327 @@ describe("config schema", () => {
 
       it("should handle non-object search", () => {
         expect(parseConfig({ search: "invalid" }).search.maxResults).toBe(20);
+      });
+    });
+
+    describe("custom provider config", () => {
+      it("should parse valid custom provider config", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "nomic-embed-text",
+            dimensions: 768,
+          },
+        });
+        expect(config.embeddingProvider).toBe("custom");
+        expect(config.customProvider).toBeDefined();
+        expect(config.customProvider!.baseUrl).toBe("http://localhost:11434/v1");
+        expect(config.customProvider!.model).toBe("nomic-embed-text");
+        expect(config.customProvider!.dimensions).toBe(768);
+        expect(config.customProvider!.apiKey).toBeUndefined();
+        expect(config.customProvider!.maxTokens).toBeUndefined();
+      });
+
+      it("should parse custom provider with all optional fields", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "https://api.example.com/v1",
+            model: "my-model",
+            dimensions: 1024,
+            apiKey: "sk-test-key",
+            maxTokens: 4096,
+          },
+        });
+        expect(config.customProvider!.apiKey).toBe("sk-test-key");
+        expect(config.customProvider!.maxTokens).toBe(4096);
+      });
+
+      it("should throw when custom provider is selected but config is missing", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should throw when custom provider config is missing required fields", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: { baseUrl: "http://localhost/v1" },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should throw when custom provider has wrong field types", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: 123,
+            model: "test",
+            dimensions: 768,
+          },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should warn when baseUrl is missing API version path", () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434",
+            model: "test",
+            dimensions: 768,
+          },
+        });
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("does not end with an API version path like /v1")
+        );
+        warnSpy.mockRestore();
+      });
+
+      it("should not warn when baseUrl ends with /v1", () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+          },
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+        warnSpy.mockRestore();
+      });
+
+      it("should not warn when baseUrl ends with /v2", () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "https://api.example.com/v2",
+            model: "test",
+            dimensions: 768,
+          },
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+        warnSpy.mockRestore();
+      });
+
+      it("should ignore customProvider when embeddingProvider is not 'custom'", () => {
+        const config = parseConfig({
+          embeddingProvider: "openai",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "nomic-embed-text",
+            dimensions: 768,
+          },
+        });
+        expect(config.embeddingProvider).toBe("openai");
+        expect(config.customProvider).toBeUndefined();
+      });
+
+      it("should parse custom provider with timeoutMs", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            timeoutMs: 60000,
+          },
+        });
+        expect(config.customProvider!.timeoutMs).toBe(60000);
+      });
+
+      it("should leave timeoutMs undefined when not provided", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+          },
+        });
+        expect(config.customProvider!.timeoutMs).toBeUndefined();
+      });
+
+      it("should strip trailing slashes from baseUrl at config parse time", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1///",
+            model: "test",
+            dimensions: 768,
+          },
+        });
+        expect(config.customProvider!.baseUrl).toBe("http://localhost:11434/v1");
+      });
+
+      it("should throw when dimensions is zero", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 0,
+          },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should throw when dimensions is negative", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: -1,
+          },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should throw when dimensions is a float", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768.5,
+          },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should throw when baseUrl is empty string", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "",
+            model: "test",
+            dimensions: 768,
+          },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should throw when baseUrl is whitespace only", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "   ",
+            model: "test",
+            dimensions: 768,
+          },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should throw when model is empty string", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "",
+            dimensions: 768,
+          },
+        })).toThrow("embeddingProvider is 'custom' but customProvider config is missing or invalid");
+      });
+
+      it("should parse custom provider with concurrency", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            concurrency: 10,
+          },
+        });
+        expect(config.customProvider!.concurrency).toBe(10);
+      });
+
+      it("should parse custom provider with requestIntervalMs", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            requestIntervalMs: 0,
+          },
+        });
+        expect(config.customProvider!.requestIntervalMs).toBe(0);
+      });
+
+      it("should clamp concurrency to minimum of 1", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            concurrency: 0,
+          },
+        });
+        expect(config.customProvider!.concurrency).toBe(1);
+      });
+
+      it("should leave concurrency undefined when not provided", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+          },
+        });
+        expect(config.customProvider!.concurrency).toBeUndefined();
+      });
+
+      it("should trim whitespace from baseUrl before stripping slashes", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "  http://localhost:11434/v1  ",
+            model: "test",
+            dimensions: 768,
+          },
+        });
+        expect(config.customProvider!.baseUrl).toBe("http://localhost:11434/v1");
+      });
+
+      it("should clamp timeoutMs to minimum of 1000", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            timeoutMs: 100,
+          },
+        });
+        expect(config.customProvider!.timeoutMs).toBe(1000);
+      });
+
+      it("should accept timeoutMs at or above 1000", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            timeoutMs: 1000,
+          },
+        });
+        expect(config.customProvider!.timeoutMs).toBe(1000);
+      });
+
+      it("should clamp negative timeoutMs to 1000", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            timeoutMs: -500,
+          },
+        });
+        expect(config.customProvider!.timeoutMs).toBe(1000);
       });
     });
   });
