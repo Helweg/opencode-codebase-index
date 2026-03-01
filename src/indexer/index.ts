@@ -337,9 +337,10 @@ export class Indexer {
 
     await fsPromises.mkdir(this.indexPath, { recursive: true });
 
-    if (this.checkForInterruptedIndexing()) {
-      await this.recoverFromInterruptedIndexing();
-    }
+    // NOTE: Interrupted indexing recovery is deferred until after store,
+    // invertedIndex, and database are initialized (see below). Running it here
+    // would cause infinite recursion: recovery → healthCheck → ensureInitialized
+    // → initialize (store not yet set) → recovery → ...
 
     const dimensions = this.configuredProviderInfo.modelInfo.dimensions;
     const storePath = path.join(this.indexPath, "vectors");
@@ -364,6 +365,14 @@ export class Indexer {
     const dbPath = path.join(this.indexPath, "codebase.db");
     const dbIsNew = !existsSync(dbPath);
     this.database = new Database(dbPath);
+
+    // Recover from interrupted indexing AFTER store, invertedIndex, and database
+    // are all initialized. healthCheck() calls ensureInitialized() which checks
+    // these fields — if they're not set, it re-enters initialize() causing infinite
+    // recursion and 70GB+ memory usage.
+    if (this.checkForInterruptedIndexing()) {
+      await this.recoverFromInterruptedIndexing();
+    }
 
     if (dbIsNew && this.store.count() > 0) {
       this.migrateFromLegacyIndex();
