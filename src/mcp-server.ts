@@ -106,7 +106,7 @@ const CHUNK_TYPE_ENUM = [
 export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndexConfig): McpServer {
   const server = new McpServer({
     name: "opencode-codebase-index",
-    version: "0.5.0",
+    version: "0.5.1",
   });
 
   const indexer = new Indexer(projectRoot, config);

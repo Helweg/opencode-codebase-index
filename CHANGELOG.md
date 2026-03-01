@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-01
+
+### Added
+- **Custom embedding provider**: Support for any OpenAI-compatible embedding endpoint (`custom` provider with `baseUrl`, `model`, `dimensions` config). Works with llama.cpp, vLLM, text-embeddings-inference, LiteLLM, etc.
+
+### Fixed
+- **Critical: infinite recursion on stale lock file**: When a stale `indexing.lock` existed from a crashed session, `initialize()` entered infinite recursion via `recoverFromInterruptedIndexing()` → `healthCheck()` → `ensureInitialized()` → `initialize()`, causing 70GB+ memory usage and OOM. Recovery now runs after store/database initialization.
+- **Relative path storage**: Index now stores relative paths for project portability. Detects and warns about legacy absolute-path indexes.
+- **MCP status prompt**: Removed empty args schema from status prompt that caused validation errors
+
+### Changed
+- **Changelog and README**: Fixed bullet formatting, added platform support table
+
 ## [Unreleased]
 
 ## [0.5.0] - 2026-02-23
