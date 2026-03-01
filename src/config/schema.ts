@@ -45,9 +45,30 @@ export interface DebugConfig {
   metrics: boolean;
 }
 
+export interface CustomProviderConfig {
+  /** Base URL of the OpenAI-compatible embeddings API. The path /embeddings is appended automatically (e.g. "http://localhost:11434/v1", "https://api.example.com/v1") */
+  baseUrl: string;
+  /** Model name to send in the API request (e.g. "nomic-embed-text") */
+  model: string;
+  /** Vector dimensions the model produces (e.g. 768 for nomic-embed-text) */
+  dimensions: number;
+  /** Optional API key for authenticated endpoints */
+  apiKey?: string;
+  /** Max tokens per input text (default: 8192) */
+  maxTokens?: number;
+  /** Request timeout in milliseconds (default: 30000) */
+  timeoutMs?: number;
+  /** Max concurrent embedding requests (default: 3). Increase for local servers like llama.cpp or vLLM. */
+  concurrency?: number;
+  /** Minimum delay between requests in milliseconds (default: 1000). Set to 0 for local servers. */
+  requestIntervalMs?: number;
+}
+
 export interface CodebaseIndexConfig {
-  embeddingProvider: EmbeddingProvider | 'auto';
+  embeddingProvider: EmbeddingProvider | 'custom' | 'auto';
   embeddingModel?: EmbeddingModelName;
+  /** Configuration for custom OpenAI-compatible embedding providers (required when embeddingProvider is 'custom') */
+  customProvider?: CustomProviderConfig;
   scope: IndexScope;
   indexing?: Partial<IndexingConfig>;
   search?: Partial<SearchConfig>;
@@ -170,10 +191,40 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     metrics: typeof rawDebug.metrics === "boolean" ? rawDebug.metrics : defaultDebug.metrics,
   };
 
-  let embeddingProvider: EmbeddingProvider | 'auto';
+  let embeddingProvider: EmbeddingProvider | 'custom' | 'auto';
   let embeddingModel: EmbeddingModelName | undefined = undefined;
+  let customProvider: CustomProviderConfig | undefined = undefined;
   
-  if (isValidProvider(input.embeddingProvider)) {
+  if (input.embeddingProvider === 'custom') {
+    embeddingProvider = 'custom';
+    const rawCustom = (input.customProvider && typeof input.customProvider === 'object' ? input.customProvider : null) as Record<string, unknown> | null;
+    if (rawCustom && typeof rawCustom.baseUrl === 'string' && rawCustom.baseUrl.trim().length > 0 && typeof rawCustom.model === 'string' && rawCustom.model.trim().length > 0 && typeof rawCustom.dimensions === 'number' && Number.isInteger(rawCustom.dimensions) && rawCustom.dimensions > 0) {
+      customProvider = {
+        baseUrl: rawCustom.baseUrl.trim().replace(/\/+$/, ''),
+        model: rawCustom.model,
+        dimensions: rawCustom.dimensions,
+        apiKey: typeof rawCustom.apiKey === 'string' ? rawCustom.apiKey : undefined,
+        maxTokens: typeof rawCustom.maxTokens === 'number' ? rawCustom.maxTokens : undefined,
+        timeoutMs: typeof rawCustom.timeoutMs === 'number' ? Math.max(1000, rawCustom.timeoutMs) : undefined,
+        concurrency: typeof rawCustom.concurrency === 'number' ? Math.max(1, Math.floor(rawCustom.concurrency)) : undefined,
+        requestIntervalMs: typeof rawCustom.requestIntervalMs === 'number' ? Math.max(0, Math.floor(rawCustom.requestIntervalMs)) : undefined,
+      };
+      // Warn if baseUrl doesn't end with an API version path like /v1.
+      // Note: using console.warn here because Logger isn't initialized yet at config parse time.
+      if (!/\/v\d+\/?$/.test(customProvider.baseUrl)) {
+        console.warn(
+          `[codebase-index] Warning: customProvider.baseUrl ("${customProvider.baseUrl}") does not end with an API version path like /v1. ` +
+          `The plugin appends /embeddings automatically, so the full URL will be "${customProvider.baseUrl}/embeddings". ` +
+          `If your provider expects /v1/embeddings, set baseUrl to "${customProvider.baseUrl}/v1".`
+        );
+      }
+    } else {
+      throw new Error(
+        "embeddingProvider is 'custom' but customProvider config is missing or invalid. " +
+        "Required fields: baseUrl (string), model (string), dimensions (positive integer)."
+      );
+    }
+  } else if (isValidProvider(input.embeddingProvider)) {
     embeddingProvider = input.embeddingProvider;
     if (input.embeddingModel) {
       embeddingModel = isValidModel(input.embeddingModel, embeddingProvider) ? input.embeddingModel : DEFAULT_PROVIDER_MODELS[embeddingProvider];
@@ -185,6 +236,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   return {
     embeddingProvider,
     embeddingModel,
+    customProvider,
     scope: isValidScope(input.scope) ? input.scope : "project",
     include: isStringArray(input.include) ? input.include : DEFAULT_INCLUDE,
     exclude: isStringArray(input.exclude) ? input.exclude : DEFAULT_EXCLUDE,
@@ -200,6 +252,12 @@ export function getDefaultModelForProvider(provider: EmbeddingProvider): Embeddi
   return models[providerDefault as keyof typeof models]
 }
 
+/**
+ * Built-in embedding providers derived from the static EMBEDDING_MODELS catalog.
+ * 'custom' is intentionally excluded from this union because it has no static model
+ * catalog — its model/dimensions/config are entirely user-defined at runtime via
+ * CustomProviderConfig. Code that handles all providers uses `EmbeddingProvider | 'custom'`.
+ */
 export type EmbeddingProvider = keyof typeof EMBEDDING_MODELS;
 
 export const availableProviders: EmbeddingProvider[] = Object.keys(EMBEDDING_MODELS) as EmbeddingProvider[]
@@ -212,6 +270,15 @@ export type EmbeddingModelName = ProviderModels[keyof ProviderModels]
 
 export type EmbeddingProviderModelInfo = {
   [P in EmbeddingProvider]: (typeof EMBEDDING_MODELS)[P][keyof (typeof EMBEDDING_MODELS)[P]]
+}
+
+
+/** Shared fields across all embedding model types (built-in and custom) */
+export interface BaseModelInfo {
+  model: string;
+  dimensions: number;
+  maxTokens: number;
+  costPer1MTokens: number;
 }
 
 export type EmbeddingModelInfo = EmbeddingProviderModelInfo[EmbeddingProvider]

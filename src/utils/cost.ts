@@ -1,4 +1,4 @@
-import { EmbeddingModelInfo } from "../config/schema.js";
+import { BaseModelInfo } from "../config/schema.js";
 import { getProviderDisplayName, ConfiguredProviderInfo } from "../embeddings/detector.js";
 
 export interface CostEstimate {
@@ -32,7 +32,7 @@ export function estimateChunksFromFiles(
 
 export function estimateCost(
   estimatedTokens: number,
-  modelInfo: EmbeddingModelInfo
+  modelInfo: BaseModelInfo
 ): number {
   return (estimatedTokens / 1_000_000) * modelInfo.costPer1MTokens;
 }
