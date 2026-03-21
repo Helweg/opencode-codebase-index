@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.5.2] - 2026-03-21
+
+### Added
+- **Call graph extraction and query**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports across 5 languages (TypeScript/JavaScript, Python, Go, Rust)
+- **`call_graph` tool**: Query callers or callees of any function/method with branch-aware filtering
+- **DB schema v2**: `symbols`, `call_edges`, and `branch_symbols` tables with full CRUD, GC, and batch operations
+- **Same-file call resolution**: Automatically resolves call edges to symbols defined in the same file during indexing
+- **`/call-graph` slash command**: Added command support for call graph workflows
+
+### Changed
+- **Documentation updates**: Expanded README, CHANGELOG, and skill guide to document call graph usage and behavior
+
+### Fixed
+- **Missing `call_graph` export**: The `call_graph` tool was not exported from the plugin entry point — now available to OpenCode users
+- **JavaScript call extraction routing**: JavaScript now uses a dedicated query file instead of TypeScript query routing
+- **Caller output context**: Caller results now include caller symbol/file context for clearer navigation
+- **Call graph consistency/integrity**: Improved branch filtering and database integrity handling for call graph data
+
 ## [0.5.1] - 2026-03-01
 
 ### Added
@@ -17,17 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Changelog and README**: Fixed bullet formatting, added platform support table
-
-## [Unreleased]
-
-### Added
-- **Call graph extraction and query**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports across 5 languages (TypeScript/JavaScript, Python, Go, Rust)
-- **`call_graph` tool**: Query callers or callees of any function/method with branch-aware filtering
-- **DB schema v2**: `symbols`, `call_edges`, and `branch_symbols` tables with full CRUD, GC, and batch operations
-- **Same-file call resolution**: Automatically resolves call edges to symbols defined in the same file during indexing
-
-### Fixed
-- **Missing `call_graph` export**: The `call_graph` tool was not exported from the plugin entry point — now available to OpenCode users
 
 ## [0.5.0] - 2026-02-23
 
@@ -198,6 +207,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
+[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.3.2...v0.4.0
