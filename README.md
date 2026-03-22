@@ -587,6 +587,23 @@ Be aware of these characteristics:
 
 CI will automatically run tests and type checking on your PR.
 
+### Release process (structured + complete notes)
+
+To ensure release notes reflect all merged work, this repo uses a draft-release workflow.
+
+1. **Label every PR** with at least one semantic label:
+   - `feature`, `bug`, `performance`, `documentation`, `dependencies`, `refactor`, `test`, `chore`
+   - and (when relevant) `semver:major`, `semver:minor`, or `semver:patch`
+   - PRs are validated by CI (`Release Label Check`) and fail if no release category label is present
+2. **Let Release Drafter build the draft notes** automatically from merged PRs on `main`.
+3. **Before publishing**:
+   - copy/finalize relevant highlights into `CHANGELOG.md`
+   - bump `package.json` version
+   - run: `npm run build && npm run typecheck && npm run lint && npm run test:run`
+4. **Publish release** from the draft (or via `gh release create` after reviewing draft content).
+
+PRs labeled `skip-changelog` are intentionally excluded from release notes.
+
 ### Project Structure
 
 ```
