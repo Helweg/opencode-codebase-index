@@ -1,0 +1,72 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+change-template: '- $TITLE (#$NUMBER) @$AUTHOR'
+no-changes-template: '- No user-facing changes in this release.'
+version-resolver:
+  major:
+    labels:
+      - 'semver:major'
+  minor:
+    labels:
+      - 'semver:minor'
+  patch:
+    labels:
+      - 'semver:patch'
+      - 'bug'
+      - 'dependencies'
+      - 'documentation'
+      - 'enhancement'
+  default: patch
+categories:
+  - title: '🚀 Features'
+    labels:
+      - 'feature'
+      - 'semver:minor'
+  - title: '🐛 Fixes'
+    labels:
+      - 'bug'
+      - 'semver:patch'
+  - title: '⚡ Performance'
+    labels:
+      - 'performance'
+  - title: '🧰 Maintenance'
+    labels:
+      - 'dependencies'
+      - 'refactor'
+      - 'chore'
+  - title: '📚 Documentation'
+    labels:
+      - 'documentation'
+  - title: '🧪 Tests'
+    labels:
+      - 'test'
+exclude-labels:
+  - 'skip-changelog'
+autolabeler:
+  - label: 'documentation'
+    files:
+      - '*.md'
+      - 'docs/**'
+  - label: 'test'
+    files:
+      - 'tests/**'
+      - '**/*.test.ts'
+  - label: 'dependencies'
+    files:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'native/Cargo.toml'
+      - 'native/Cargo.lock'
+  - label: 'chore'
+    files:
+      - '.github/**'
+template: |
+  ## What changed
+
+  $CHANGES
+
+  ## Release checks
+
+  - [ ] `CHANGELOG.md` updated
+  - [ ] `package.json` version bumped
+  - [ ] `npm run build && npm run typecheck && npm run lint && npm run test:run` passed

@@ -1,0 +1,52 @@
+name: Release Label Check
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate_release_labels:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = (context.payload.pull_request?.labels || []).map((l) => l.name);
+
+            const categoryLabels = new Set([
+              'feature',
+              'bug',
+              'performance',
+              'documentation',
+              'dependencies',
+              'refactor',
+              'test',
+              'chore',
+              'skip-changelog',
+            ]);
+
+            const semverLabels = new Set(['semver:major', 'semver:minor', 'semver:patch']);
+
+            const hasCategory = labels.some((label) => categoryLabels.has(label));
+            const semverCount = labels.filter((label) => semverLabels.has(label)).length;
+
+            if (!hasCategory) {
+              core.setFailed(
+                'Missing release category label. Add one of: feature, bug, performance, documentation, dependencies, refactor, test, chore, skip-changelog.'
+              );
+              return;
+            }
+
+            if (semverCount > 1) {
+              core.setFailed('Use at most one semver label: semver:major, semver:minor, or semver:patch.');
+            }
