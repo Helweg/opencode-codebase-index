@@ -2,14 +2,28 @@
 
 This document explains the architecture of opencode-codebase-index, including data flow, component interactions, and key design decisions.
 
+## Table of Contents
+
+- [High-Level Architecture](#high-level-architecture)
+- [Data Flow](#data-flow)
+  - [Indexing Flow](#indexing-flow)
+  - [Search Flow](#search-flow)
+- [Component Details](#component-details)
+- [Design Decisions](#design-decisions)
+- [Performance Characteristics](#performance-characteristics)
+- [Security Considerations](#security-considerations)
+- [Extending the Architecture](#extending-the-architecture)
+
 ## High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              OpenCode Agent                                 │
 │                                                                             │
-│  Tools: codebase_search, index_codebase, index_status, index_health_check   │
-│  Commands: /search, /find, /index, /status                                  │
+│  Tools: codebase_search, codebase_peek, find_similar, call_graph,           │
+│         index_codebase, index_status, index_health_check, index_metrics,     │
+│         index_logs                                                            │
+│  Commands: /search, /find, /call-graph, /index, /status                      │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -94,9 +108,9 @@ Query → Embed → Search → Rank → Return
       └─ Returns top-K keyword matches
 
 3. HYBRID FUSION
-   └─ Combines semantic + keyword scores
-   └─ Weights controlled by hybridWeight config
-   └─ Filters by current git branch
+   └─ Combines semantic + keyword candidates
+   └─ Fusion controlled by fusionStrategy (rrf default, weighted fallback)
+   └─ Deterministic rerank applies to top-N candidates
 
 4. BRANCH FILTER
    └─ Only returns chunks existing on current branch

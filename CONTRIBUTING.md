@@ -2,6 +2,25 @@
 
 Thank you for your interest in contributing! This document provides guidelines and information for contributors.
 
+## Quick Contribution Checklist
+
+Use this when you just want the shortest path to a good PR:
+
+1. Create a branch
+2. Implement + add/update tests
+3. Run: `npm run build && npm run typecheck && npm run lint && npm run test:run`
+4. Add at least one release category label
+5. Open PR with summary + testing notes
+
+## Table of Contents
+
+- [Getting Started](#getting-started)
+- [Development Setup](#development-setup)
+- [Making Changes](#making-changes)
+- [Pull Request Guidelines](#pull-request-guidelines)
+- [Project Structure](#project-structure)
+- [Release Labels and Notes](#release-labels-and-notes)
+
 ## Getting Started
 
 1. **Fork the repository** on GitHub
@@ -74,7 +93,7 @@ cd native && cargo clippy
 
 3. **Run checks** before committing:
    ```bash
-   npm run build && npm run test:run && npm run lint
+   npm run build && npm run typecheck && npm run lint && npm run test:run
    ```
 
 4. **Commit with a descriptive message**:
@@ -102,6 +121,7 @@ cd native && cargo clippy
 - Include tests for new functionality
 - Update documentation if needed
 - Ensure CI passes before requesting review
+- Add at least one release category label (`feature`, `bug`, `performance`, `documentation`, `dependencies`, `refactor`, `test`, or `chore`)
 
 ## Project Structure
 
@@ -120,6 +140,14 @@ native/src/           # Rust native module
 
 tests/                # Unit tests
 ```
+
+## Release Labels and Notes
+
+This repository enforces release labels in CI (`Release Label Check`).
+
+- Every PR must include at least one release category label (`feature`, `bug`, `performance`, `documentation`, `dependencies`, `refactor`, `test`, `chore`, or `skip-changelog`).
+- Use `semver:major`, `semver:minor`, or `semver:patch` when the change should explicitly drive the release bump.
+- Use `skip-changelog` only for intentionally excluded changes.
 
 ## Questions?
 

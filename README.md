@@ -10,6 +10,24 @@
 
 **opencode-codebase-index** brings semantic understanding to your [OpenCode](https://opencode.ai) workflow — and now to any MCP-compatible client like Cursor, Claude Code, and Windsurf. Instead of guessing function names or grepping for keywords, ask your codebase questions in plain English.
 
+## 📌 Quick Navigation
+
+- [⚡ Quick Start](#-quick-start)
+- [🌐 MCP Server (Cursor, Claude Code, Windsurf, etc.)](#-mcp-server-cursor-claude-code-windsurf-etc)
+- [🎯 When to Use What](#-when-to-use-what)
+- [🧰 Tools Available](#-tools-available)
+- [🎮 Slash Commands](#-slash-commands)
+- [⚙️ Configuration](#️-configuration)
+- [🤝 Contributing](#-contributing)
+
+## 👋 Choose Your Path
+
+- **I want to try it now** → go to [Quick Start](#-quick-start)
+- **I use Cursor/Claude Code/Windsurf** → go to [MCP Server setup](#-mcp-server-cursor-claude-code-windsurf-etc)
+- **I’m comparing tools and workflows** → go to [When to Use What](#-when-to-use-what)
+- **I’m tuning behavior/cost/performance** → go to [Configuration](#️-configuration)
+- **I want to contribute** → go to [Contributing](#-contributing)
+
 ## 🚀 Why Use This?
 
 - 🧠 **Semantic Search**: Finds "user authentication" logic even if the function is named `check_creds`.
@@ -290,6 +308,7 @@ The plugin automatically registers these slash commands:
 | ------- | ----------- |
 | `/search <query>` | **Pure Semantic Search**. Best for "How does X work?" |
 | `/find <query>` | **Hybrid Search**. Combines semantic search + grep. Best for "Find usage of X". |
+| `/call-graph <query>` | **Call Graph Trace**. Find callers/callees to understand execution flow. |
 | `/index` | **Update Index**. Forces a refresh of the codebase index. |
 | `/status` | **Check Status**. Shows if indexed, chunk count, and provider info. |
 
@@ -365,7 +384,7 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 | `logBranch` | `true` | Log branch detection and switches |
 | `metrics` | `false` | Enable metrics collection (indexing stats, search timing, cache performance) |
 
-### Retrieval ranking behavior (Phase 1)
+### Retrieval ranking behavior
 
 - `codebase_search` and `codebase_peek` use the hybrid path: semantic + keyword retrieval → fusion (`fusionStrategy`) → deterministic rerank (`rerankTopN`) → filtering.
 - `find_similar` stays semantic-only: semantic retrieval + deterministic rerank only (no keyword retrieval, no RRF).
@@ -411,79 +430,22 @@ ollama pull nomic-embed-text
 
 ## 📈 Performance
 
-The plugin is built for speed with a Rust native module. Here are typical performance numbers (Apple M1):
+The plugin is built for speed with a Rust native module (`tree-sitter`, `usearch`, SQLite). In practice, indexing and retrieval remain fast enough for interactive use on medium/large repositories.
 
-### Parsing (tree-sitter)
+- Typical query latency: ~800-1000ms (mostly embedding API time)
+- Incremental indexing: only changed files are re-embedded
+- Batch DB operations: significant write-speed improvements for large indexes
 
-| Files | Chunks | Time |
-|-------|--------|------|
-| 100 | 1,200 | ~7ms |
-| 500 | 6,000 | ~32ms |
-
-### Vector Search (usearch)
-
-| Index Size | Search Time | Throughput |
-|------------|-------------|------------|
-| 1,000 vectors | 0.7ms | 1,400 ops/sec |
-| 5,000 vectors | 1.2ms | 850 ops/sec |
-| 10,000 vectors | 1.3ms | 780 ops/sec |
-
-### Database Operations (SQLite with batch)
-
-| Operation | 1,000 items | 10,000 items |
-|-----------|-------------|--------------|
-| Insert chunks | 4ms | 44ms |
-| Add to branch | 2ms | 22ms |
-| Check embedding exists | <0.01ms | <0.01ms |
-
-### Batch vs Sequential Performance
-
-Batch operations provide significant speedups:
-
-| Operation | Sequential | Batch | Speedup |
-|-----------|------------|-------|---------|
-| Insert 1,000 chunks | 38ms | 4ms | **~10x** |
-| Add 1,000 to branch | 29ms | 2ms | **~14x** |
-| Insert 1,000 embeddings | 59ms | 40ms | **~1.5x** |
-
-Run benchmarks yourself: `npx tsx benchmarks/run.ts`
+For reproducible measurements on your machine, run: `npx tsx benchmarks/run.ts`.
 
 ## 🎯 Choosing a Provider
 
-Use this decision tree to pick the right embedding provider:
+Quick recommendation:
 
-```
-                    ┌─────────────────────────┐
-                    │ Do you have Copilot?    │
-                    └───────────┬─────────────┘
-                          ┌─────┴─────┐
-                         YES          NO
-                          │            │
-              ┌───────────▼───────┐    │
-              │ Codebase < 1k     │    │
-              │ files?            │    │
-              └─────────┬─────────┘    │
-                  ┌─────┴─────┐        │
-                 YES          NO       │
-                  │            │       │
-                  ▼            │       │
-           ┌──────────┐        │       │
-           │ Copilot  │        │       │
-           │ (free)   │        │       │
-           └──────────┘        │       │
-                               ▼       ▼
-                    ┌─────────────────────────┐
-                    │ Need fastest indexing?  │
-                    └───────────┬─────────────┘
-                          ┌─────┴─────┐
-                         YES          NO
-                          │            │
-                          ▼            ▼
-                   ┌──────────┐ ┌──────────────┐
-                   │ Ollama   │ │ OpenAI or    │
-                   │ (local)  │ │ Google       │
-                   └──────────┘ └──────────────┘
-```
+- **Want local + private + fast indexing** → use **Ollama**
+- **Already have Copilot and a smaller repo** → use **GitHub Copilot**
+- **General cloud setup** → use **OpenAI** or **Google**
+- **Custom/OpenAI-compatible endpoint** → use **custom** provider
 
 ### Provider Comparison
 
@@ -499,35 +461,13 @@ Use this decision tree to pick the right embedding provider:
 
 ### Setup by Provider
 
-**Ollama (Recommended for large codebases)**
-```bash
-ollama pull nomic-embed-text
-```
+Set the provider in `.opencode/codebase-index.json`:
+
 ```json
 { "embeddingProvider": "ollama" }
 ```
 
-**OpenAI**
-```bash
-export OPENAI_API_KEY=sk-...
-```
-```json
-{ "embeddingProvider": "openai" }
-```
-
-**Google**
-```bash
-export GOOGLE_API_KEY=...
-```
-```json
-{ "embeddingProvider": "google" }
-```
-
-**GitHub Copilot**
-No setup needed if you have an active Copilot subscription.
-```json
-{ "embeddingProvider": "github-copilot" }
-```
+Credentials (if required) are read from environment variables (for example `OPENAI_API_KEY` or `GOOGLE_API_KEY`).
 
 **Custom (OpenAI-compatible)**
 Works with any server that implements the OpenAI `/v1/embeddings` API format (llama.cpp, vLLM, text-embeddings-inference, LiteLLM, etc.).
@@ -578,14 +518,14 @@ Be aware of these characteristics:
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes and add tests
-4. Run checks: `npm run build && npm run test:run && npm run lint`
-5. Commit: `git commit -m "feat: add my feature"`
-6. Push and open a pull request
+For contribution workflow, standards, and release-label requirements, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
-CI will automatically run tests and type checking on your PR.
+Quick path:
+
+1. Fork + branch
+2. Implement + tests
+3. Run checks: `npm run build && npm run typecheck && npm run lint && npm run test:run`
+4. Open PR with a release category label
 
 ### Release process (structured + complete notes)
 

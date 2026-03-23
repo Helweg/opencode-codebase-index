@@ -4,14 +4,16 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.5.x   | :white_check_mark: |
+| < 0.5.0 | :x:                |
 
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public issue
-2. Email the maintainers directly or use GitHub's private vulnerability reporting
+2. Use GitHub's private vulnerability reporting for this repository:
+   - https://github.com/Helweg/opencode-codebase-index/security/advisories/new
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce

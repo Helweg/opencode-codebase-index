@@ -2,6 +2,16 @@
 
 Common issues and solutions for opencode-codebase-index.
 
+## 🚑 Quick Triage (fastest path)
+
+If you're unsure where to start, run this sequence first:
+
+1. `/status` (check whether index exists and provider/model look right)
+2. `index_health_check` (clean stale/orphaned index data)
+3. `/index force` (full rebuild when status/health still looks wrong)
+
+Then jump to the relevant section below for provider, build, performance, or branch-specific issues.
+
 ## Table of Contents
 
 - [OpenCode Hangs in Home Directory](#opencode-hangs-in-home-directory)
@@ -174,11 +184,7 @@ Then ask the agent to run `index_health_check` to remove orphaned entries.
 Ask the agent:
 > "Force reindex the codebase"
 
-Or manually:
-```bash
-rm -rf .opencode/index/
-```
-Then run `/index`.
+Or run `/index force`.
 
 ### Reset Everything
 Delete the entire index directory:
@@ -361,7 +367,7 @@ Lower the minimum score:
 
 ### 5. Files Excluded
 Check if your files are being excluded by `.gitignore` or size limits:
-> "Index with verbose mode"
+> "Run `/index` in verbose mode"
 
 This shows which files were skipped and why.
 
@@ -433,11 +439,11 @@ If none of these solutions work:
 
 | Problem | Quick Fix |
 |---------|-----------|
-| Hangs in home dir | Update to v0.4.1+ (auto-detects non-project dirs) |
+| Hangs in home dir | Ensure `indexing.requireProjectMarker` is `true` (default) |
 | No provider | `export OPENAI_API_KEY=...` or use Ollama |
 | Rate limited | Switch to Ollama for large codebases |
-| Stale results | `rm -rf .opencode/index/` and re-index |
-| Provider changed | Force re-index: ask agent to "force reindex" |
+| Stale results | Run `index_health_check`, then `/index force` if needed |
+| Provider changed | Run `/index force` to rebuild with current provider/model |
 | Slow indexing | Use Ollama locally |
 | No results | Run `/index` first, use descriptive queries |
 | Native module error | Rebuild with Rust toolchain |
