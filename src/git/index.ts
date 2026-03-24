@@ -17,6 +17,29 @@ function readPackedRefs(gitDir: string): string[] {
   }
 }
 
+function resolveCommonGitDir(gitDir: string): string {
+  const commonDirPath = path.join(gitDir, "commondir");
+  if (!existsSync(commonDirPath)) {
+    return gitDir;
+  }
+
+  try {
+    const raw = readFileSync(commonDirPath, "utf-8").trim();
+    if (!raw) {
+      return gitDir;
+    }
+
+    const resolved = path.isAbsolute(raw) ? raw : path.resolve(gitDir, raw);
+    if (existsSync(resolved)) {
+      return resolved;
+    }
+  } catch {
+    return gitDir;
+  }
+
+  return gitDir;
+}
+
 function tryResolveRefCommit(gitDir: string, refPath: string): string | null {
   const looseRefPath = path.join(gitDir, refPath);
   if (existsSync(looseRefPath)) {
@@ -132,6 +155,7 @@ export function getCurrentCommit(repoRoot: string): string | null {
   if (!gitDir) {
     return null;
   }
+  const refStoreDir = resolveCommonGitDir(gitDir);
 
   const headPath = path.join(gitDir, "HEAD");
   if (!existsSync(headPath)) {
@@ -150,7 +174,7 @@ export function getCurrentCommit(repoRoot: string): string | null {
       return null;
     }
 
-    return tryResolveRefCommit(gitDir, refMatch[1]);
+    return tryResolveRefCommit(refStoreDir, refMatch[1]);
   } catch {
     return null;
   }
@@ -158,16 +182,17 @@ export function getCurrentCommit(repoRoot: string): string | null {
 
 export function getBaseBranch(repoRoot: string): string {
   const gitDir = resolveGitDir(repoRoot);
+  const refStoreDir = gitDir ? resolveCommonGitDir(gitDir) : null;
   const candidates = ["main", "master", "develop", "trunk"];
   
-  if (gitDir) {
+  if (refStoreDir) {
     for (const candidate of candidates) {
-      const refPath = path.join(gitDir, "refs", "heads", candidate);
+      const refPath = path.join(refStoreDir, "refs", "heads", candidate);
       if (existsSync(refPath)) {
         return candidate;
       }
 
-      const packedRefs = readPackedRefs(gitDir);
+      const packedRefs = readPackedRefs(refStoreDir);
       if (packedRefs.some((line) => line.endsWith(` refs/heads/${candidate}`))) {
         return candidate;
       }
@@ -202,12 +227,13 @@ function collectBranchRefs(branches: string[], baseDir: string, prefix = ""): vo
 export function getAllBranches(repoRoot: string): string[] {
   const branchSet = new Set<string>();
   const gitDir = resolveGitDir(repoRoot);
+  const refStoreDir = gitDir ? resolveCommonGitDir(gitDir) : null;
   
-  if (!gitDir) {
+  if (!refStoreDir) {
     return [];
   }
   
-  const refsPath = path.join(gitDir, "refs", "heads");
+  const refsPath = path.join(refStoreDir, "refs", "heads");
   
   if (!existsSync(refsPath)) {
     return [];
@@ -219,7 +245,7 @@ export function getAllBranches(repoRoot: string): string[] {
     branchSet.add(branch);
   }
 
-  const packedRefs = readPackedRefs(gitDir);
+  const packedRefs = readPackedRefs(refStoreDir);
   for (const line of packedRefs) {
     const splitIndex = line.indexOf(" ");
     if (splitIndex <= 0) {
