@@ -5,6 +5,7 @@ import * as os from "os";
 import {
   isGitRepo,
   getCurrentBranch,
+  getCurrentCommit,
   getBaseBranch,
   getAllBranches,
   getBranchOrDefault,
@@ -222,21 +223,29 @@ describe("git utilities", () => {
     let mainRepoDir: string;
     let worktreeDir: string;
     let worktreeGitDir: string;
+    const mainCommit = "1111111111111111111111111111111111111111";
+    const featureCommit = "2222222222222222222222222222222222222222";
 
     beforeEach(() => {
       mainRepoDir = path.join(tempDir, "main-repo");
       worktreeDir = path.join(tempDir, "worktree-feature");
       worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "feature");
       
-      fs.mkdirSync(path.join(mainRepoDir, ".git", "refs", "heads"), { recursive: true });
+      fs.mkdirSync(path.join(mainRepoDir, ".git", "refs", "heads", "feature", "x"), { recursive: true });
       fs.mkdirSync(worktreeGitDir, { recursive: true });
       fs.mkdirSync(worktreeDir, { recursive: true });
       
       fs.writeFileSync(path.join(mainRepoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
-      fs.writeFileSync(path.join(mainRepoDir, ".git", "refs", "heads", "main"), "abc123");
+      fs.writeFileSync(path.join(mainRepoDir, ".git", "refs", "heads", "main"), `${mainCommit}\n`);
+      fs.writeFileSync(path.join(mainRepoDir, ".git", "refs", "heads", "feature", "x", "y"), `${featureCommit}\n`);
+      fs.writeFileSync(
+        path.join(mainRepoDir, ".git", "packed-refs"),
+        "# pack-refs with: peeled fully-peeled sorted\n3333333333333333333333333333333333333333 refs/heads/develop\n"
+      );
       
       fs.writeFileSync(path.join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
-      fs.writeFileSync(path.join(worktreeGitDir, "HEAD"), "ref: refs/heads/feature\n");
+      fs.writeFileSync(path.join(worktreeGitDir, "HEAD"), "ref: refs/heads/feature/x/y\n");
+      fs.writeFileSync(path.join(worktreeGitDir, "commondir"), "../..\n");
     });
 
     it("isGitRepo should return true for worktree", () => {
@@ -244,7 +253,19 @@ describe("git utilities", () => {
     });
 
     it("getCurrentBranch should work in worktree", () => {
-      expect(getCurrentBranch(worktreeDir)).toBe("feature");
+      expect(getCurrentBranch(worktreeDir)).toBe("feature/x/y");
+    });
+
+    it("getCurrentCommit should resolve branch refs through commondir", () => {
+      expect(getCurrentCommit(worktreeDir)).toBe(featureCommit);
+    });
+
+    it("getBaseBranch should resolve candidate branches through commondir", () => {
+      expect(getBaseBranch(worktreeDir)).toBe("main");
+    });
+
+    it("getAllBranches should include loose and packed refs from commondir", () => {
+      expect(getAllBranches(worktreeDir)).toEqual(["develop", "feature/x/y", "main"]);
     });
 
     it("getHeadPath should return worktree HEAD path", () => {
@@ -252,7 +273,7 @@ describe("git utilities", () => {
     });
 
     it("getBranchOrDefault should work in worktree", () => {
-      expect(getBranchOrDefault(worktreeDir)).toBe("feature");
+      expect(getBranchOrDefault(worktreeDir)).toBe("feature/x/y");
     });
   });
 });
