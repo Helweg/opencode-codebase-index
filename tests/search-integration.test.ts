@@ -140,4 +140,78 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
 
     expect(results[0]?.filePath).toContain("/README.md");
   });
+
+  it("returns implementation definitions with definitionIntent option even for ambiguous queries", async () => {
+    const config = parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-embedding-model",
+        dimensions: 8,
+      },
+      indexing: {
+        watchFiles: false,
+      },
+      search: {
+        maxResults: 10,
+        minScore: 0,
+        fusionStrategy: "rrf",
+        rrfK: 60,
+        rerankTopN: 20,
+      },
+    });
+
+    const indexer = new Indexer(tempDir, config);
+    await indexer.index();
+
+    const results = await indexer.search("rankHybridResults", 5, {
+      metadataOnly: true,
+      filterByBranch: false,
+      definitionIntent: true,
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    const topPaths = results.slice(0, 3).map((r) => r.filePath);
+    expect(topPaths[0]).toContain("/app/indexer/index.ts");
+  });
+
+  it("forces definition lanes for doc-leaning queries when definitionIntent is true", async () => {
+    const config = parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-embedding-model",
+        dimensions: 8,
+      },
+      indexing: {
+        watchFiles: false,
+      },
+      search: {
+        maxResults: 10,
+        minScore: 0,
+        fusionStrategy: "rrf",
+        rrfK: 60,
+        rerankTopN: 20,
+      },
+    });
+
+    const indexer = new Indexer(tempDir, config);
+    await indexer.index();
+
+    const withoutOverride = await indexer.search("where is rankHybridResults documentation", 5, {
+      metadataOnly: true,
+      filterByBranch: false,
+    });
+    expect(withoutOverride[0]?.filePath).toContain("/README.md");
+
+    const withOverride = await indexer.search("where is rankHybridResults documentation", 5, {
+      metadataOnly: true,
+      filterByBranch: false,
+      definitionIntent: true,
+    });
+
+    expect(withOverride.length).toBeGreaterThan(0);
+    expect(withOverride[0]?.filePath).toContain("/app/indexer/index.ts");
+    expect(withOverride[0]?.filePath).not.toContain("/README.md");
+  });
 });

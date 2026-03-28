@@ -554,9 +554,10 @@ export function stripFilePathHint(query: string): string {
 function buildDeterministicIdentifierPass(
   query: string,
   candidates: RankedCandidate[],
-  limit: number
+  limit: number,
+  prioritizeSourcePaths: boolean = classifyQueryIntentRaw(query) === "source"
 ): RankedCandidate[] {
-  if (classifyQueryIntentRaw(query) !== "source") {
+  if (!prioritizeSourcePaths) {
     return [];
   }
 
@@ -848,7 +849,7 @@ export function rankHybridResults(
   query: string,
   semanticResults: RankedCandidate[],
   keywordResults: RankedCandidate[],
-  options: HybridRankOptions
+  options: HybridRankOptions & { prioritizeSourcePaths?: boolean }
 ): RankedCandidate[] {
   const overfetchLimit = Math.max(options.limit * 4, options.limit);
   const fused = options.fusionStrategy === "rrf"
@@ -857,9 +858,8 @@ export function rankHybridResults(
 
   const rerankPoolLimit = Math.max(overfetchLimit, options.rerankTopN * 3, options.limit * 6);
   const rerankPool = fused.slice(0, rerankPoolLimit);
-  const intent = classifyQueryIntentRaw(query);
   return rerankResults(query, rerankPool, options.rerankTopN, {
-    prioritizeSourcePaths: intent === "source",
+    prioritizeSourcePaths: options.prioritizeSourcePaths ?? classifyQueryIntentRaw(query) === "source",
   });
 }
 
@@ -881,13 +881,14 @@ function promoteIdentifierMatches(
   semanticCandidates: RankedCandidate[],
   keywordCandidates: RankedCandidate[],
   database?: Database,
-  branchChunkIds?: Set<string> | null
+  branchChunkIds?: Set<string> | null,
+  prioritizeSourcePaths: boolean = classifyQueryIntentRaw(query) === "source"
 ): RankedCandidate[] {
   if (combined.length === 0) {
     return combined;
   }
 
-  if (classifyQueryIntentRaw(query) !== "source") {
+  if (!prioritizeSourcePaths) {
     return combined;
   }
 
@@ -1000,9 +1001,10 @@ function buildSymbolDefinitionLane(
   database: Database,
   branchChunkIds: Set<string> | null,
   limit: number,
-  fallbackCandidates: RankedCandidate[]
+  fallbackCandidates: RankedCandidate[],
+  prioritizeSourcePaths: boolean = classifyQueryIntentRaw(query) === "source"
 ): RankedCandidate[] {
-  if (classifyQueryIntentRaw(query) !== "source") {
+  if (!prioritizeSourcePaths) {
     return [];
   }
 
@@ -1194,9 +1196,10 @@ function buildSymbolDefinitionLane(
 function buildIdentifierDefinitionLane(
   query: string,
   candidates: RankedCandidate[],
-  limit: number
+  limit: number,
+  prioritizeSourcePaths: boolean = classifyQueryIntentRaw(query) === "source"
 ): RankedCandidate[] {
-  if (classifyQueryIntentRaw(query) !== "source") {
+  if (!prioritizeSourcePaths) {
     return [];
   }
 
@@ -2342,6 +2345,7 @@ export class Indexer {
       contextLines?: number;
       filterByBranch?: boolean;
       metadataOnly?: boolean;
+      definitionIntent?: boolean;
     }
   ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
@@ -2367,6 +2371,7 @@ export class Indexer {
     const rrfK = this.config.search.rrfK;
     const rerankTopN = this.config.search.rerankTopN;
     const filterByBranch = options?.filterByBranch ?? true;
+    const sourceIntent = options?.definitionIntent === true || classifyQueryIntentRaw(query) === "source";
 
     this.logger.search("debug", "Starting search", {
       query,
@@ -2438,6 +2443,7 @@ export class Indexer {
       rerankTopN,
       limit: maxResults,
       hybridWeight,
+      prioritizeSourcePaths: sourceIntent,
     });
     const fusionMs = performance.now() - fusionStartTime;
 
@@ -2447,7 +2453,8 @@ export class Indexer {
       semanticCandidates,
       keywordCandidates,
       database,
-      branchChunkIds
+      branchChunkIds,
+      sourceIntent
     );
 
     const union = unionCandidates(semanticCandidates, keywordCandidates);
@@ -2455,13 +2462,15 @@ export class Indexer {
     const deterministicIdentifierLane = buildDeterministicIdentifierPass(
       query,
       union,
-      maxResults
+      maxResults,
+      sourceIntent
     );
 
     const identifierLane = buildIdentifierDefinitionLane(
       query,
       union,
-      maxResults
+      maxResults,
+      sourceIntent
     );
 
     const symbolLane = buildSymbolDefinitionLane(
@@ -2469,13 +2478,13 @@ export class Indexer {
       database,
       branchChunkIds,
       maxResults,
-      union
+      union,
+      sourceIntent
     );
 
     const prePrimaryLane = mergeTieredResults(deterministicIdentifierLane, identifierLane, maxResults * 4);
     const primaryLane = mergeTieredResults(prePrimaryLane, symbolLane, maxResults * 4);
     const tiered = mergeTieredResults(primaryLane, rescued, maxResults * 4);
-    const sourceIntent = classifyQueryIntentRaw(query) === "source";
     const hasCodeHints = extractCodeTermHints(query).length > 0 || extractIdentifierHints(query).length > 0;
 
     const baseFiltered = tiered.filter((r) => {
