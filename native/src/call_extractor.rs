@@ -29,6 +29,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Python => tree_sitter_python::LANGUAGE.into(),
         Language::Rust => tree_sitter_rust::LANGUAGE.into(),
         Language::Go => tree_sitter_go::LANGUAGE.into(),
+        Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         _ => return Ok(vec![]),
     };
 
@@ -51,6 +52,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Python => include_str!("../queries/python-calls.scm"),
         Language::Rust => include_str!("../queries/rust-calls.scm"),
         Language::Go => include_str!("../queries/go-calls.scm"),
+        Language::Php => include_str!("../queries/php-calls.scm"),
         _ => return Ok(vec![]),
     };
 
@@ -72,6 +74,11 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Python => &["attribute"],
         Language::Rust => &["field_expression"],
         Language::Go => &["selector_expression"],
+        Language::Php => &[
+            "member_call_expression",
+            "scoped_call_expression",
+            "nullsafe_member_call_expression",
+        ],
         _ => &[],
     };
 
@@ -409,5 +416,105 @@ mod tests {
         let code = "<html><body>hello</body></html>";
         let calls = extract_calls(code, "html").unwrap();
         assert_eq!(calls.len(), 0);
+    }
+
+    #[test]
+    fn test_php_direct_calls() {
+        let code = "<?php\nfunction caller() { directCall(); helper(1, 2); }";
+        let calls = extract_calls(code, "php").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "directCall" && c.call_type == CallType::Call),
+            "Expected directCall, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "helper" && c.call_type == CallType::Call),
+            "Expected helper call, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_php_method_calls() {
+        let code = "<?php\n$obj->method();\n$obj?->safe();";
+        let calls = extract_calls(code, "php").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "method" && c.call_type == CallType::MethodCall),
+            "Expected method call, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "safe" && c.call_type == CallType::MethodCall),
+            "Expected nullsafe method call, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_php_static_calls() {
+        let code = "<?php\nFoo::bar();\nself::create();";
+        let calls = extract_calls(code, "php").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "bar" && c.call_type == CallType::MethodCall),
+            "Expected static method call, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "create" && c.call_type == CallType::MethodCall),
+            "Expected static method call, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_php_constructors() {
+        let code = "<?php\n$obj = new SimpleClass();\n$obj2 = new ClassWithArgs(1, 2);";
+        let calls = extract_calls(code, "php").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "SimpleClass" && c.call_type == CallType::Constructor),
+            "Expected SimpleClass constructor, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "ClassWithArgs" && c.call_type == CallType::Constructor),
+            "Expected ClassWithArgs constructor, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_php_imports() {
+        let code = "<?php\nuse App\\Models\\User;\nuse App\\Services\\AuthService;";
+        let calls = extract_calls(code, "php").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "User" && c.call_type == CallType::Import),
+            "Expected User import, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "AuthService" && c.call_type == CallType::Import),
+            "Expected AuthService import, got: {:?}",
+            calls
+        );
     }
 }
