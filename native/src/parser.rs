@@ -41,6 +41,7 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
         Language::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
         Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
+        Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         _ => return Ok(chunk_by_lines(content, &language)),
     };
 
@@ -219,6 +220,9 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::Yaml => {
             matches!(node_type, "comment")
         }
+        Language::Php => {
+            matches!(node_type, "comment")
+        }
         _ => false,
     }
 }
@@ -322,6 +326,17 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
         }
         Language::Yaml => {
             matches!(node_type, "block_mapping_pair" | "block_sequence")
+        }
+        Language::Php => {
+            matches!(
+                node_type,
+                "function_definition"
+                    | "method_declaration"
+                    | "class_declaration"
+                    | "interface_declaration"
+                    | "trait_declaration"
+                    | "enum_declaration"
+            )
         }
         _ => false,
     }
