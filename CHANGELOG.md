@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cross-repo benchmarking**: Added a benchmark runner with ripgrep and ast-grep baselines plus reproducible benchmarking documentation and golden datasets for external repos
 - **Release automation guardrails**: Added Release Drafter automation and CI enforcement for release-category and semver labels on pull requests
 - **Contributor language-support guide**: Added an agent-ready guide for extending semantic parsing and call-graph support to new languages
+- **PHP language support**: Added semantic parsing, chunking, and call-graph extraction for PHP, including fixtures and tests for constructors, imports, method calls, and simple calls
 
 ### Changed
 - **Evaluation CI strategy**: Split the default GitHub Models quality gate from explicit external-provider budget checks and documented the active CI budget paths
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Eval/CI correctness**: Closed CI gating gaps, normalized baseline paths, and pinned the Rust toolchain action input used by CI
 - **Benchmark auditability**: Fixed scoped ast-grep metric accounting and dataset/result mutability issues in the benchmark runner and reporting flow
 - **Supply-chain hardening**: Tightened dependency and repository security posture, including stronger git/worktree handling coverage in tests
+- **Native test reliability**: `test:run` and `test:coverage` now rebuild the native module first so newly added parser/call-graph language support is exercised against a current binary during release verification
 
 ## [0.5.2] - 2026-03-21
 
