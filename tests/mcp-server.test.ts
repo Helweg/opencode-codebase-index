@@ -119,10 +119,10 @@ describe("MCP server tools and prompts", () => {
     await client.close();
   });
 
-  it("should register all 9 tools", async () => {
+  it("should register all 10 tools", async () => {
     const tools = await client.listTools();
 
-    expect(tools.tools).toHaveLength(9);
+    expect(tools.tools).toHaveLength(10);
 
     const toolNames = tools.tools.map(t => t.name).sort();
     const expectedNames = [
@@ -130,6 +130,7 @@ describe("MCP server tools and prompts", () => {
       "codebase_peek",
       "codebase_search",
       "find_similar",
+      "implementation_lookup",
       "index_codebase",
       "index_health_check",
       "index_logs",
@@ -140,13 +141,13 @@ describe("MCP server tools and prompts", () => {
     expect(toolNames).toEqual(expectedNames);
   });
 
-  it("should register all 4 prompts", async () => {
+  it("should register all 5 prompts", async () => {
     const prompts = await client.listPrompts();
 
-    expect(prompts.prompts).toHaveLength(4);
+    expect(prompts.prompts).toHaveLength(5);
 
     const promptNames = prompts.prompts.map(p => p.name).sort();
-    const expectedNames = ["find", "index", "search", "status"].sort();
+    const expectedNames = ["definition", "find", "index", "search", "status"].sort();
 
     expect(promptNames).toEqual(expectedNames);
   });
@@ -231,6 +232,20 @@ describe("MCP server tools and prompts", () => {
     expect(content[0].text).toContain("Found 1 similar");
   });
 
+  it("should execute implementation_lookup tool", async () => {
+    const result = await client.callTool({
+      name: "implementation_lookup",
+      arguments: { query: "validateToken" },
+    });
+
+    expect(result.content).toBeDefined();
+    const content = result.content as Array<{ type: string; text?: string }>;
+    expect(content).toHaveLength(1);
+    expect(content[0].type).toBe("text");
+    expect(content[0].text).toContain("Definition found");
+    expect(content[0].text).toContain("validateToken");
+  });
+
   it("should get search prompt", async () => {
     const prompt = await client.getPrompt({
       name: "search",
@@ -282,6 +297,21 @@ describe("MCP server tools and prompts", () => {
     expect(prompt.messages[0].role).toBe("user");
     const msgContent = prompt.messages[0].content as { type: string; text?: string };
     expect(msgContent.text).toContain("index_status");
+  });
+
+  it("should get definition prompt", async () => {
+    const prompt = await client.getPrompt({
+      name: "definition",
+      arguments: { query: "validateToken" },
+    });
+
+    expect(prompt.messages).toBeDefined();
+    expect(prompt.messages).toHaveLength(1);
+    expect(prompt.messages[0].role).toBe("user");
+    const msgContent = prompt.messages[0].content as { type: string; text?: string };
+    expect(msgContent.type).toBe("text");
+    expect(msgContent.text).toContain("validateToken");
+    expect(msgContent.text).toContain("implementation_lookup");
   });
 
   it("should execute index_metrics tool", async () => {

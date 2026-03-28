@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { Indexer, type IndexStats } from "./indexer/index.js";
 import type { ParsedCodebaseIndexConfig, LogLevel } from "./config/schema.js";
+import { formatDefinitionLookup } from "./tools/utils.js";
 import { formatCostEstimate } from "./utils/cost.js";
 import type { LogEntry } from "./utils/logger.js";
 
@@ -361,6 +362,26 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
     },
   );
 
+  server.tool(
+    "implementation_lookup",
+    "Jump to symbol definition. Find WHERE something is defined. Returns the authoritative source location(s). Prefers real implementation files over tests, docs, examples, and fixtures.",
+    {
+      query: z.string().describe("Symbol name or natural language description (e.g., 'validateToken', 'where is the payment handler defined')"),
+      limit: z.number().optional().default(5).describe("Maximum number of results"),
+      fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py')"),
+      directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils')"),
+    },
+    async (args) => {
+      await ensureInitialized();
+      const results = await indexer.search(args.query, args.limit ?? 5, {
+        fileType: args.fileType,
+        directory: args.directory,
+        definitionIntent: true,
+      });
+
+      return { content: [{ type: "text", text: formatDefinitionLookup(results, args.query) }] };
+    },
+  );
 
   server.tool(
     "call_graph",
@@ -459,6 +480,21 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
         content: {
           type: "text",
           text: "Use the index_status tool to check if the codebase index is ready and show its current state.",
+        },
+      }],
+    }),
+  );
+
+  server.prompt(
+    "definition",
+    "Find where a symbol is defined in the codebase",
+    { query: z.string().describe("Symbol name or description to find the definition of") },
+    (args) => ({
+      messages: [{
+        role: "user",
+        content: {
+          type: "text",
+          text: `Find the definition of: "${args.query}"\n\nUse the implementation_lookup tool to find where this symbol is defined. This prioritizes real implementation files over tests, docs, and examples. If no definition is found, fall back to codebase_search for broader discovery.`,
         },
       }],
     }),
