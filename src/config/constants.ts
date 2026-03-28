@@ -3,7 +3,7 @@ export const DEFAULT_INCLUDE = [
   "**/*.{py,pyi}",
   "**/*.{go,rs,java,kt,scala}",
   "**/*.{c,cpp,cc,h,hpp}",
-  "**/*.{rb,php,swift}",
+  "**/*.{rb,php,inc,swift}",
   "**/*.{vue,svelte,astro}",
   "**/*.{sql,graphql,proto}",
   "**/*.{yaml,yml,toml}",

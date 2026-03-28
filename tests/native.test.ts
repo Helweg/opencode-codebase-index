@@ -71,6 +71,61 @@ const add = (a, b) => a + b;
 
       expect(chunks).toBeInstanceOf(Array);
     });
+
+    it("should parse PHP files", () => {
+      const content = `
+<?php
+
+function greet($name) {
+    return "Hello, " . $name;
+}
+
+class User {
+    private $name;
+
+    public function __construct($name) {
+        $this->name = $name;
+    }
+
+    public function getName() {
+        return $this->name;
+    }
+}
+
+interface Logger {
+    public function log($message);
+}
+`;
+      const chunks = parseFile("test.php", content);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(3);
+      expect(chunks.some((c) => c.content.includes("function greet"))).toBe(true);
+      expect(chunks.some((c) => c.content.includes("class User"))).toBe(true);
+      expect(chunks.some((c) => c.content.includes("interface Logger"))).toBe(true);
+    });
+
+    it("should parse PHP .inc files", () => {
+      const content = `
+<?php
+
+function helper($value) {
+    return $value * 2;
+}
+
+trait Timestampable {
+    private $createdAt;
+
+    public function setCreatedAt($time) {
+        $this->createdAt = $time;
+    }
+}
+`;
+      const chunks = parseFile("config.inc", content);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+      expect(chunks.some((c) => c.content.includes("function helper"))).toBe(true);
+      expect(chunks.some((c) => c.content.includes("trait Timestampable"))).toBe(true);
+    });
   });
 
   describe("parseFiles", () => {

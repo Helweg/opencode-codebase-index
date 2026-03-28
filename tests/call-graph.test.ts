@@ -100,6 +100,89 @@ describe("call-graph", () => {
       expect(callNames).toContain("cleanup");
       expect(callNames).toContain("fetchData");
     });
+
+    describe("php call extraction", () => {
+      it("should extract direct function calls", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-simple-calls.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const callNames = calls.map((c) => c.calleeName);
+        expect(callNames).toContain("directcall");
+        expect(callNames).toContain("helper");
+        expect(callNames).toContain("compute");
+
+        const directCall = calls.find((c) => c.calleeName === "directcall");
+        expect(directCall).toBeDefined();
+        expect(directCall!.callType).toBe("Call");
+      });
+
+      it("should normalize PHP function names to lowercase", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-simple-calls.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const helperCalls = calls.filter((c) => c.calleeName === "helper" && c.callType === "Call");
+        expect(helperCalls.length).toBe(2);
+      });
+
+      it("should extract method calls", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const methodCalls = calls.filter((c) => c.callType === "MethodCall");
+        const methodNames = methodCalls.map((c) => c.calleeName);
+        expect(methodNames).toContain("validate");
+        expect(methodNames).toContain("add");
+        expect(methodNames).toContain("subtract");
+      });
+
+      it("should extract nullsafe method calls", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const resetCall = calls.find((c) => c.calleeName === "reset");
+        expect(resetCall).toBeDefined();
+        expect(resetCall!.callType).toBe("MethodCall");
+      });
+
+      it("should extract static method calls", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const createCall = calls.find((c) => c.calleeName === "create");
+        expect(createCall).toBeDefined();
+        expect(createCall!.callType).toBe("MethodCall");
+      });
+
+      it("should extract constructor calls", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-constructors.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const constructorCalls = calls.filter((c) => c.callType === "Constructor");
+        const constructorNames = constructorCalls.map((c) => c.calleeName);
+        expect(constructorNames).toContain("SimpleClass");
+        expect(constructorNames).toContain("ClassWithArgs");
+      });
+
+      it("should extract use imports", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-imports.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const importCalls = calls.filter((c) => c.callType === "Import");
+        const importNames = importCalls.map((c) => c.calleeName);
+        expect(importNames).toContain("User");
+        expect(importNames).toContain("AuthService");
+      });
+
+      it("should extract grouped use imports", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-imports.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const importCalls = calls.filter((c) => c.callType === "Import");
+        const importNames = importCalls.map((c) => c.calleeName);
+        expect(importNames).toContain("StringHelper");
+        expect(importNames).toContain("ArrayHelper");
+      });
+    });
   });
 
   describe("call graph storage", () => {

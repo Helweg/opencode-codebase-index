@@ -984,6 +984,7 @@ pub fn upsert_call_edges_batch(conn: &mut Connection, edges: &[CallEdgeRow]) -> 
 }
 
 /// Get all call edges calling a symbol name (filtered by branch)
+/// Uses COLLATE NOCASE for target_name to support case-insensitive languages like PHP.
 pub fn get_callers(
     conn: &Connection,
     symbol_name: &str,
@@ -995,7 +996,7 @@ pub fn get_callers(
         FROM call_edges ce
         INNER JOIN symbols s ON ce.from_symbol_id = s.id
         INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
-        WHERE ce.target_name = ?
+        WHERE ce.target_name = ? COLLATE NOCASE
         "#,
     )?;
 
@@ -1040,7 +1041,7 @@ pub fn get_callers_with_context(
         FROM call_edges ce
         INNER JOIN symbols s ON ce.from_symbol_id = s.id
         INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
-        WHERE ce.target_name = ?
+        WHERE ce.target_name = ? COLLATE NOCASE
         "#,
     )?;
 

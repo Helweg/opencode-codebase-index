@@ -30,6 +30,7 @@ pub enum Language {
     Yaml,
     Bash,
     Markdown,
+    Php,
     Unknown,
 }
 
@@ -53,6 +54,7 @@ impl Language {
             "yaml" | "yml" => Language::Yaml,
             "sh" | "bash" | "zsh" => Language::Bash,
             "md" | "mdx" => Language::Markdown,
+            "php" | "inc" => Language::Php,
             _ => Language::Unknown,
         }
     }
@@ -76,6 +78,7 @@ impl Language {
             Language::Yaml => "yaml",
             Language::Bash => "bash",
             Language::Markdown => "markdown",
+            Language::Php => "php",
             Language::Unknown => "unknown",
         }
     }
@@ -99,6 +102,7 @@ impl Language {
             "yaml" | "yml" => Language::Yaml,
             "bash" | "sh" | "zsh" => Language::Bash,
             "markdown" | "md" => Language::Markdown,
+            "php" => Language::Php,
             _ => Language::Unknown,
         }
     }
