@@ -37,3 +37,9 @@
   (namespace_use_clause
     (qualified_name
       (name) @import.name))) @import
+
+; Grouped use imports: use App\Models\{User, Post};
+(namespace_use_declaration
+  (namespace_use_group
+    (namespace_use_clause
+      (name) @import.name))) @import

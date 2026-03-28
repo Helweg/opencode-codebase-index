@@ -4,6 +4,7 @@ function caller() {
     directCall();
     helper(1, 2);
     $result = compute($data);
+    HELPER(3, 4);
 }
 
 function directCall() {

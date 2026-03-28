@@ -107,13 +107,21 @@ describe("call-graph", () => {
         const calls = extractCalls(content, "php");
 
         const callNames = calls.map((c) => c.calleeName);
-        expect(callNames).toContain("directCall");
+        expect(callNames).toContain("directcall");
         expect(callNames).toContain("helper");
         expect(callNames).toContain("compute");
 
-        const directCall = calls.find((c) => c.calleeName === "directCall");
+        const directCall = calls.find((c) => c.calleeName === "directcall");
         expect(directCall).toBeDefined();
         expect(directCall!.callType).toBe("Call");
+      });
+
+      it("should normalize PHP function names to lowercase", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-simple-calls.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const helperCalls = calls.filter((c) => c.calleeName === "helper" && c.callType === "Call");
+        expect(helperCalls.length).toBe(2);
       });
 
       it("should extract method calls", () => {
@@ -163,6 +171,16 @@ describe("call-graph", () => {
         const importNames = importCalls.map((c) => c.calleeName);
         expect(importNames).toContain("User");
         expect(importNames).toContain("AuthService");
+      });
+
+      it("should extract grouped use imports", () => {
+        const content = fs.readFileSync(path.join(fixturesDir, "php-imports.php"), "utf-8");
+        const calls = extractCalls(content, "php");
+
+        const importCalls = calls.filter((c) => c.callType === "Import");
+        const importNames = importCalls.map((c) => c.calleeName);
+        expect(importNames).toContain("StringHelper");
+        expect(importNames).toContain("ArrayHelper");
       });
     });
   });
