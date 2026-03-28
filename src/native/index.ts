@@ -1,9 +1,7 @@
 import * as path from "path";
 import * as os from "os";
-import { createRequire } from "module";
+import * as module from "module";
 import { fileURLToPath } from "url";
-
-const require = createRequire(import.meta.url);
 
 function getNativeBinding() {
   const platform = os.platform();
@@ -27,18 +25,22 @@ function getNativeBinding() {
 
   // Determine the current directory - handle ESM, CJS, and bundled contexts
   let currentDir: string;
+  let requireTarget: string;
   
   // Check for ESM context with valid import.meta.url
   if (typeof import.meta !== 'undefined' && import.meta.url) {
     currentDir = path.dirname(fileURLToPath(import.meta.url));
+    requireTarget = import.meta.url;
   } 
   // Fallback to __dirname for CJS/bundled contexts
   else if (typeof __dirname !== 'undefined') {
     currentDir = __dirname;
+    requireTarget = __filename;
   }
   // Last resort: use process.cwd() - shouldn't normally hit this
   else {
     currentDir = process.cwd();
+    requireTarget = path.join(currentDir, "index.js");
   }
   
   // The native module is in the 'native' folder at package root
@@ -51,6 +53,7 @@ function getNativeBinding() {
   const nativePath = path.join(packageRoot, 'native', bindingName);
   
   // Load the native module - use standard require for .node files
+  const require = module.createRequire(requireTarget);
   return require(nativePath);
 }
 
