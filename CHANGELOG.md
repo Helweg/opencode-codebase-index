@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-28
+
+### Added
+- **Evaluation harness**: First-class eval CLI, golden datasets, budgets, compare mode, run artifacts, and smoke/quality workflows for measuring retrieval quality over time
+- **Implementation lookup workflow**: Added a dedicated definition/implementation retrieval path across the CLI, plugin tools, MCP server, indexer, and tests for faster code lookup by intent
+- **Cross-repo benchmarking**: Added a benchmark runner with ripgrep and ast-grep baselines plus reproducible benchmarking documentation and golden datasets for external repos
+- **Release automation guardrails**: Added Release Drafter automation and CI enforcement for release-category and semver labels on pull requests
+- **Contributor language-support guide**: Added an agent-ready guide for extending semantic parsing and call-graph support to new languages
+
+### Changed
+- **Evaluation CI strategy**: Split the default GitHub Models quality gate from explicit external-provider budget checks and documented the active CI budget paths
+- **Documentation refresh**: Reorganized contributor and maintenance docs, expanded evaluation and benchmarking guidance, and updated README benchmark snapshots and workflow references
+
+### Fixed
+- **Release Drafter permissions**: Restored draft-release updates so release automation can keep draft notes current
+- **Eval/CI correctness**: Closed CI gating gaps, normalized baseline paths, and pinned the Rust toolchain action input used by CI
+- **Benchmark auditability**: Fixed scoped ast-grep metric accounting and dataset/result mutability issues in the benchmark runner and reporting flow
+- **Supply-chain hardening**: Tightened dependency and repository security posture, including stronger git/worktree handling coverage in tests
+
 ## [0.5.2] - 2026-03-21
 
 ### Added
@@ -207,7 +226,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
-[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.4.1...v0.5.0
