@@ -17,6 +17,7 @@ import {
   index_logs,
   find_similar,
   call_graph,
+  implementation_lookup,
   initializeTools,
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
@@ -96,6 +97,7 @@ const plugin: Plugin = async ({ directory }) => {
       index_logs,
       find_similar,
       call_graph,
+      implementation_lookup,
     },
 
     async config(cfg) {

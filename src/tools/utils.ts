@@ -195,6 +195,25 @@ export function formatLogs(logs: LogEntry[]): string {
   }).join("\n");
 }
 
+export function formatDefinitionLookup(results: SearchResult[], query: string): string {
+  if (results.length === 0) {
+    return `No definition found for "${query}". Try codebase_search for broader discovery, or verify the symbol name.`;
+  }
+
+  const formatted = results.map((r, idx) => {
+    const header = r.name
+      ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
+      : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
+    return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
+  });
+
+  const header = results.length === 1
+    ? `Definition found for "${query}":`
+    : `Found ${results.length} definition candidates for "${query}":`;
+
+  return `${header}\n\n${formatted.join("\n\n")}`;
+}
+
 export type ScoreFormat = "score" | "similarity";
 
 export function formatSearchResults(results: SearchResult[], scoreFormat: ScoreFormat = "similarity"): string {
