@@ -100,7 +100,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
    npx opencode-codebase-index-mcp                            # uses current directory
    ```
 
-The MCP server exposes all 9 tools (`codebase_search`, `codebase_peek`, `find_similar`, `call_graph`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 4 prompts (`search`, `find`, `index`, `status`).
+The MCP server exposes all 10 tools (`codebase_search`, `codebase_peek`, `implementation_lookup`, `find_similar`, `call_graph`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 5 prompts (`search`, `find`, `definition`, `index`, `status`).
 
 The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) are optional peer dependencies — they're only needed if you use the MCP server.
 
@@ -128,6 +128,7 @@ src/api/checkout.ts:89      (Route handler for /pay)
 | Scenario | Tool | Why |
 |----------|------|-----|
 | Don't know the function name | `codebase_search` | Semantic search finds by meaning |
+| Need the authoritative definition site | `implementation_lookup` | Returns the best source definition/implementation, not broad discovery results |
 | Exploring unfamiliar codebase | `codebase_search` | Discovers related code across files |
 | Just need to find locations | `codebase_peek` | Returns metadata only, saves ~90% tokens |
 | Understand code flow | `call_graph` | Find callers/callees of any function |
@@ -270,6 +271,13 @@ The plugin exposes these tools to the OpenCode agent:
   ```
 - **Workflow**: `codebase_peek` → find locations → `Read` specific files
 
+### `implementation_lookup`
+**Authoritative definition lookup.** Returns the best source definition/implementation for a symbol or implementation-intent query.
+- **Use for**: "Where is X defined/implemented?" when you want the real source location, not broad semantic discovery.
+- **Behavior**: Reuses the existing definition-intent ranking path, prefers implementation files over tests/docs/fixtures/benchmarks, preserves documentation-intent behavior on generic search surfaces, and supports path narrowing via query hints like `in src/foo.ts`.
+- **Example**: `implementation_lookup(query="validateToken")`
+- **Workflow**: `implementation_lookup` → inspect the returned authoritative definition → optionally `Read` the file for more surrounding context
+
 ### `find_similar`
 Find code similar to a provided snippet.
 - **Use for**: Duplicate detection, refactor prep, pattern mining.
@@ -306,6 +314,7 @@ The plugin automatically registers these slash commands:
 
 | Command | Description |
 | ------- | ----------- |
+| `/definition <query>` | **Definition Lookup**. Best for "Where is X implemented/defined?" |
 | `/search <query>` | **Pure Semantic Search**. Best for "How does X work?" |
 | `/find <query>` | **Hybrid Search**. Combines semantic search + grep. Best for "Find usage of X". |
 | `/call-graph <query>` | **Call Graph Trace**. Find callers/callees to understand execution flow. |

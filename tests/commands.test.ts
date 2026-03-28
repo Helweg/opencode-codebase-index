@@ -177,10 +177,16 @@ Final line.`;
       const commands = loadCommandsFromDirectory(commandsDir);
 
       expect(commands.size).toBeGreaterThanOrEqual(3);
+      expect(commands.has("definition")).toBe(true);
       expect(commands.has("search")).toBe(true);
       expect(commands.has("index")).toBe(true);
       expect(commands.has("find")).toBe(true);
       expect(commands.has("call-graph")).toBe(true);
+
+      const definitionCmd = commands.get("definition")!;
+      expect(definitionCmd.description).toBe("Find where a symbol is defined in the codebase");
+      expect(definitionCmd.template).toContain("implementation_lookup");
+      expect(definitionCmd.template).toContain("dir=X");
 
       const indexCmd = commands.get("index")!;
       expect(indexCmd.description).toBe("Index the codebase for semantic search");
