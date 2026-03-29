@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-29
+
+### Added
+- **Custom provider batch caps**: Added `customProvider.maxBatchSize` / `max_batch_size` support so OpenAI-compatible embedding servers can cap inputs per `/embeddings` request
+- **Environment placeholders in config**: Added `{env:VAR_NAME}` placeholder support for string config values so secrets and endpoints can be supplied from the environment instead of committed files
+
+### Changed
+- **Release documentation alignment**: Updated release metadata to publish the post-`v0.6.0` config improvements as `v0.6.1`
+
 ## [0.6.0] - 2026-03-28
 
 ### Added
@@ -228,7 +237,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
-[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.0...v0.5.1
