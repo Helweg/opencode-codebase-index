@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { substituteEnvReferences } from "../src/config/env-substitution.js";
 import {
   parseConfig,
   getDefaultModelForProvider,
@@ -10,6 +11,70 @@ import {
 } from "../src/config/constants.js";
 
 describe("config schema", () => {
+  describe("substituteEnvReferences", () => {
+    it("should replace an env placeholder string with the environment value", () => {
+      vi.stubEnv("OPENCODE_TEST_API_KEY", "secret-key");
+
+      expect(substituteEnvReferences("{env:OPENCODE_TEST_API_KEY}")).toBe("secret-key");
+
+      vi.unstubAllEnvs();
+    });
+
+    it("should replace nested env placeholders in objects and arrays", () => {
+      vi.stubEnv("OPENCODE_TEST_BASE_URL", "https://example.test/v1");
+      vi.stubEnv("OPENCODE_TEST_API_KEY", "secret-key");
+
+      const substituted = substituteEnvReferences({
+        customProvider: {
+          baseUrl: "{env:OPENCODE_TEST_BASE_URL}",
+          apiKey: "{env:OPENCODE_TEST_API_KEY}",
+        },
+        include: ["src/**/*.ts", "{env:OPENCODE_TEST_API_KEY}"],
+      });
+
+      expect(substituted).toEqual({
+        customProvider: {
+          baseUrl: "https://example.test/v1",
+          apiKey: "secret-key",
+        },
+        include: ["src/**/*.ts", "secret-key"],
+      });
+
+      vi.unstubAllEnvs();
+    });
+
+    it("should leave non-placeholder strings unchanged", () => {
+      expect(substituteEnvReferences("custom-provider")).toBe("custom-provider");
+    });
+
+    it("should reject malformed env reference strings", () => {
+      expect(() => substituteEnvReferences("prefix-{env:OPENCODE_TEST_API_KEY}")).toThrow(
+        "Invalid environment variable reference"
+      );
+      expect(() => substituteEnvReferences("{env:opencode_test_api_key}")).toThrow(
+        "Invalid environment variable reference"
+      );
+    });
+
+    it("should throw when a referenced environment variable is missing", () => {
+      expect(() => substituteEnvReferences({
+        customProvider: {
+          apiKey: "{env:OPENCODE_MISSING_API_KEY}",
+        },
+      })).toThrow("Missing environment variable 'OPENCODE_MISSING_API_KEY' referenced by config at '$root.customProvider.apiKey'.");
+    });
+
+    it("should preserve non-string values", () => {
+      expect(substituteEnvReferences({
+        indexing: { autoIndex: true, maxChunksPerFile: 5 },
+        search: { hybridWeight: 0.5 },
+      })).toEqual({
+        indexing: { autoIndex: true, maxChunksPerFile: 5 },
+        search: { hybridWeight: 0.5 },
+      });
+    });
+  });
+
   describe("parseConfig", () => {
     it("should return defaults for undefined input", () => {
       const config = parseConfig(undefined);
@@ -290,6 +355,62 @@ describe("config schema", () => {
         });
         expect(config.customProvider!.apiKey).toBe("sk-test-key");
         expect(config.customProvider!.maxTokens).toBe(4096);
+      });
+
+      it("should accept env-substituted custom provider credentials", () => {
+        vi.stubEnv("OPENCODE_CUSTOM_PROVIDER_URL", "https://api.example.com/v1");
+        vi.stubEnv("OPENCODE_CUSTOM_PROVIDER_KEY", "sk-env-key");
+
+        const config = parseConfig(substituteEnvReferences({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "{env:OPENCODE_CUSTOM_PROVIDER_URL}",
+            model: "my-model",
+            dimensions: 1024,
+            apiKey: "{env:OPENCODE_CUSTOM_PROVIDER_KEY}",
+          },
+        }));
+
+        expect(config.customProvider!.baseUrl).toBe("https://api.example.com/v1");
+        expect(config.customProvider!.apiKey).toBe("sk-env-key");
+
+        vi.unstubAllEnvs();
+      });
+
+      it("should ignore env refs in inactive customProvider branches", () => {
+        const config = parseConfig({
+          embeddingProvider: "openai",
+          customProvider: {
+            baseUrl: "{env:EMBED_BASE_URL}",
+            model: "{env:EMBED_MODEL}",
+            dimensions: 768,
+            apiKey: "{env:MISSING_API_KEY}",
+          },
+        });
+
+        expect(config.embeddingProvider).toBe("openai");
+        expect(config.customProvider).toBeUndefined();
+      });
+
+      it("should reject malformed env refs in active custom provider fields", () => {
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "prefix-{env:EMBED_BASE_URL}",
+            model: "test",
+            dimensions: 768,
+          },
+        })).toThrow("Invalid environment variable reference");
+
+        expect(() => parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            apiKey: "{env:embed_api_key}",
+          },
+        })).toThrow("Invalid environment variable reference");
       });
 
       it("should throw when custom provider is selected but config is missing", () => {
