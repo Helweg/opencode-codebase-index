@@ -1,6 +1,7 @@
 // Config schema without zod dependency to avoid version conflicts with OpenCode SDK
 
 import { DEFAULT_INCLUDE, DEFAULT_EXCLUDE, EMBEDDING_MODELS, DEFAULT_PROVIDER_MODELS } from "./constants.js";
+import { substituteEnvString } from "./env-substitution.js";
 
 export type IndexScope = "project" | "global";
 
@@ -154,12 +155,32 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === "string");
 }
 
+function getResolvedString(value: unknown, keyPath: string): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  return substituteEnvString(value, keyPath);
+}
+
+function getResolvedStringArray(value: unknown, keyPath: string): string[] | undefined {
+  if (!isStringArray(value)) {
+    return undefined;
+  }
+
+  return value.map((item, index) => substituteEnvString(item, `${keyPath}[${index}]`));
+}
+
 function isValidLogLevel(value: unknown): value is LogLevel {
   return typeof value === "string" && VALID_LOG_LEVELS.includes(value as LogLevel);
 }
 
 export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const embeddingProviderValue = getResolvedString(input.embeddingProvider, "$root.embeddingProvider");
+  const scopeValue = getResolvedString(input.scope, "$root.scope");
+  const includeValue = getResolvedStringArray(input.include, "$root.include");
+  const excludeValue = getResolvedStringArray(input.exclude, "$root.exclude");
 
   const defaultIndexing = getDefaultIndexingConfig();
   const defaultSearch = getDefaultSearchConfig();
@@ -208,15 +229,18 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   let embeddingModel: EmbeddingModelName | undefined = undefined;
   let customProvider: CustomProviderConfig | undefined = undefined;
   
-  if (input.embeddingProvider === 'custom') {
+  if (embeddingProviderValue === 'custom') {
     embeddingProvider = 'custom';
     const rawCustom = (input.customProvider && typeof input.customProvider === 'object' ? input.customProvider : null) as Record<string, unknown> | null;
-    if (rawCustom && typeof rawCustom.baseUrl === 'string' && rawCustom.baseUrl.trim().length > 0 && typeof rawCustom.model === 'string' && rawCustom.model.trim().length > 0 && typeof rawCustom.dimensions === 'number' && Number.isInteger(rawCustom.dimensions) && rawCustom.dimensions > 0) {
+    const baseUrlValue = getResolvedString(rawCustom?.baseUrl, "$root.customProvider.baseUrl");
+    const modelValue = getResolvedString(rawCustom?.model, "$root.customProvider.model");
+    const apiKeyValue = getResolvedString(rawCustom?.apiKey, "$root.customProvider.apiKey");
+    if (rawCustom && typeof baseUrlValue === 'string' && baseUrlValue.trim().length > 0 && typeof modelValue === 'string' && modelValue.trim().length > 0 && typeof rawCustom.dimensions === 'number' && Number.isInteger(rawCustom.dimensions) && rawCustom.dimensions > 0) {
       customProvider = {
-        baseUrl: rawCustom.baseUrl.trim().replace(/\/+$/, ''),
-        model: rawCustom.model,
+        baseUrl: baseUrlValue.trim().replace(/\/+$/, ''),
+        model: modelValue,
         dimensions: rawCustom.dimensions,
-        apiKey: typeof rawCustom.apiKey === 'string' ? rawCustom.apiKey : undefined,
+        apiKey: apiKeyValue,
         maxTokens: typeof rawCustom.maxTokens === 'number' ? rawCustom.maxTokens : undefined,
         timeoutMs: typeof rawCustom.timeoutMs === 'number' ? Math.max(1000, rawCustom.timeoutMs) : undefined,
         concurrency: typeof rawCustom.concurrency === 'number' ? Math.max(1, Math.floor(rawCustom.concurrency)) : undefined,
@@ -237,10 +261,16 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
         "Required fields: baseUrl (string), model (string), dimensions (positive integer)."
       );
     }
-  } else if (isValidProvider(input.embeddingProvider)) {
-    embeddingProvider = input.embeddingProvider;
-    if (input.embeddingModel) {
-      embeddingModel = isValidModel(input.embeddingModel, embeddingProvider) ? input.embeddingModel : DEFAULT_PROVIDER_MODELS[embeddingProvider];
+  } else if (isValidProvider(embeddingProviderValue)) {
+    embeddingProvider = embeddingProviderValue;
+    const rawEmbeddingModel = input.embeddingModel;
+    if (typeof rawEmbeddingModel === "string") {
+      const embeddingModelValue = substituteEnvString(rawEmbeddingModel, "$root.embeddingModel");
+      if (embeddingModelValue) {
+        embeddingModel = isValidModel(embeddingModelValue, embeddingProvider) ? embeddingModelValue : DEFAULT_PROVIDER_MODELS[embeddingProvider];
+      }
+    } else if (rawEmbeddingModel) {
+      embeddingModel = DEFAULT_PROVIDER_MODELS[embeddingProvider];
     }
   } else {
     embeddingProvider = 'auto';
@@ -250,9 +280,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     embeddingProvider,
     embeddingModel,
     customProvider,
-    scope: isValidScope(input.scope) ? input.scope : "project",
-    include: isStringArray(input.include) ? input.include : DEFAULT_INCLUDE,
-    exclude: isStringArray(input.exclude) ? input.exclude : DEFAULT_EXCLUDE,
+    scope: isValidScope(scopeValue) ? scopeValue : "project",
+    include: includeValue ?? DEFAULT_INCLUDE,
+    exclude: excludeValue ?? DEFAULT_EXCLUDE,
     indexing,
     search,
     debug,
