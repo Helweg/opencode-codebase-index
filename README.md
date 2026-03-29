@@ -348,6 +348,20 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 }
 ```
 
+String values in `codebase-index.json` can reference environment variables with `{env:VAR_NAME}` when the placeholder is the entire string value. Variable names must match `[A-Z_][A-Z0-9_]*`. This is useful for secrets such as custom provider API keys so they do not need to be committed to the config file.
+
+```json
+{
+  "embeddingProvider": "custom",
+  "customProvider": {
+    "baseUrl": "{env:EMBED_BASE_URL}",
+    "model": "nomic-embed-text",
+    "dimensions": 768,
+    "apiKey": "{env:EMBED_API_KEY}"
+  }
+}
+```
+
 ### Options Reference
 
 | Option | Default | Description |
@@ -604,16 +618,16 @@ Works with any server that implements the OpenAI `/v1/embeddings` API format (ll
 {
   "embeddingProvider": "custom",
   "customProvider": {
-    "baseUrl": "http://localhost:11434/v1",
+    "baseUrl": "{env:EMBED_BASE_URL}",
     "model": "nomic-embed-text",
     "dimensions": 768,
-    "apiKey": "optional-api-key",
+    "apiKey": "{env:EMBED_API_KEY}",
     "maxTokens": 8192,
     "timeoutMs": 30000
   }
 }
 ```
-Required fields: `baseUrl`, `model`, `dimensions` (positive integer). Optional: `apiKey`, `maxTokens`, `timeoutMs` (default: 30000).
+Required fields: `baseUrl`, `model`, `dimensions` (positive integer). Optional: `apiKey`, `maxTokens`, `timeoutMs` (default: 30000). `{env:VAR_NAME}` placeholders are resolved before config validation for fields that are actually used and throw if the referenced environment variable is missing or malformed.
 
 ## ⚠️ Tradeoffs
 
