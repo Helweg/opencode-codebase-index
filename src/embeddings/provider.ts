@@ -343,23 +343,28 @@ class CustomEmbeddingProvider implements EmbeddingProviderInterface {
     private modelInfo: CustomModelInfo
   ) { }
 
-  async embedQuery(query: string): Promise<EmbeddingResult> {
-    const result = await this.embedBatch([query]);
-    return {
-      embedding: result.embeddings[0],
-      tokensUsed: result.totalTokensUsed,
-    };
+  private splitIntoRequestBatches(texts: string[]): string[][] {
+    const maxBatchSize = this.modelInfo.maxBatchSize;
+
+    if (!maxBatchSize || texts.length <= maxBatchSize) {
+      return [texts];
+    }
+
+    const batches: string[][] = [];
+    for (let i = 0; i < texts.length; i += maxBatchSize) {
+      batches.push(texts.slice(i, i + maxBatchSize));
+    }
+    return batches;
   }
 
-  async embedDocument(document: string): Promise<EmbeddingResult> {
-    const result = await this.embedBatch([document]);
-    return {
-      embedding: result.embeddings[0],
-      tokensUsed: result.totalTokensUsed,
-    };
-  }
+  private async embedRequest(texts: string[]): Promise<EmbeddingBatchResult> {
+    if (texts.length === 0) {
+      return {
+        embeddings: [],
+        totalTokensUsed: 0,
+      };
+    }
 
-  async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -442,6 +447,39 @@ class CustomEmbeddingProvider implements EmbeddingProviderInterface {
 
     // Fallback: some servers return a flat embedding array for single inputs
     throw new Error("Custom embedding API returned unexpected response format. Expected OpenAI-compatible format with data[].embedding.");
+  }
+
+  async embedQuery(query: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([query]);
+    return {
+      embedding: result.embeddings[0],
+      tokensUsed: result.totalTokensUsed,
+    };
+  }
+
+  async embedDocument(document: string): Promise<EmbeddingResult> {
+    const result = await this.embedBatch([document]);
+    return {
+      embedding: result.embeddings[0],
+      tokensUsed: result.totalTokensUsed,
+    };
+  }
+
+  async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
+    const requestBatches = this.splitIntoRequestBatches(texts);
+    const embeddings: number[][] = [];
+    let totalTokensUsed = 0;
+
+    for (const batch of requestBatches) {
+      const result = await this.embedRequest(batch);
+      embeddings.push(...result.embeddings);
+      totalTokensUsed += result.totalTokensUsed;
+    }
+
+    return {
+      embeddings,
+      totalTokensUsed,
+    };
   }
 
   getModelInfo(): CustomModelInfo {

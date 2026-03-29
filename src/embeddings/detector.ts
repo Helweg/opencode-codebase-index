@@ -15,6 +15,7 @@ export interface ProviderCredentials {
 export interface CustomModelInfo extends BaseModelInfo {
   provider: 'custom';
   timeoutMs: number;
+  maxBatchSize?: number;
 }
 
 export type ConfiguredProviderInfo = {
@@ -247,6 +248,7 @@ export function createCustomProviderInfo(config: CustomProviderConfig): Configur
       maxTokens: config.maxTokens ?? 8192,
       costPer1MTokens: 0,
       timeoutMs: config.timeoutMs ?? 30_000,
+      maxBatchSize: config.maxBatchSize,
     },
   };
 }

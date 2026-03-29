@@ -67,5 +67,15 @@ describe("embeddings detector", () => {
       });
       expect(info.modelInfo.maxTokens).toBe(4096);
     });
+
+    it("should pass through optional maxBatchSize", () => {
+      const info = createCustomProviderInfo({
+        baseUrl: "http://localhost/v1",
+        model: "test",
+        dimensions: 512,
+        maxBatchSize: 64,
+      });
+      expect(info.modelInfo.maxBatchSize).toBe(64);
+    });
   });
 });

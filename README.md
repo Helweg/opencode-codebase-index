@@ -609,11 +609,12 @@ Works with any server that implements the OpenAI `/v1/embeddings` API format (ll
     "dimensions": 768,
     "apiKey": "optional-api-key",
     "maxTokens": 8192,
-    "timeoutMs": 30000
+    "timeoutMs": 30000,
+    "maxBatchSize": 64
   }
 }
 ```
-Required fields: `baseUrl`, `model`, `dimensions` (positive integer). Optional: `apiKey`, `maxTokens`, `timeoutMs` (default: 30000).
+Required fields: `baseUrl`, `model`, `dimensions` (positive integer). Optional: `apiKey`, `maxTokens`, `timeoutMs` (default: 30000), `maxBatchSize` (or `max_batch_size`) to cap inputs per `/embeddings` request for servers like text-embeddings-inference.
 
 ## ⚠️ Tradeoffs
 

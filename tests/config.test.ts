@@ -502,6 +502,32 @@ describe("config schema", () => {
         expect(config.customProvider!.requestIntervalMs).toBe(0);
       });
 
+      it("should parse custom provider with maxBatchSize", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            maxBatchSize: 64,
+          },
+        });
+        expect(config.customProvider!.maxBatchSize).toBe(64);
+      });
+
+      it("should parse custom provider with max_batch_size alias", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            max_batch_size: 32,
+          },
+        });
+        expect(config.customProvider!.maxBatchSize).toBe(32);
+      });
+
       it("should clamp concurrency to minimum of 1", () => {
         const config = parseConfig({
           embeddingProvider: "custom",
@@ -513,6 +539,19 @@ describe("config schema", () => {
           },
         });
         expect(config.customProvider!.concurrency).toBe(1);
+      });
+
+      it("should clamp maxBatchSize to minimum of 1", () => {
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "test",
+            dimensions: 768,
+            maxBatchSize: 0,
+          },
+        });
+        expect(config.customProvider!.maxBatchSize).toBe(1);
       });
 
       it("should leave concurrency undefined when not provided", () => {
