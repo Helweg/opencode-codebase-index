@@ -6,6 +6,26 @@ function getNativeBinding() {
   const platform = os.platform();
   const arch = os.arch();
 
+  // Detect musl vs glibc on Linux
+  const isMusl = () => {
+    try {
+      const lddVersion = require("child_process").execSync("ldd --version", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+      return lddVersion.includes("musl") || lddVersion.includes("MUSL");
+    } catch {
+      // Fallback: check if /etc/alpine-release exists (Alpine = musl)
+      try {
+        require("fs").accessSync("/etc/alpine-release");
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  };
+  
+  // Cache the result
+  const musl = isMusl();
+  const libc = musl ? "musl" : "gnu";
+
   let bindingName: string;
   
   if (platform === "darwin" && arch === "arm64") {
@@ -13,9 +33,9 @@ function getNativeBinding() {
   } else if (platform === "darwin" && arch === "x64") {
     bindingName = "codebase-index-native.darwin-x64.node";
   } else if (platform === "linux" && arch === "x64") {
-    bindingName = "codebase-index-native.linux-x64-gnu.node";
+    bindingName = `codebase-index-native.linux-x64-${libc}.node`;
   } else if (platform === "linux" && arch === "arm64") {
-    bindingName = "codebase-index-native.linux-arm64-gnu.node";
+    bindingName = `codebase-index-native.linux-arm64-${libc}.node`;
   } else if (platform === "win32" && arch === "x64") {
     bindingName = "codebase-index-native.win32-x64-msvc.node";
   } else {

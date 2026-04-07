@@ -65,6 +65,9 @@ export const index_codebase: ToolDefinition = tool({
   async execute(args, context) {
     const indexer = getIndexer();
 
+    // Guard: use noop if context is not provided
+    const safeContext = context || { metadata: () => {} };
+
     if (args.estimateOnly) {
       const estimate = await indexer.estimateCost();
       return formatCostEstimate(estimate);
@@ -75,7 +78,7 @@ export const index_codebase: ToolDefinition = tool({
     }
 
     const stats = await indexer.index((progress) => {
-      context.metadata({
+      safeContext.metadata({
         title: formatProgressTitle(progress),
         metadata: {
           phase: progress.phase,
