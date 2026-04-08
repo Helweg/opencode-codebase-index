@@ -571,6 +571,10 @@ ollama pull nomic-embed-text
 }
 ```
 
+The built-in `ollama` provider uses Ollama's native `/api/embeddings` endpoint and is the simplest setup when you want to use `nomic-embed-text`.
+
+If you want to use a different Ollama embedding model through its OpenAI-compatible API, use the `custom` provider instead and set `customProvider.baseUrl` to `http://127.0.0.1:11434/v1` so the plugin calls `.../v1/embeddings`.
+
 ## 📈 Performance
 
 The plugin is built for speed with a Rust native module (`tree-sitter`, `usearch`, SQLite). In practice, indexing and retrieval remain fast enough for interactive use on medium/large repositories.
@@ -629,6 +633,26 @@ Works with any server that implements the OpenAI `/v1/embeddings` API format (ll
 }
 ```
 Required fields: `baseUrl`, `model`, `dimensions` (positive integer). Optional: `apiKey`, `maxTokens`, `timeoutMs` (default: 30000), `maxBatchSize` (or `max_batch_size`) to cap inputs per `/embeddings` request for servers like text-embeddings-inference. `{env:VAR_NAME}` placeholders are resolved before config validation for fields that are actually used and throw if the referenced environment variable is missing or malformed.
+
+**Custom Ollama models via OpenAI-compatible API**
+If you are running Ollama locally and want to use an embedding model other than the built-in `ollama` setup, point the custom provider at Ollama's OpenAI-compatible base URL with the `/v1` suffix:
+
+```json
+{
+  "embeddingProvider": "custom",
+  "customProvider": {
+    "baseUrl": "http://127.0.0.1:11434/v1",
+    "model": "qwen3-embedding:0.6b",
+    "dimensions": 1024,
+    "apiKey": "ollama"
+  }
+}
+```
+
+Notes:
+- The plugin appends `/embeddings`, so `baseUrl` should be `http://127.0.0.1:11434/v1`, not just `http://127.0.0.1:11434`.
+- Ollama ignores the API key, but some OpenAI-compatible clients expect one, so a placeholder like `"ollama"` is fine.
+- Make sure `dimensions` matches the actual output size of the model you pulled locally.
 
 ## ⚠️ Tradeoffs
 
