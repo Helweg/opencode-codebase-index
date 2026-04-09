@@ -516,7 +516,10 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "autoGc": true,                           // Auto garbage collection
     "gcIntervalDays": 7,                      // GC interval (days)
     "gcOrphanThreshold": 100,                 // GC trigger threshold
-    "requireProjectMarker": true              // Require .git/package.json to index
+    "requireProjectMarker": true,             // Require .git/package.json to index
+    "maxDepth": 5,                            // Max directory depth (-1=unlimited, 0=root only)
+    "maxFilesPerDirectory": 100,              // Max files per directory (smallest first)
+    "fallbackToTextOnMaxChunks": true         // Fallback to text chunking on maxChunksPerFile
   },
 
   // === Search ===
@@ -590,6 +593,9 @@ String values in `codebase-index.json` can reference environment variables with 
 | `gcIntervalDays` | `7` | Run GC on initialization if last GC was more than N days ago |
 | `gcOrphanThreshold` | `100` | Run GC after indexing if orphan count exceeds this threshold |
 | `requireProjectMarker` | `true` | Require a project marker (`.git`, `package.json`, etc.) to enable file watching and auto-indexing. Prevents accidentally indexing large directories like home. Set to `false` to index any directory. |
+| `maxDepth` | `5` | Max directory traversal depth. `-1` = unlimited, `0` = only files in root dir, `1` = one level of subdirectories, etc. |
+| `maxFilesPerDirectory` | `100` | Max files to index per directory. Always picks the smallest files first. |
+| `fallbackToTextOnMaxChunks` | `true` | When a file exceeds `maxChunksPerFile`, fallback to text-based (line-by-line) chunking instead of skipping the rest of the file. |
 | **search** | | |
 | `maxResults` | `20` | Maximum results to return |
 | `minScore` | `0.1` | Minimum similarity score (0-1). Lower = more results |

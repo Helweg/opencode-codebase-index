@@ -29,6 +29,7 @@ import {
   hashFile,
   hashContent,
   extractCalls,
+  parseFileAsText,
 } from "../native/index.js";
 import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
@@ -1736,7 +1737,8 @@ export class Indexer {
       includePatterns,
       this.config.exclude,
       this.config.indexing.maxFileSize,
-      this.config.knowledgeBases
+      this.config.knowledgeBases,
+      { maxDepth: this.config.indexing.maxDepth, maxFilesPerDirectory: this.config.indexing.maxFilesPerDirectory }
     );
 
     return createCostEstimate(files, configuredProviderInfo);
@@ -1786,7 +1788,8 @@ export class Indexer {
       includePatterns,
       this.config.exclude,
       this.config.indexing.maxFileSize,
-      this.config.knowledgeBases
+      this.config.knowledgeBases,
+      { maxDepth: this.config.indexing.maxDepth, maxFilesPerDirectory: this.config.indexing.maxFilesPerDirectory }
     );
 
     stats.totalFiles = files.length;
@@ -1871,7 +1874,17 @@ export class Indexer {
       }
 
       let fileChunkCount = 0;
-      for (const chunk of parsed.chunks) {
+      let chunksToProcess = parsed.chunks;
+
+      if (this.config.indexing.fallbackToTextOnMaxChunks && chunksToProcess.length > this.config.indexing.maxChunksPerFile) {
+        const changedFile = changedFiles.find(f => f.path === parsed.path);
+        if (changedFile) {
+          const textChunks = parseFileAsText(parsed.path, changedFile.content);
+          chunksToProcess = textChunks;
+        }
+      }
+
+      for (const chunk of chunksToProcess) {
         if (fileChunkCount >= this.config.indexing.maxChunksPerFile) {
           break;
         }

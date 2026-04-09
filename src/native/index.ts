@@ -178,6 +178,11 @@ export function parseFile(filePath: string, content: string): CodeChunk[] {
   return result.map(mapChunk);
 }
 
+export function parseFileAsText(filePath: string, content: string): CodeChunk[] {
+  const result = native.parseFileAsText(filePath, content);
+  return result.map(mapChunk);
+}
+
 export function parseFiles(files: FileInput[]): ParsedFile[] {
   const result = native.parseFiles(files);
   return result.map((f: any) => ({

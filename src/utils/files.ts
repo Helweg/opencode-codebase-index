@@ -127,6 +127,11 @@ function matchGlob(filePath: string, pattern: string): boolean {
   return regex.test(filePath);
 }
 
+export interface WalkOptions {
+  maxDepth: number;
+  maxFilesPerDirectory: number;
+}
+
 export async function* walkDirectory(
   dir: string,
   projectRoot: string,
@@ -134,9 +139,14 @@ export async function* walkDirectory(
   excludePatterns: string[],
   ignoreFilter: Ignore,
   maxFileSize: number,
-  skipped: SkippedFile[]
+  skipped: SkippedFile[],
+  options: WalkOptions,
+  currentDepth: number = 0
 ): AsyncGenerator<{ path: string; size: number }> {
   const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+
+  const filesInDir: Array<{ path: string; size: number }> = [];
+  const subdirs: Array<{ fullPath: string; relativePath: string }> = [];
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
@@ -164,15 +174,7 @@ export async function* walkDirectory(
     }
 
     if (entry.isDirectory()) {
-      yield* walkDirectory(
-        fullPath,
-        projectRoot,
-        includePatterns,
-        excludePatterns,
-        ignoreFilter,
-        maxFileSize,
-        skipped
-      );
+      subdirs.push({ fullPath, relativePath });
     } else if (entry.isFile()) {
       const stat = await fsPromises.stat(fullPath);
 
@@ -197,8 +199,36 @@ export async function* walkDirectory(
       }
 
       if (matched) {
-        yield { path: fullPath, size: stat.size };
+        filesInDir.push({ path: fullPath, size: stat.size });
       }
+    }
+  }
+
+  // Sort by size ascending, keep only the smallest maxFilesPerDirectory files
+  filesInDir.sort((a, b) => a.size - b.size);
+  const limitedFiles = filesInDir.slice(0, options.maxFilesPerDirectory);
+  for (const f of limitedFiles) {
+    yield f;
+  }
+  for (let i = options.maxFilesPerDirectory; i < filesInDir.length; i++) {
+    skipped.push({ path: path.relative(projectRoot, filesInDir[i].path), reason: "excluded" });
+  }
+
+  // Recurse into subdirectories respecting depth limit
+  const canRecurse = options.maxDepth === -1 || currentDepth < options.maxDepth;
+  if (canRecurse) {
+    for (const sub of subdirs) {
+      yield* walkDirectory(
+        sub.fullPath,
+        projectRoot,
+        includePatterns,
+        excludePatterns,
+        ignoreFilter,
+        maxFileSize,
+        skipped,
+        options,
+        currentDepth + 1
+      );
     }
   }
 }
@@ -208,8 +238,10 @@ export async function collectFiles(
   includePatterns: string[],
   excludePatterns: string[],
   maxFileSize: number,
-  additionalRoots?: string[]
+  additionalRoots?: string[],
+  walkOptions?: WalkOptions
 ): Promise<CollectFilesResult> {
+  const opts: WalkOptions = walkOptions ?? { maxDepth: 5, maxFilesPerDirectory: 100 };
   const ignoreFilter = createIgnoreFilter(projectRoot);
   const files: Array<{ path: string; size: number }> = [];
   const skipped: SkippedFile[] = [];
@@ -222,7 +254,9 @@ export async function collectFiles(
     excludePatterns,
     ignoreFilter,
     maxFileSize,
-    skipped
+    skipped,
+    opts,
+    0
   )) {
     files.push(file);
   }
@@ -253,7 +287,9 @@ export async function collectFiles(
           excludePatterns,
           kbIgnoreFilter,
           maxFileSize,
-          skipped
+          skipped,
+          opts,
+          0
         )) {
           files.push(file);
         }

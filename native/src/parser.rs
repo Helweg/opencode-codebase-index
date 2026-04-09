@@ -58,6 +58,16 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
     extract_chunks(&tree, content, &language)
 }
 
+pub fn parse_file_as_text_internal(file_path: &str, content: &str) -> Result<Vec<CodeChunk>> {
+    let ext = Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+
+    let language = Language::from_extension(ext);
+    Ok(chunk_by_lines(content, &language))
+}
+
 pub fn parse_files_parallel(files: Vec<FileInput>) -> Result<Vec<ParsedFile>> {
     let results: Vec<ParsedFile> = files
         .par_iter()

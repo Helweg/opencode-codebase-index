@@ -16,13 +16,26 @@ export interface IndexingConfig {
   autoGc: boolean;
   gcIntervalDays: number;
   gcOrphanThreshold: number;
-  /** 
-   * When true (default), requires a project marker (.git, package.json, Cargo.toml, etc.) 
+  /**
+   * When true (default), requires a project marker (.git, package.json, Cargo.toml, etc.)
    * to be present before enabling file watching and auto-indexing.
-   * This prevents accidentally watching/indexing large non-project directories like home.
-   * Set to false to allow indexing any directory.
    */
   requireProjectMarker: boolean;
+  /**
+   * Max directory traversal depth. -1 = unlimited, 0 = only files in the root dir,
+   * 1 = one level of subdirectories, etc. Default: 5
+   */
+  maxDepth: number;
+  /**
+   * Max number of files to index per directory. Always picks the smallest files first.
+   * Default: 100
+   */
+  maxFilesPerDirectory: number;
+  /**
+   * When a file hits maxChunksPerFile, fallback to text-based (chunk_by_lines) parsing
+   * instead of skipping the rest of the file. Default: true
+   */
+  fallbackToTextOnMaxChunks: boolean;
 }
 
 export interface SearchConfig {
@@ -128,6 +141,9 @@ function getDefaultIndexingConfig(): IndexingConfig {
     gcIntervalDays: 7,
     gcOrphanThreshold: 100,
     requireProjectMarker: true,
+    maxDepth: 5,
+    maxFilesPerDirectory: 100,
+    fallbackToTextOnMaxChunks: true,
   };
 }
 
@@ -237,6 +253,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     gcIntervalDays: typeof rawIndexing.gcIntervalDays === "number" ? Math.max(1, rawIndexing.gcIntervalDays) : defaultIndexing.gcIntervalDays,
     gcOrphanThreshold: typeof rawIndexing.gcOrphanThreshold === "number" ? Math.max(0, rawIndexing.gcOrphanThreshold) : defaultIndexing.gcOrphanThreshold,
     requireProjectMarker: typeof rawIndexing.requireProjectMarker === "boolean" ? rawIndexing.requireProjectMarker : defaultIndexing.requireProjectMarker,
+    maxDepth: typeof rawIndexing.maxDepth === "number" ? (rawIndexing.maxDepth < -1 ? -1 : rawIndexing.maxDepth) : defaultIndexing.maxDepth,
+    maxFilesPerDirectory: typeof rawIndexing.maxFilesPerDirectory === "number" ? Math.max(1, rawIndexing.maxFilesPerDirectory) : defaultIndexing.maxFilesPerDirectory,
+    fallbackToTextOnMaxChunks: typeof rawIndexing.fallbackToTextOnMaxChunks === "boolean" ? rawIndexing.fallbackToTextOnMaxChunks : defaultIndexing.fallbackToTextOnMaxChunks,
   };
 
   const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;
