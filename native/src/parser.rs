@@ -22,7 +22,7 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
 
     let language = Language::from_extension(ext);
 
-    if language == Language::Unknown {
+    if language == Language::Text {
         return Ok(chunk_by_lines(content, &language));
     }
 
@@ -745,7 +745,7 @@ class Greeter:
             .collect();
         let content = lines.join("\n");
 
-        let chunks = chunk_by_lines(&content, &Language::Unknown);
+        let chunks = chunk_by_lines(&content, &Language::Text);
 
         assert!(chunks.len() >= 2, "Should have multiple chunks");
 
