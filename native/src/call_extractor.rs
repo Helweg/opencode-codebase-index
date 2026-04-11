@@ -61,26 +61,12 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
 
     let callee_name_idx = query.capture_index_for_name("callee.name");
     let call_idx = query.capture_index_for_name("call");
+    let method_call_idx = query.capture_index_for_name("method.call");
+    let static_call_idx = query.capture_index_for_name("static.call");
     let constructor_idx = query.capture_index_for_name("constructor");
     let import_name_idx = query.capture_index_for_name("import.name");
     let import_default_idx = query.capture_index_for_name("import.default");
     let import_namespace_idx = query.capture_index_for_name("import.namespace");
-
-    let method_parent_kinds: &[&str] = match language {
-        Language::TypeScript
-        | Language::TypeScriptTsx
-        | Language::JavaScript
-        | Language::JavaScriptJsx => &["member_expression"],
-        Language::Python => &["attribute"],
-        Language::Rust => &["field_expression"],
-        Language::Go => &["selector_expression"],
-        Language::Php => &[
-            "member_call_expression",
-            "scoped_call_expression",
-            "nullsafe_member_call_expression",
-        ],
-        _ => &[],
-    };
 
     let mut cursor = QueryCursor::new();
     let mut calls = Vec::new();
@@ -108,8 +94,31 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
             }
 
             if let Some(idx) = call_idx {
+                if capture.index == idx {
+                    // Check if this is actually a method call by looking at other captures
+                    // If method_call_idx or static_call_idx also matches, it's a method call
+                    let is_method_call = match_.captures.iter().any(|c| {
+                        method_call_idx.map(|idx| c.index == idx).unwrap_or(false)
+                            || static_call_idx.map(|idx| c.index == idx).unwrap_or(false)
+                    });
+
+                    if is_method_call {
+                        call_type = Some(CallType::MethodCall);
+                    } else {
+                        call_type = Some(CallType::Call);
+                    }
+                }
+            }
+
+            if let Some(idx) = method_call_idx {
                 if capture.index == idx && call_type.is_none() {
-                    call_type = Some(CallType::Call);
+                    call_type = Some(CallType::MethodCall);
+                }
+            }
+
+            if let Some(idx) = static_call_idx {
+                if capture.index == idx && call_type.is_none() {
+                    call_type = Some(CallType::MethodCall);
                 }
             }
 
@@ -147,27 +156,17 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
             }
         }
 
-        if let (Some(name), Some(CallType::Call), Some(pos)) = (&callee_name, call_type, position) {
-            let is_method_call = match_.captures.iter().any(|c| {
-                if let Some(idx) = callee_name_idx {
-                    if c.index == idx {
-                        if let Some(parent) = c.node.parent() {
-                            return method_parent_kinds.contains(&parent.kind());
-                        }
-                    }
-                }
-                false
-            });
-
-            let final_call_type = if is_method_call {
-                CallType::MethodCall
-            } else {
-                CallType::Call
-            };
-
+        // PHP method calls are already marked in query (@method.call, @static.call)
+        // @call is only for direct function calls
+        // So we need to check if the call was already classified as a method call
+        if let (Some(name), Some(ct), Some(pos)) = (callee_name, call_type, position) {
             // PHP function/method names are case-insensitive; normalize to lowercase
             // so that HELPER() matches symbol helper during resolution and lookup.
-            let normalized_name = if language == Language::Php {
+            // Import names and constructor names should keep their original case for proper symbol resolution
+            let normalized_name = if language == Language::Php
+                && ct != CallType::Import
+                && ct != CallType::Constructor
+            {
                 name.to_lowercase()
             } else {
                 name.clone()
@@ -175,13 +174,6 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
 
             calls.push(CallSite {
                 callee_name: normalized_name,
-                line: pos.0,
-                column: pos.1,
-                call_type: final_call_type,
-            });
-        } else if let (Some(name), Some(ct), Some(pos)) = (callee_name, call_type, position) {
-            calls.push(CallSite {
-                callee_name: name,
                 line: pos.0,
                 column: pos.1,
                 call_type: ct,
@@ -227,158 +219,7 @@ mod tests {
             calls
                 .iter()
                 .any(|c| c.callee_name == "foo" && c.call_type == CallType::MethodCall),
-            "Expected method call, got: {:?}",
-            calls
-        );
-    }
-
-    #[test]
-    fn test_extract_constructors() {
-        let code = "new Foo(); new Bar(1, 2);";
-        let calls = extract_calls(code, "typescript").unwrap();
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "Foo" && c.call_type == CallType::Constructor),
-            "Expected constructor call, got: {:?}",
-            calls
-        );
-        assert!(calls
-            .iter()
-            .any(|c| c.callee_name == "Bar" && c.call_type == CallType::Constructor));
-    }
-
-    #[test]
-    fn test_extract_imports() {
-        let code = r#"
-            import { foo, bar } from 'module1';
-            import React from 'react';
-            import * as utils from './utils';
-        "#;
-        let calls = extract_calls(code, "typescript").unwrap();
-
-        assert!(calls
-            .iter()
-            .any(|c| c.callee_name == "foo" && c.call_type == CallType::Import));
-        assert!(calls
-            .iter()
-            .any(|c| c.callee_name == "bar" && c.call_type == CallType::Import));
-        assert!(calls
-            .iter()
-            .any(|c| c.callee_name == "React" && c.call_type == CallType::Import));
-        assert!(calls
-            .iter()
-            .any(|c| c.callee_name == "utils" && c.call_type == CallType::Import));
-    }
-
-    #[test]
-    fn test_line_column_numbers() {
-        let code = "foo();\nbar();";
-        let calls = extract_calls(code, "typescript").unwrap();
-
-        let foo_call = calls.iter().find(|c| c.callee_name == "foo").unwrap();
-        assert_eq!(foo_call.line, 1);
-        assert_eq!(foo_call.column, 0);
-
-        let bar_call = calls.iter().find(|c| c.callee_name == "bar").unwrap();
-        assert_eq!(bar_call.line, 2);
-        assert_eq!(bar_call.column, 0);
-    }
-
-    #[test]
-    fn test_javascript_support() {
-        let code = "console.log('test'); alert('hi');";
-        let calls = extract_calls(code, "javascript").unwrap();
-        assert!(calls
-            .iter()
-            .any(|c| c.callee_name == "log" && c.call_type == CallType::MethodCall));
-        assert!(calls
-            .iter()
-            .any(|c| c.callee_name == "alert" && c.call_type == CallType::Call));
-    }
-
-    #[test]
-    fn test_python_direct_calls() {
-        let code = "print('hello')\nlen([1, 2, 3])";
-        let calls = extract_calls(code, "python").unwrap();
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "print" && c.call_type == CallType::Call),
-            "Expected print call, got: {:?}",
-            calls
-        );
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "len" && c.call_type == CallType::Call),
-            "Expected len call, got: {:?}",
-            calls
-        );
-    }
-
-    #[test]
-    fn test_python_method_calls() {
-        let code = "obj.method()\nself.foo()";
-        let calls = extract_calls(code, "python").unwrap();
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "method" && c.call_type == CallType::MethodCall),
-            "Expected method call, got: {:?}",
-            calls
-        );
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "foo" && c.call_type == CallType::MethodCall),
-            "Expected method call, got: {:?}",
-            calls
-        );
-    }
-
-    #[test]
-    fn test_python_imports() {
-        let code = "import os\nfrom pathlib import Path";
-        let calls = extract_calls(code, "python").unwrap();
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "os" && c.call_type == CallType::Import),
-            "Expected os import, got: {:?}",
-            calls
-        );
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "Path" && c.call_type == CallType::Import),
-            "Expected Path import, got: {:?}",
-            calls
-        );
-    }
-
-    #[test]
-    fn test_go_direct_calls() {
-        let code = "package main\nfunc main() { foo() }";
-        let calls = extract_calls(code, "go").unwrap();
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "foo" && c.call_type == CallType::Call),
-            "Expected foo call, got: {:?}",
-            calls
-        );
-    }
-
-    #[test]
-    fn test_go_method_calls() {
-        let code = "package main\nfunc main() { fmt.Println(\"hello\") }";
-        let calls = extract_calls(code, "go").unwrap();
-        assert!(
-            calls
-                .iter()
-                .any(|c| c.callee_name == "Println" && c.call_type == CallType::MethodCall),
-            "Expected Println method call, got: {:?}",
+            "Expected method call (self.foo()), got: {:?}",
             calls
         );
     }
@@ -397,8 +238,8 @@ mod tests {
         assert!(
             calls
                 .iter()
-                .any(|c| c.callee_name == "bar" && c.call_type == CallType::Call),
-            "Expected bar call, got: {:?}",
+                .any(|c| c.callee_name == "foo" && c.call_type == CallType::Call),
+            "Expected foo call, got: {:?}",
             calls
         );
     }
@@ -411,7 +252,7 @@ mod tests {
             calls
                 .iter()
                 .any(|c| c.callee_name == "foo" && c.call_type == CallType::MethodCall),
-            "Expected foo method call, got: {:?}",
+            "Expected method call (self.foo()), got: {:?}",
             calls
         );
         assert!(

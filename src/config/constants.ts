@@ -9,6 +9,7 @@ export const DEFAULT_INCLUDE = [
   "**/*.{yaml,yml,toml}",
   "**/*.{md,mdx}",
   "**/*.{sh,bash,zsh}",
+  "**/*.{txt,html,htm}",
 ];
 
 export const DEFAULT_EXCLUDE = [
@@ -16,6 +17,7 @@ export const DEFAULT_EXCLUDE = [
   "**/.git/**",
   "**/dist/**",
   "**/build/**",
+  "**/*build*/**",
   "**/*.min.js",
   "**/*.bundle.js",
   "**/vendor/**",
@@ -25,6 +27,8 @@ export const DEFAULT_EXCLUDE = [
   "**/.next/**",
   "**/.nuxt/**",
   "**/.opencode/**",
+  "**/.*",
+  "**/.*/**",
 ];
 
 

@@ -315,7 +315,7 @@ describe("tools utils", () => {
 
   describe("formatCodebasePeek", () => {
     it("should return empty message for no results", () => {
-      const result = formatCodebasePeek([], "test query");
+      const result = formatCodebasePeek([]);
 
       expect(result).toContain("No matching code found");
     });
@@ -330,14 +330,12 @@ describe("tools utils", () => {
         chunkType: "function",
         name: "initialize",
       }];
-      const result = formatCodebasePeek(results, "init function");
+      const result = formatCodebasePeek(results);
 
-      expect(result).toContain("1 locations");
       expect(result).toContain('"initialize"');
       expect(result).toContain("src/index.ts:10-20");
       expect(result).toContain("0.85");
       expect(result).toContain("function");
-      expect(result).toContain("Use Read tool");
     });
 
     it("should format results without names as anonymous", () => {
@@ -349,7 +347,7 @@ describe("tools utils", () => {
         score: 0.70,
         chunkType: "other",
       }];
-      const result = formatCodebasePeek(results, "utils");
+      const result = formatCodebasePeek(results);
 
       expect(result).toContain("(anonymous)");
     });
@@ -364,9 +362,11 @@ describe("tools utils", () => {
         chunkType: "function",
         name: "foo",
       }];
-      const result = formatCodebasePeek(results, "my search query");
+      const result = formatCodebasePeek(results);
 
-      expect(result).toContain('"my search query"');
+      expect(result).toContain('"foo"');
+      expect(result).toContain("a.ts:1-2");
+      expect(result).toContain("0.5");
     });
   });
 

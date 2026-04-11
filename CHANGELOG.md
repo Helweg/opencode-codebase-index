@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Knowledge base support**: Added `add_knowledge_base`, `list_knowledge_bases`, and `remove_knowledge_base` tools to manage external document folders indexed alongside the project
+- **Reranking with SiliconFlow**: Added `BAAI/bge-reranker-v2-m3` reranking support via SiliconFlow API for improved search result quality
+- **TXT/HTML file support**: Added `*.txt`, `*.html`, `*.htm` to default include patterns for document indexing
+- **Config merging**: Global and project configs are now merged, allowing shared provider settings at global level and knowledge base paths at project level
+- **Hidden file exclusion**: Files and folders starting with `.` are now excluded from indexing and file watching
+- **Build folder exclusion**: Folders containing "build" in their name (e.g., `build`, `mingwBuildDebug`) are now excluded from indexing and file watching
+- **additionalInclude config**: Added new config option to extend default file patterns without replacing them
+
+### Changed
+- **Default verbose=false**: Changed `/index` command default to `verbose=false` to reduce token consumption
+
 ## [0.6.1] - 2026-03-29
 
 ### Added

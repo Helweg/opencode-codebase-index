@@ -306,8 +306,6 @@ export class Logger {
     const m = this.metrics;
     const lines: string[] = [];
     
-    lines.push("=== Metrics ===");
-    
     if (m.indexingStartTime && m.indexingEndTime) {
       const duration = m.indexingEndTime - m.indexingStartTime;
       lines.push(`Indexing duration: ${(duration / 1000).toFixed(2)}s`);

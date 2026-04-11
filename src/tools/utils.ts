@@ -16,11 +16,11 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
   const lines: string[] = [];
   
   if (stats.indexedChunks === 0 && stats.removedChunks === 0) {
-    lines.push(`Indexed. ${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`);
+    lines.push(`${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`);
   } else if (stats.indexedChunks === 0) {
-    lines.push(`Indexed. ${stats.totalFiles} files, removed ${stats.removedChunks} stale chunks, ${stats.existingChunks} chunks remain.`);
+    lines.push(`${stats.totalFiles} files, removed ${stats.removedChunks} stale chunks, ${stats.existingChunks} chunks remain.`);
   } else {
-    let main = `Indexed. ${stats.totalFiles} files processed, ${stats.indexedChunks} new chunks embedded.`;
+    let main = `${stats.totalFiles} files processed, ${stats.indexedChunks} new chunks embedded.`;
     if (stats.existingChunks > 0) {
       main += ` ${stats.existingChunks} unchanged chunks skipped.`;
     }
@@ -71,16 +71,15 @@ export function formatStatus(status: StatusResult): string {
   }
 
   const lines = [
-    `Index status:`,
-    `  Indexed chunks: ${status.vectorCount.toLocaleString()}`,
-    `  Provider: ${status.provider}`,
-    `  Model: ${status.model}`,
-    `  Location: ${status.indexPath}`,
+    `Indexed chunks: ${status.vectorCount.toLocaleString()}`,
+    `Provider: ${status.provider}`,
+    `Model: ${status.model}`,
+    `Location: ${status.indexPath}`,
   ];
 
   if (status.currentBranch !== "default") {
-    lines.push(`  Current branch: ${status.currentBranch}`);
-    lines.push(`  Base branch: ${status.baseBranch}`);
+    lines.push(`Current branch: ${status.currentBranch}`);
+    lines.push(`Base branch: ${status.baseBranch}`);
   }
 
   if (status.compatibility && !status.compatibility.compatible) {
@@ -88,13 +87,13 @@ export function formatStatus(status: StatusResult): string {
     lines.push(`COMPATIBILITY WARNING: ${status.compatibility.reason}`);
     if (status.compatibility.storedMetadata) {
       const stored = status.compatibility.storedMetadata;
-      lines.push(`  Index was built with: ${stored.embeddingProvider}/${stored.embeddingModel} (${stored.embeddingDimensions}D)`);
-      lines.push(`  Current config:       ${status.provider}/${status.model}`);
+      lines.push(`Index was built with: ${stored.embeddingProvider}/${stored.embeddingModel} (${stored.embeddingDimensions}D)`);
+      lines.push(`Current config:       ${status.provider}/${status.model}`);
     }
   } else if (!status.compatibility) {
-    lines.push(`  Compatibility: No compatibility information found. Maybe the index is not initialized yet, try running index_codebase.`);
+    lines.push(`Compatibility: No compatibility information found. Maybe the index is not initialized yet, try running index_codebase.`);
   } else {
-    lines.push(`  Compatibility: Index is compatible with the current provider and model.`);
+    lines.push(`Compatibility: Index is compatible with the current provider and model.`);
   }
 
   return lines.join("\n");
@@ -136,7 +135,7 @@ export function calculatePercentage(progress: IndexProgress): number {
   return 0;
 }
 
-export function formatCodebasePeek(results: SearchResult[], query: string): string {
+export function formatCodebasePeek(results: SearchResult[]): string {
   if (results.length === 0) {
     return "No matching code found. Try a different query or run index_codebase first.";
   }
@@ -147,7 +146,7 @@ export function formatCodebasePeek(results: SearchResult[], query: string): stri
     return `[${idx + 1}] ${r.chunkType} ${name} at ${location} (score: ${r.score.toFixed(2)})`;
   });
 
-  return `Found ${results.length} locations for "${query}":\n\n${formatted.join("\n")}\n\nUse Read tool to examine specific files.`;
+  return formatted.join("\n");
 }
 
 export function formatHealthCheck(result: HealthCheckResult): string {
@@ -155,30 +154,30 @@ export function formatHealthCheck(result: HealthCheckResult): string {
     return "Index is healthy. No stale entries found.";
   }
 
-  const lines = [`Health check complete:`];
+  const lines: string[] = [];
   
   if (result.removed > 0) {
-    lines.push(`  Removed stale entries: ${result.removed}`);
+    lines.push(`Removed stale entries: ${result.removed}`);
   }
   
   if (result.gcOrphanEmbeddings > 0) {
-    lines.push(`  Garbage collected orphan embeddings: ${result.gcOrphanEmbeddings}`);
+    lines.push(`Garbage collected orphan embeddings: ${result.gcOrphanEmbeddings}`);
   }
   
   if (result.gcOrphanChunks > 0) {
-    lines.push(`  Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
+    lines.push(`Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
   }
 
   if (result.gcOrphanSymbols > 0) {
-    lines.push(`  Garbage collected orphan symbols: ${result.gcOrphanSymbols}`);
+    lines.push(`Garbage collected orphan symbols: ${result.gcOrphanSymbols}`);
   }
 
   if (result.gcOrphanCallEdges > 0) {
-    lines.push(`  Garbage collected orphan call edges: ${result.gcOrphanCallEdges}`);
+    lines.push(`Garbage collected orphan call edges: ${result.gcOrphanCallEdges}`);
   }
 
   if (result.filePaths.length > 0) {
-    lines.push(`  Cleaned paths: ${result.filePaths.join(", ")}`);
+    lines.push(`Cleaned paths: ${result.filePaths.join(", ")}`);
   }
 
   return lines.join("\n");
@@ -207,11 +206,7 @@ export function formatDefinitionLookup(results: SearchResult[], query: string): 
     return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
   });
 
-  const header = results.length === 1
-    ? `Definition found for "${query}":`
-    : `Found ${results.length} definition candidates for "${query}":`;
-
-  return `${header}\n\n${formatted.join("\n\n")}`;
+  return formatted.join("\n\n");
 }
 
 export type ScoreFormat = "score" | "similarity";

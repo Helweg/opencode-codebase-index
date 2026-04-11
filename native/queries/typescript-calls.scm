@@ -16,7 +16,7 @@
 ; -------------------------------------------------------------
 (call_expression
   function: (member_expression
-    property: (property_identifier) @callee.name)) @call
+    property: (property_identifier) @callee.name)) @method.call
 
 ; -------------------------------------------------------------
 ; Constructor calls: new Foo(), new Bar(args)

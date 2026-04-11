@@ -17,6 +17,8 @@
 - [🎯 When to Use What](#-when-to-use-what)
 - [🧰 Tools Available](#-tools-available)
 - [🎮 Slash Commands](#-slash-commands)
+- [📚 Knowledge Base](#-knowledge-base)
+- [🔄 Reranking](#-reranking)
 - [⚙️ Configuration](#️-configuration)
 - [🤝 Contributing](#-contributing)
 
@@ -186,7 +188,23 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Bash, C, C++, JSON, TOML, YAML
+**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Bash, C, C++, JSON, TOML, YAML
+
+**Additional Supported Formats (line-based chunking)**: TXT, HTML, HTM, Markdown, Shell scripts
+
+**Default File Patterns**:
+```
+**/*.{ts,tsx,js,jsx,mjs,cjs}    **/*.{py,pyi}
+**/*.{go,rs,java,kt,scala}      **/*.{c,cpp,cc,h,hpp}
+**/*.{rb,php,inc,swift}         **/*.{vue,svelte,astro}
+**/*.{sql,graphql,proto}        **/*.{yaml,yml,toml}
+**/*.{md,mdx}                   **/*.{sh,bash,zsh}
+**/*.{txt,html,htm}
+```
+
+Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*.pdf"`, `"**/*.csv"`).
+
+**Max File Size**: Default 1MB (1048576 bytes). Configure via `indexing.maxFileSize` (bytes).
 2. **Chunking**: Large blocks are split with overlapping windows to preserve context across chunk boundaries.
 3. **Embedding**: These blocks are converted into vector representations using your configured AI provider.
 4. **Storage**: Embeddings are stored in SQLite (deduplicated by content hash) and vectors in `usearch` with F16 quantization for 50% memory savings. A branch catalog tracks which chunks exist on each branch.
@@ -236,6 +254,14 @@ When you switch branches, code changes but embeddings for unchanged content rema
 ├── inverted-index.json   # BM25 keyword index
 └── file-hashes.json      # File change detection
 ```
+
+### File Exclusions
+
+The following files/folders are excluded from indexing by default:
+
+- **Hidden files/folders**: Files starting with `.` (e.g., `.github`, `.vscode`, `.env`)
+- **Build folders**: Folders containing "build" in their name (e.g., `build`, `mingwBuildDebug`, `cmake-build-debug`)
+- **Default excludes**: `node_modules`, `dist`, `vendor`, `__pycache__`, `target`, `coverage`, etc.
 
 ## 🧰 Tools Available
 
@@ -300,6 +326,20 @@ Query the call graph to find callers or callees of a function/method. Automatica
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).
 - **Example**: Find who calls `validateToken` → `call_graph(name="validateToken", direction="callers")`
 
+### `add_knowledge_base`
+Add a folder as a knowledge base to be indexed alongside project code.
+- **Use for**: Indexing external documentation, API references, example programs.
+- **Parameters**: `path` (folder path, absolute or relative), `reindex` (optional, default `true`).
+- **Example**: `add_knowledge_base(path="/path/to/docs")`
+
+### `list_knowledge_bases`
+List all configured knowledge base folders and their status.
+
+### `remove_knowledge_base`
+Remove a knowledge base folder from the index.
+- **Parameters**: `path` (folder path to remove), `reindex` (optional, default `false`).
+- **Example**: `remove_knowledge_base(path="/path/to/docs")`
+
 ## 🎮 Slash Commands
 
 The plugin automatically registers these slash commands:
@@ -312,38 +352,207 @@ The plugin automatically registers these slash commands:
 | `/index` | **Update Index**. Forces a refresh of the codebase index. |
 | `/status` | **Check Status**. Shows if indexed, chunk count, and provider info. |
 
+## 📚 Knowledge Base
+
+The plugin can index **external documentation** alongside your project code. The indexed codebase includes:
+
+- **Project Source Code** — all code files in the current workspace
+- **API References** — hardware API docs, library documentation
+- **Usage Guides** — tutorials, how-to guides
+- **Example Programs** — code samples, demo projects
+
+### Adding Knowledge Base Folders
+
+Use the built-in tools to add documentation folders:
+
+```
+add_knowledge_base(path="/path/to/api-docs")
+add_knowledge_base(path="/path/to/examples")
+```
+
+The folder will be indexed into the **same database** as your project code. All searches automatically include both sources.
+
+### Managing Knowledge Bases
+
+```
+list_knowledge_bases          # Show configured knowledge bases
+remove_knowledge_base(path="/path/to/api-docs")  # Remove a knowledge base
+```
+
+### Configuration Example
+
+Project-level config (`.opencode/codebase-index.json`):
+```json
+{
+  "knowledgeBases": [
+    "/home/user/docs/esp-idf",
+    "/home/user/docs/arduino"
+  ]
+}
+```
+
+Global-level config (`~/.config/opencode/codebase-index.json`):
+```json
+{
+  "embeddingProvider": "custom",
+  "customProvider": {
+    "baseUrl": "https://api.siliconflow.cn/v1",
+    "model": "BAAI/bge-m3",
+    "dimensions": 1024,
+    "apiKey": "{env:SILICONFLOW_API_KEY}"
+  }
+}
+```
+
+Config merging: Global config is the base, project config overrides. Knowledge bases from both levels are merged.
+
+### Syncing Changes
+
+- **Project code**: Auto-synced via file watcher (real-time)
+- **Knowledge base folders**: Manual sync — run `/index force` after changes
+
+## 🔄 Reranking
+
+The plugin supports **API-based reranking** for improved search result quality. Reranking uses a cross-encoder model to rescore the top search results.
+
+### Enable Reranking
+
+Add to your config (`.opencode/codebase-index.json` or global config):
+
+```json
+{
+  "reranker": {
+    "enabled": true,
+    "baseUrl": "https://api.siliconflow.cn/v1",
+    "model": "BAAI/bge-reranker-v2-m3",
+    "apiKey": "{env:SILICONFLOW_API_KEY}",
+    "topN": 20
+  }
+}
+```
+
+### Reranker Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `false` | Enable reranking |
+| `baseUrl` | - | Rerank API endpoint |
+| `model` | - | Reranking model name |
+| `apiKey` | - | API key (use `{env:VAR}` for security) |
+| `topN` | `20` | Number of top results to rerank |
+| `timeoutMs` | `30000` | Request timeout |
+
+### How It Works
+
+```
+Query → Embedding Search → BM25 Search → Fusion → Reranking → Results
+```
+
+1. **Embedding Search**: Semantic similarity via vector search
+2. **BM25 Search**: Keyword matching via inverted index
+3. **Fusion**: Combine semantic + keyword results (RRF or weighted)
+4. **Reranking**: Cross-encoder rescores top N results via API
+5. **Results**: Final ranked results
+
+### Supported Reranking APIs
+
+Any OpenAI-compatible reranking endpoint. Examples:
+- **SiliconFlow**: `BAAI/bge-reranker-v2-m3`
+- **Cohere**: `rerank-english-v3.0`
+- **Local models**: Any server implementing `/v1/rerank` format
+
 ## ⚙️ Configuration
 
 Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-index.json`:
 
+### Full Configuration Example
+
 ```json
 {
-  "embeddingProvider": "auto",
-  "scope": "project",
+  // === Embedding Provider ===
+  "embeddingProvider": "custom",              // auto | github-copilot | openai | google | ollama | custom
+  "scope": "project",                         // project (per-repo) | global (shared)
+
+  // === Custom Embedding API (when embeddingProvider is "custom") ===
+  "customProvider": {
+    "baseUrl": "https://api.siliconflow.cn/v1",
+    "model": "BAAI/bge-m3",
+    "dimensions": 1024,
+    "apiKey": "{env:SILICONFLOW_API_KEY}",
+    "maxTokens": 8192,                        // Max tokens per input text
+    "timeoutMs": 30000,                       // Request timeout (ms)
+    "concurrency": 3,                         // Max concurrent requests
+    "requestIntervalMs": 1000,                // Min delay between requests (ms)
+    "maxBatchSize": 64                        // Max inputs per /embeddings request
+  },
+
+  // === File Patterns ===
+  "include": [                                // Override default include patterns
+    "**/*.{ts,js,py,go,rs}"
+  ],
+  "exclude": [                                // Override default exclude patterns
+    "**/node_modules/**"
+  ],
+  "additionalInclude": [                      // Extend defaults (not replace)
+    "**/*.{txt,html,htm}",
+    "**/*.pdf"
+  ],
+
+  // === Knowledge Bases ===
+  "knowledgeBases": [                         // External docs to index alongside code
+    "/home/user/docs/esp-idf",
+    "/home/user/docs/arduino"
+  ],
+
+  // === Indexing ===
   "indexing": {
-    "autoIndex": false,
-    "watchFiles": true,
-    "maxFileSize": 1048576,
-    "maxChunksPerFile": 100,
-    "semanticOnly": false,
-    "autoGc": true,
-    "gcIntervalDays": 7,
-    "gcOrphanThreshold": 100,
-    "requireProjectMarker": true
+    "autoIndex": false,                       // Auto-index on plugin load
+    "watchFiles": true,                       // Re-index on file changes
+    "maxFileSize": 1048576,                   // Max file size in bytes (default: 1MB)
+    "maxChunksPerFile": 100,                  // Max chunks per file
+    "semanticOnly": false,                    // Only index functions/classes (skip blocks)
+    "retries": 3,                             // Embedding API retry attempts
+    "retryDelayMs": 1000,                     // Delay between retries (ms)
+    "autoGc": true,                           // Auto garbage collection
+    "gcIntervalDays": 7,                      // GC interval (days)
+    "gcOrphanThreshold": 100,                 // GC trigger threshold
+    "requireProjectMarker": true,             // Require .git/package.json to index
+    "maxDepth": 5,                            // Max directory depth (-1=unlimited, 0=root only)
+    "maxFilesPerDirectory": 100,              // Max files per directory (smallest first)
+    "fallbackToTextOnMaxChunks": true         // Fallback to text chunking on maxChunksPerFile
   },
+
+  // === Search ===
   "search": {
-    "maxResults": 20,
-    "minScore": 0.1,
-    "hybridWeight": 0.5,
-    "fusionStrategy": "rrf",
-    "rrfK": 60,
-    "rerankTopN": 20,
-    "contextLines": 0
+    "maxResults": 20,                         // Max results to return
+    "minScore": 0.1,                          // Min similarity score (0-1)
+    "hybridWeight": 0.5,                      // Keyword (1.0) vs semantic (0.0)
+    "fusionStrategy": "rrf",                  // rrf | weighted
+    "rrfK": 60,                               // RRF smoothing constant
+    "rerankTopN": 20,                         // Deterministic rerank depth
+    "contextLines": 0                         // Extra lines before/after match
   },
+
+  // === Reranking API ===
+  "reranker": {
+    "enabled": true,                          // Enable API reranking
+    "baseUrl": "https://api.siliconflow.cn/v1",
+    "model": "BAAI/bge-reranker-v2-m3",
+    "apiKey": "{env:SILICONFLOW_API_KEY}",
+    "topN": 20,                               // Number of results to rerank
+    "timeoutMs": 30000                        // Request timeout (ms)
+  },
+
+  // === Debug ===
   "debug": {
-    "enabled": false,
-    "logLevel": "info",
-    "metrics": false
+    "enabled": false,                         // Enable debug logging
+    "logLevel": "info",                       // error | warn | info | debug
+    "logSearch": true,                        // Log search operations
+    "logEmbedding": true,                     // Log embedding API calls
+    "logCache": true,                         // Log cache hits/misses
+    "logGc": true,                            // Log garbage collection
+    "logBranch": true,                        // Log branch detection
+    "metrics": false                          // Enable metrics collection
   }
 }
 ```
@@ -368,6 +577,10 @@ String values in `codebase-index.json` can reference environment variables with 
 |--------|---------|-------------|
 | `embeddingProvider` | `"auto"` | Which AI to use: `auto`, `github-copilot`, `openai`, `google`, `ollama`, `custom` |
 | `scope` | `"project"` | `project` = index per repo, `global` = shared index across repos |
+| `include` | (defaults) | Override the default include patterns (replaces defaults) |
+| `exclude` | (defaults) | Override the default exclude patterns (replaces defaults) |
+| `additionalInclude` | `[]` | Additional file patterns to include (extends defaults, e.g. `"**/*.txt"`, `"**/*.html"`) |
+| `knowledgeBases` | `[]` | External directories to index as knowledge bases (absolute or relative paths) |
 | **indexing** | | |
 | `autoIndex` | `false` | Automatically index on plugin load |
 | `watchFiles` | `true` | Re-index when files change |
@@ -380,6 +593,9 @@ String values in `codebase-index.json` can reference environment variables with 
 | `gcIntervalDays` | `7` | Run GC on initialization if last GC was more than N days ago |
 | `gcOrphanThreshold` | `100` | Run GC after indexing if orphan count exceeds this threshold |
 | `requireProjectMarker` | `true` | Require a project marker (`.git`, `package.json`, etc.) to enable file watching and auto-indexing. Prevents accidentally indexing large directories like home. Set to `false` to index any directory. |
+| `maxDepth` | `5` | Max directory traversal depth. `-1` = unlimited, `0` = only files in root dir, `1` = one level of subdirectories, etc. |
+| `maxFilesPerDirectory` | `100` | Max files to index per directory. Always picks the smallest files first. |
+| `fallbackToTextOnMaxChunks` | `true` | When a file exceeds `maxChunksPerFile`, fallback to text-based (line-by-line) chunking instead of skipping the rest of the file. |
 | **search** | | |
 | `maxResults` | `20` | Maximum results to return |
 | `minScore` | `0.1` | Minimum similarity score (0-1). Lower = more results |
@@ -388,6 +604,23 @@ String values in `codebase-index.json` can reference environment variables with 
 | `rrfK` | `60` | RRF smoothing constant. Higher values flatten rank impact, lower values prioritize top-ranked candidates more strongly |
 | `rerankTopN` | `20` | Deterministic rerank depth cap. Applies lightweight name/path/chunk-type rerank to top-N only |
 | `contextLines` | `0` | Extra lines to include before/after each match |
+| **reranker** | | |
+| `reranker.enabled` | `false` | Enable API-based reranking |
+| `reranker.baseUrl` | - | Rerank API endpoint URL |
+| `reranker.model` | - | Reranking model name (e.g. `BAAI/bge-reranker-v2-m3`) |
+| `reranker.apiKey` | - | API key for reranking service (use `{env:VAR}` for security) |
+| `reranker.topN` | `20` | Number of top results to rerank via API |
+| `reranker.timeoutMs` | `30000` | Rerank API request timeout in milliseconds |
+| **customProvider** | | |
+| `customProvider.baseUrl` | - | Base URL of OpenAI-compatible embeddings API (e.g. `https://api.siliconflow.cn/v1`) |
+| `customProvider.model` | - | Model name (e.g. `BAAI/bge-m3`, `nomic-embed-text`) |
+| `customProvider.dimensions` | - | Vector dimensions (e.g. `1024` for BGE-M3, `768` for nomic-embed-text) |
+| `customProvider.apiKey` | - | API key (use `{env:VAR}` for security) |
+| `customProvider.maxTokens` | `8192` | Max tokens per input text |
+| `customProvider.timeoutMs` | `30000` | Request timeout in milliseconds |
+| `customProvider.concurrency` | `3` | Max concurrent embedding requests |
+| `customProvider.requestIntervalMs` | `1000` | Minimum delay between requests (ms). Set to `0` for local servers |
+| `customProvider.maxBatchSize` | - | Max inputs per `/embeddings` request. Cap for servers with batch limits |
 | **debug** | | |
 | `enabled` | `false` | Enable debug logging and metrics collection |
 | `logLevel` | `"info"` | Log level: `error`, `warn`, `info`, `debug` |

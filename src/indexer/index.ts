@@ -11,6 +11,7 @@ import {
   EmbeddingProviderInterface,
   CustomProviderNonRetryableError,
 } from "../embeddings/provider.js";
+import { createReranker, RerankerInterface } from "../rerank/index.js";
 import { collectFiles, SkippedFile } from "../utils/files.js";
 import { createCostEstimate, CostEstimate } from "../utils/cost.js";
 import { Logger, initializeLogger } from "../utils/logger.js";
@@ -28,6 +29,7 @@ import {
   hashFile,
   hashContent,
   extractCalls,
+  parseFileAsText,
 } from "../native/index.js";
 import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
@@ -1292,6 +1294,7 @@ export class Indexer {
   private database: Database | null = null;
   private provider: EmbeddingProviderInterface | null = null;
   private configuredProviderInfo: ConfiguredProviderInfo | null = null;
+  private reranker: RerankerInterface | null = null;
   private fileHashCache: Map<string, string> = new Map();
   private fileHashCachePath: string = "";
   private failedBatchesPath: string = "";
@@ -1467,9 +1470,21 @@ export class Indexer {
       provider: this.configuredProviderInfo.provider,
       model: this.configuredProviderInfo.modelInfo.model,
       scope: this.config.scope,
+      rerankerEnabled: this.config.reranker?.enabled ?? false,
     });
 
     this.provider = createEmbeddingProvider(this.configuredProviderInfo);
+
+    // Initialize reranker if configured
+    if (this.config.reranker?.enabled) {
+      this.reranker = createReranker(this.config.reranker);
+      if (this.reranker.isAvailable()) {
+        this.logger.info("Reranker initialized", {
+          model: this.config.reranker.model,
+          baseUrl: this.config.reranker.baseUrl,
+        });
+      }
+    }
 
     await fsPromises.mkdir(this.indexPath, { recursive: true });
 
@@ -1716,11 +1731,14 @@ export class Indexer {
   async estimateCost(): Promise<CostEstimate> {
     const { configuredProviderInfo } = await this.ensureInitialized();
 
+    const includePatterns = [...this.config.include, ...this.config.additionalInclude];
     const { files } = await collectFiles(
       this.projectRoot,
-      this.config.include,
+      includePatterns,
       this.config.exclude,
-      this.config.indexing.maxFileSize
+      this.config.indexing.maxFileSize,
+      this.config.knowledgeBases,
+      { maxDepth: this.config.indexing.maxDepth, maxFilesPerDirectory: this.config.indexing.maxFilesPerDirectory }
     );
 
     return createCostEstimate(files, configuredProviderInfo);
@@ -1764,11 +1782,14 @@ export class Indexer {
 
     this.loadFileHashCache();
 
+    const includePatterns = [...this.config.include, ...this.config.additionalInclude];
     const { files, skipped } = await collectFiles(
       this.projectRoot,
-      this.config.include,
+      includePatterns,
       this.config.exclude,
-      this.config.indexing.maxFileSize
+      this.config.indexing.maxFileSize,
+      this.config.knowledgeBases,
+      { maxDepth: this.config.indexing.maxDepth, maxFilesPerDirectory: this.config.indexing.maxFilesPerDirectory }
     );
 
     stats.totalFiles = files.length;
@@ -1853,7 +1874,17 @@ export class Indexer {
       }
 
       let fileChunkCount = 0;
-      for (const chunk of parsed.chunks) {
+      let chunksToProcess = parsed.chunks;
+
+      if (this.config.indexing.fallbackToTextOnMaxChunks && chunksToProcess.length > this.config.indexing.maxChunksPerFile) {
+        const changedFile = changedFiles.find(f => f.path === parsed.path);
+        if (changedFile) {
+          const textChunks = parseFileAsText(parsed.path, changedFile.content);
+          chunksToProcess = textChunks;
+        }
+      }
+
+      for (const chunk of chunksToProcess) {
         if (fileChunkCount >= this.config.indexing.maxChunksPerFile) {
           break;
         }
@@ -2519,6 +2550,71 @@ export class Indexer {
       : baseFiltered
     ).slice(0, maxResults);
 
+    // Apply reranking if enabled and available
+    let finalResults = filtered;
+    if (this.reranker?.isAvailable() && filtered.length > 1) {
+      const rerankStartTime = performance.now();
+
+      // Read content for reranking
+      const documentsForRerank = await Promise.all(
+        filtered.map(async (r) => {
+          try {
+            const fileContent = await fsPromises.readFile(r.metadata.filePath, "utf-8");
+            const lines = fileContent.split("\n");
+            return lines.slice(r.metadata.startLine - 1, r.metadata.endLine).join("\n");
+          } catch {
+            return r.metadata.name ?? r.metadata.chunkType;
+          }
+        })
+      );
+
+      try {
+        const rerankResponse = await this.reranker.rerank(
+          query,
+          documentsForRerank,
+          this.config.reranker?.topN ?? filtered.length
+        );
+
+        if (rerankResponse.results.length > 0) {
+          // Create a map of original index to rerank score
+          const rerankScores = new Map<number, number>();
+          for (const result of rerankResponse.results) {
+            rerankScores.set(result.index, result.relevanceScore);
+          }
+
+          // Reorder results based on rerank scores
+          const rerankedIndices = rerankResponse.results
+            .sort((a, b) => b.relevanceScore - a.relevanceScore)
+            .map(r => r.index);
+
+          // Build final results: reranked first, then remaining
+          const rerankedSet = new Set(rerankedIndices);
+          const reranked = rerankedIndices
+            .filter(idx => idx < filtered.length)
+            .map(idx => ({
+              ...filtered[idx],
+              score: rerankScores.get(idx) ?? filtered[idx].score,
+            }));
+          const remaining = filtered
+            .filter((_, idx) => !rerankedSet.has(idx));
+
+          finalResults = [...reranked, ...remaining].slice(0, maxResults);
+        }
+
+        const rerankMs = performance.now() - rerankStartTime;
+        this.logger.search("debug", "Reranking complete", {
+          documentsReranked: documentsForRerank.length,
+          rerankMs: Math.round(rerankMs * 100) / 100,
+          tokensUsed: rerankResponse.tokensUsed,
+        });
+      } catch (error) {
+        // Reranking failed, use original results
+        this.logger.search("warn", "Reranking failed, using original results", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const totalSearchMs = performance.now() - searchStartTime;
     this.logger.recordSearch(totalSearchMs, {
       embeddingMs,
@@ -2528,7 +2624,7 @@ export class Indexer {
     });
     this.logger.search("info", "Search complete", {
       query,
-      results: filtered.length,
+      results: finalResults.length,
       totalMs: Math.round(totalSearchMs * 100) / 100,
       embeddingMs: Math.round(embeddingMs * 100) / 100,
       vectorMs: Math.round(vectorMs * 100) / 100,
@@ -2540,7 +2636,7 @@ export class Indexer {
     const metadataOnly = options?.metadataOnly ?? false;
 
     return Promise.all(
-      filtered.map(async (r) => {
+      finalResults.map(async (r) => {
         let content = "";
         let contextStartLine = r.metadata.startLine;
         let contextEndLine = r.metadata.endLine;

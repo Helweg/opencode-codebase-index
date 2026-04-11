@@ -43,6 +43,18 @@ export class FileWatcher {
         const relativePath = path.relative(this.projectRoot, filePath);
         if (!relativePath) return false;
 
+        // Exclude hidden files/folders (starting with .)
+        const pathParts = relativePath.split(path.sep);
+        for (const part of pathParts) {
+          if (part.startsWith(".") && part !== "." && part !== "..") {
+            return true;
+          }
+          // Exclude folders containing "build" in their name
+          if (part.toLowerCase().includes("build")) {
+            return true;
+          }
+        }
+
         if (ignoreFilter.ignores(relativePath)) {
           return true;
         }
@@ -63,11 +75,12 @@ export class FileWatcher {
   }
 
   private handleChange(type: FileChangeType, filePath: string): void {
+    const includePatterns = [...this.config.include, ...(this.config.additionalInclude ?? [])];
     if (
       !shouldIncludeFile(
         filePath,
         this.projectRoot,
-        this.config.include,
+        includePatterns,
         this.config.exclude,
         createIgnoreFilter(this.projectRoot)
       )

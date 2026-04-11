@@ -3,6 +3,7 @@
 ; =============================================================
 
 ; Direct function calls: foo(), strlen($s)
+; Must be checked first to avoid being captured by method call patterns
 (function_call_expression
   function: (name) @callee.name) @call
 
@@ -11,17 +12,17 @@
   function: (qualified_name
     (name) @callee.name)) @call
 
+; Static method calls: Foo::bar(), self::method()
+(scoped_call_expression
+  name: (name) @callee.name) @static.call
+
 ; Method calls: $obj->method()
 (member_call_expression
-  name: (name) @callee.name) @call
+  name: (name) @callee.name) @method.call
 
 ; Nullsafe method calls: $obj?->method()
 (nullsafe_member_call_expression
-  name: (name) @callee.name) @call
-
-; Static method calls: Foo::bar(), self::method()
-(scoped_call_expression
-  name: (name) @callee.name) @call
+  name: (name) @callee.name) @method.call
 
 ; Constructor calls: new Foo()
 (object_creation_expression

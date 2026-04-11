@@ -242,7 +242,6 @@ describe("MCP server tools and prompts", () => {
     const content = result.content as Array<{ type: string; text?: string }>;
     expect(content).toHaveLength(1);
     expect(content[0].type).toBe("text");
-    expect(content[0].text).toContain("Definition found");
     expect(content[0].text).toContain("validateToken");
   });
 

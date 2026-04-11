@@ -9,7 +9,7 @@
 ; Method calls: obj.method(), self.foo()
 (call_expression
   function: (field_expression
-    field: (field_identifier) @callee.name)) @call
+    field: (field_identifier) @callee.name)) @method.call
 
 ; Path calls: std::fs::read(), Vec::new()
 (call_expression

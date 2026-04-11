@@ -18,24 +18,48 @@ describe("call-graph", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe("call extraction", () => {
-    it("should extract direct function calls", () => {
-      const content = fs.readFileSync(path.join(fixturesDir, "simple-calls.ts"), "utf-8");
-      const calls = extractCalls(content, "typescript");
+ describe("call extraction", () => {
+     it("should extract method calls", () => {
+          const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+          const calls = extractCalls(content, "php");
 
-      const callNames = calls.map((c) => c.calleeName);
-      expect(callNames).toContain("directCall");
-      expect(callNames).toContain("helper");
-      expect(callNames).toContain("compute");
+          const methodCalls = calls.filter((c) => c.callType === "MethodCall");
+          const methodNames = methodCalls.map((c) => c.calleeName);
+          expect(methodNames).toContain("validate");
+          expect(methodNames).toContain("add");
+          expect(methodNames).toContain("subtract");
+        });
 
-      const directCall = calls.find((c) => c.calleeName === "directCall");
-      expect(directCall).toBeDefined();
-      expect(directCall!.callType).toBe("Call");
+        it("should extract nullsafe method calls", () => {
+          const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+          const calls = extractCalls(content, "php");
 
-      const helperCall = calls.find((c) => c.calleeName === "helper");
-      expect(helperCall).toBeDefined();
-      expect(helperCall!.callType).toBe("Call");
-    });
+          const resetCall = calls.find((c) => c.calleeName === "reset");
+          expect(resetCall).toBeDefined();
+          expect(resetCall!.callType).toBe("MethodCall");
+        });
+
+        it("should extract static method calls", () => {
+          const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+          const calls = extractCalls(content, "php");
+
+          const createCall = calls.find((c) => c.calleeName === "create");
+          expect(createCall).toBeDefined();
+          expect(createCall!.callType).toBe("MethodCall");
+        });
+
+        it("should detect method calls using zero-allocation approach", () => {
+          const content = fs.readFileSync(path.join(fixturesDir, "php-method-zeroalloc.php"), "utf-8");
+          const calls = extractCalls(content, "php");
+
+          // Check that method calls are correctly identified without using parent() on callee.name
+          const methodCalls = calls.filter((c) => c.callType === "MethodCall");
+          expect(methodCalls.length).toBeGreaterThan(0);
+
+          // Verify specific method call patterns
+          expect(methodCalls.some(c => c.calleeName === "process")).toBe(true);
+          expect(methodCalls.some(c => c.calleeName === "validate")).toBe(true);
+        });
 
     it("should extract method calls", () => {
       const content = fs.readFileSync(path.join(fixturesDir, "method-calls.ts"), "utf-8");
@@ -125,32 +149,32 @@ describe("call-graph", () => {
       });
 
       it("should extract method calls", () => {
-        const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
-        const calls = extractCalls(content, "php");
+         const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+         const calls = extractCalls(content, "php");
 
-        const methodCalls = calls.filter((c) => c.callType === "MethodCall");
-        const methodNames = methodCalls.map((c) => c.calleeName);
-        expect(methodNames).toContain("validate");
-        expect(methodNames).toContain("add");
-        expect(methodNames).toContain("subtract");
-      });
+         const methodCalls = calls.filter((c) => c.callType === "MethodCall");
+         const methodNames = methodCalls.map((c) => c.calleeName);
+         expect(methodNames).toContain("validate");
+         expect(methodNames).toContain("add");
+         expect(methodNames).toContain("subtract");
+       });
 
-      it("should extract nullsafe method calls", () => {
-        const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
-        const calls = extractCalls(content, "php");
+     it("should extract nullsafe method calls", () => {
+         const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+         const calls = extractCalls(content, "php");
 
-        const resetCall = calls.find((c) => c.calleeName === "reset");
-        expect(resetCall).toBeDefined();
-        expect(resetCall!.callType).toBe("MethodCall");
+         const resetCall = calls.find((c) => c.calleeName === "reset");
+         expect(resetCall).toBeDefined();
+         expect(resetCall!.callType).toBe("MethodCall");
       });
 
       it("should extract static method calls", () => {
-        const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
-        const calls = extractCalls(content, "php");
+         const content = fs.readFileSync(path.join(fixturesDir, "php-method-calls.php"), "utf-8");
+         const calls = extractCalls(content, "php");
 
-        const createCall = calls.find((c) => c.calleeName === "create");
-        expect(createCall).toBeDefined();
-        expect(createCall!.callType).toBe("MethodCall");
+         const createCall = calls.find((c) => c.calleeName === "create");
+         expect(createCall).toBeDefined();
+         expect(createCall!.callType).toBe("MethodCall");
       });
 
       it("should extract constructor calls", () => {

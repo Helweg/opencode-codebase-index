@@ -16,13 +16,26 @@ export interface IndexingConfig {
   autoGc: boolean;
   gcIntervalDays: number;
   gcOrphanThreshold: number;
-  /** 
-   * When true (default), requires a project marker (.git, package.json, Cargo.toml, etc.) 
+  /**
+   * When true (default), requires a project marker (.git, package.json, Cargo.toml, etc.)
    * to be present before enabling file watching and auto-indexing.
-   * This prevents accidentally watching/indexing large non-project directories like home.
-   * Set to false to allow indexing any directory.
    */
   requireProjectMarker: boolean;
+  /**
+   * Max directory traversal depth. -1 = unlimited, 0 = only files in the root dir,
+   * 1 = one level of subdirectories, etc. Default: 5
+   */
+  maxDepth: number;
+  /**
+   * Max number of files to index per directory. Always picks the smallest files first.
+   * Default: 100
+   */
+  maxFilesPerDirectory: number;
+  /**
+   * When a file hits maxChunksPerFile, fallback to text-based (chunk_by_lines) parsing
+   * instead of skipping the rest of the file. Default: true
+   */
+  fallbackToTextOnMaxChunks: boolean;
 }
 
 export interface SearchConfig {
@@ -70,6 +83,21 @@ export interface CustomProviderConfig {
   max_batch_size?: number;
 }
 
+export interface RerankerConfig {
+  /** Whether to enable reranking. Default: false */
+  enabled: boolean;
+  /** Base URL of the rerank API endpoint (e.g. "https://api.siliconflow.cn/v1") */
+  baseUrl: string;
+  /** Model name for reranking (e.g. "BAAI/bge-reranker-v2-m3") */
+  model: string;
+  /** API key for the rerank service */
+  apiKey?: string;
+  /** Number of top documents to rerank. Default: 20 */
+  topN?: number;
+  /** Request timeout in milliseconds. Default: 30000 */
+  timeoutMs?: number;
+}
+
 export interface CodebaseIndexConfig {
   embeddingProvider: EmbeddingProvider | 'custom' | 'auto';
   embeddingModel?: EmbeddingModelName;
@@ -79,14 +107,25 @@ export interface CodebaseIndexConfig {
   indexing?: Partial<IndexingConfig>;
   search?: Partial<SearchConfig>;
   debug?: Partial<DebugConfig>;
+  /** Reranking configuration for improving search result quality */
+  reranker?: Partial<RerankerConfig>;
+  /** External directories to index as knowledge bases (absolute or relative paths) */
+  knowledgeBases?: string[];
+  /** Override the default include patterns (replaces defaults) */
   include: string[];
+  /** Override the default exclude patterns (replaces defaults) */
   exclude: string[];
+  /** Additional file patterns to include (extends defaults) */
+  additionalInclude?: string[];
 }
 
 export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
   indexing: IndexingConfig;
   search: SearchConfig;
   debug: DebugConfig;
+  reranker: RerankerConfig;
+  knowledgeBases: string[];
+  additionalInclude: string[];
 };
 
 function getDefaultIndexingConfig(): IndexingConfig {
@@ -102,6 +141,9 @@ function getDefaultIndexingConfig(): IndexingConfig {
     gcIntervalDays: 7,
     gcOrphanThreshold: 100,
     requireProjectMarker: true,
+    maxDepth: 5,
+    maxFilesPerDirectory: 100,
+    fallbackToTextOnMaxChunks: true,
   };
 }
 
@@ -132,6 +174,16 @@ function getDefaultDebugConfig(): DebugConfig {
     logGc: true,
     logBranch: true,
     metrics: true,
+  };
+}
+
+function getDefaultRerankerConfig(): RerankerConfig {
+  return {
+    enabled: false,
+    baseUrl: "https://api.siliconflow.cn/v1",
+    model: "BAAI/bge-reranker-v2-m3",
+    topN: 20,
+    timeoutMs: 30000,
   };
 }
 
@@ -201,6 +253,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     gcIntervalDays: typeof rawIndexing.gcIntervalDays === "number" ? Math.max(1, rawIndexing.gcIntervalDays) : defaultIndexing.gcIntervalDays,
     gcOrphanThreshold: typeof rawIndexing.gcOrphanThreshold === "number" ? Math.max(0, rawIndexing.gcOrphanThreshold) : defaultIndexing.gcOrphanThreshold,
     requireProjectMarker: typeof rawIndexing.requireProjectMarker === "boolean" ? rawIndexing.requireProjectMarker : defaultIndexing.requireProjectMarker,
+    maxDepth: typeof rawIndexing.maxDepth === "number" ? (rawIndexing.maxDepth < -1 ? -1 : rawIndexing.maxDepth) : defaultIndexing.maxDepth,
+    maxFilesPerDirectory: typeof rawIndexing.maxFilesPerDirectory === "number" ? Math.max(1, rawIndexing.maxFilesPerDirectory) : defaultIndexing.maxFilesPerDirectory,
+    fallbackToTextOnMaxChunks: typeof rawIndexing.fallbackToTextOnMaxChunks === "boolean" ? rawIndexing.fallbackToTextOnMaxChunks : defaultIndexing.fallbackToTextOnMaxChunks,
   };
 
   const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;
@@ -226,6 +281,27 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     logBranch: typeof rawDebug.logBranch === "boolean" ? rawDebug.logBranch : defaultDebug.logBranch,
     metrics: typeof rawDebug.metrics === "boolean" ? rawDebug.metrics : defaultDebug.metrics,
   };
+
+  const defaultReranker = getDefaultRerankerConfig();
+  const rawReranker = (input.reranker && typeof input.reranker === "object" ? input.reranker : {}) as Record<string, unknown>;
+  const reranker: RerankerConfig = {
+    enabled: typeof rawReranker.enabled === "boolean" ? rawReranker.enabled : defaultReranker.enabled,
+    baseUrl: typeof rawReranker.baseUrl === "string" ? rawReranker.baseUrl.trim().replace(/\/+$/, '') : defaultReranker.baseUrl,
+    model: typeof rawReranker.model === "string" ? rawReranker.model : defaultReranker.model,
+    apiKey: getResolvedString(rawReranker.apiKey, "$root.reranker.apiKey"),
+    topN: typeof rawReranker.topN === "number" ? Math.max(1, Math.min(200, Math.floor(rawReranker.topN))) : defaultReranker.topN,
+    timeoutMs: typeof rawReranker.timeoutMs === "number" ? Math.max(1000, rawReranker.timeoutMs) : defaultReranker.timeoutMs,
+  };
+
+  const rawKnowledgeBases = input.knowledgeBases;
+  const knowledgeBases: string[] = isStringArray(rawKnowledgeBases)
+    ? rawKnowledgeBases.filter(p => typeof p === "string" && p.trim().length > 0).map(p => p.trim())
+    : [];
+
+  const rawAdditionalInclude = input.additionalInclude;
+  const additionalInclude: string[] = isStringArray(rawAdditionalInclude)
+    ? rawAdditionalInclude.filter(p => typeof p === "string" && p.trim().length > 0).map(p => p.trim())
+    : [];
 
   let embeddingProvider: EmbeddingProvider | 'custom' | 'auto';
   let embeddingModel: EmbeddingModelName | undefined = undefined;
@@ -290,9 +366,12 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     scope: isValidScope(scopeValue) ? scopeValue : "project",
     include: includeValue ?? DEFAULT_INCLUDE,
     exclude: excludeValue ?? DEFAULT_EXCLUDE,
+    additionalInclude,
     indexing,
     search,
     debug,
+    reranker,
+    knowledgeBases,
   };
 }
 

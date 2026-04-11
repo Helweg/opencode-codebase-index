@@ -21,9 +21,10 @@ This document explains the architecture of opencode-codebase-index, including da
 │                              OpenCode Agent                                 │
 │                                                                             │
 │  Tools: codebase_search, codebase_peek, find_similar, call_graph,           │
-│         index_codebase, index_status, index_health_check, index_metrics,     │
-│         index_logs                                                            │
-│  Commands: /search, /find, /call-graph, /index, /status                      │
+│         index_codebase, index_status, index_health_check, index_metrics,    │
+│         index_logs, add_knowledge_base, list_knowledge_bases,               │
+│         remove_knowledge_base                                               │
+│  Commands: /search, /find, /call-graph, /index, /status                     │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -170,6 +171,7 @@ File system observer using chokidar:
 - Watches for file changes → triggers incremental index
 - Watches `.git/HEAD` → detects branch switches
 - Debounces rapid changes (500ms window)
+- Merges `additionalInclude` patterns with `include` patterns for proper file filtering
 
 ## Design Decisions
 
@@ -222,6 +224,21 @@ BM25 hybrid provides:
 - Fallback when semantic misses
 - Better results for technical queries
 - Configurable weighting (hybridWeight)
+
+### Why Optimized Tool Return Formats?
+
+Problem: Redundant prompt phrases in tool responses increase token usage and may cause LLMs to exit reasoning prematurely.
+
+Solution:
+- **Remove summary phrases**: e.g., "Found X results", "Index status:", "Health check complete:"
+- **Return raw data**: Direct result lists without introductory text
+- **Maintain clarity**: Keep essential context for unambiguous results
+
+Benefits:
+- Reduced token consumption for LLM tool calls
+- Faster LLM processing (less text to parse)
+- Better integration with LLM reasoning loops
+- Maintained functionality with cleaner output
 
 ### Why Branch-Aware Indexing?
 
@@ -284,6 +301,21 @@ Benefits:
 
 For a typical 500-file codebase (~5000 chunks): ~30MB total
 
+### Tool Call Performance
+
+Tool return formats are optimized to reduce token usage:
+
+| Tool | Before Optimization | After Optimization | Token Savings |
+|------|---------------------|-------------------|---------------|
+| `codebase_search` | "Found X results for 'query': ..." | Raw result list | ~15-20 tokens |
+| `codebase_peek` | "Found X locations for 'query': ..." | Raw result list | ~15-20 tokens |
+| `find_similar` | "Found X similar code blocks: ..." | Raw result list | ~15-20 tokens |
+| `call_graph` | "X calls Y function(s): ..." | Raw result list | ~10-15 tokens |
+| `index_status` | "Index status: ..." | Raw data | ~5-10 tokens |
+| `formatHealthCheck` | "Health check complete: ..." | Raw data | ~5-10 tokens |
+
+**Impact**: Reduces LLM context size, improves reasoning loop efficiency, and lowers API costs.
+
 ## Security Considerations
 
 ### What Gets Sent to Cloud
@@ -321,6 +353,7 @@ No credentials are stored by the plugin.
    - `ts_language()` match arm
    - `is_comment_node()` patterns
    - `is_semantic_node()` patterns
+   - Note: Recursion depth is limited to 1024 levels to prevent stack overflow
 4. Add tests in `native/src/parser.rs`
 
 ### Adding a New Embedding Provider

@@ -1,37 +1,11 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { existsSync, readFileSync } from "fs";
 import * as path from "path";
-import * as os from "os";
 
 import { parseConfig } from "./config/schema.js";
 import { handleEvalCommand } from "./eval/cli.js";
 import { createMcpServer } from "./mcp-server.js";
-
-function loadJsonFile(filePath: string): unknown {
-  try {
-    if (existsSync(filePath)) {
-      const content = readFileSync(filePath, "utf-8");
-      return JSON.parse(content);
-    }
-  } catch { /* ignore */ }
-  return null;
-}
-
-function loadPluginConfig(projectRoot: string, configPath?: string): unknown {
-  if (configPath) {
-    const config = loadJsonFile(configPath);
-    if (config) return config;
-  }
-
-  const projectConfig = loadJsonFile(path.join(projectRoot, ".opencode", "codebase-index.json"));
-  if (projectConfig) return projectConfig;
-
-  const globalConfig = loadJsonFile(path.join(os.homedir(), ".config", "opencode", "codebase-index.json"));
-  if (globalConfig) return globalConfig;
-
-  return {};
-}
+import { loadMergedConfig } from "./config/merger.js";
 
 function parseArgs(argv: string[]): { project: string; config?: string } {
   let project = process.cwd();
@@ -55,7 +29,7 @@ async function main(): Promise<void> {
   }
 
   const args = parseArgs(process.argv);
-  const rawConfig = loadPluginConfig(args.project, args.config);
+  const rawConfig = loadMergedConfig(args.project);
   const config = parseConfig(rawConfig);
 
   const server = createMcpServer(args.project, config);
