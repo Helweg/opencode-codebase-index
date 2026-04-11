@@ -682,7 +682,7 @@ fn chunk_by_lines(content: &str, language: &Language) -> Vec<CodeChunk> {
         let end = std::cmp::min(start + lines_per_chunk, total_lines);
         let sub_content: String = lines[start..end].join("\n");
 
-        if sub_content.len() >= MIN_CHUNK_SIZE {
+        if !sub_content.trim().is_empty() {
             chunks.push(CodeChunk {
                 content: sub_content,
                 start_line: start as u32 + 1,

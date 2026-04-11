@@ -66,10 +66,22 @@ const add = (a, b) => a + b;
       expect(chunks.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("should return empty array for unparseable content", () => {
+    it("should chunk plain text files", () => {
       const chunks = parseFile("data.txt", "just plain text");
 
       expect(chunks).toBeInstanceOf(Array);
+      expect(chunks.length).toBeGreaterThanOrEqual(1);
+      expect(chunks[0]?.content).toContain("just plain text");
+      expect(chunks[0]?.chunkType).toBe("block");
+    });
+
+    it("should chunk markdown files", () => {
+      const content = "# Project KB\n\nProject knowledge base delta.";
+      const chunks = parseFile("README.md", content);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(1);
+      expect(chunks[0]?.content).toContain("Project knowledge base delta");
+      expect(chunks[0]?.chunkType).toBe("block");
     });
 
     it("should parse PHP files", () => {
