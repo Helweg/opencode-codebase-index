@@ -133,7 +133,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
     const indexer = new Indexer(tempDir, config);
     await indexer.index();
 
-    const results = await indexer.search("where is rankHybridResults documentation", 5, {
+    const results = await indexer.search("rankHybridResults documentation guide", 5, {
       metadataOnly: true,
       filterByBranch: false,
     });
@@ -338,7 +338,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
     const indexer = new Indexer(tempDir, config);
     await indexer.index();
 
-    const results = await indexer.search("where is rankHybridResults documentation", 5, {
+    const results = await indexer.search("rankHybridResults documentation guide", 5, {
       metadataOnly: true,
       filterByBranch: false,
     });

@@ -1590,13 +1590,17 @@ export class Indexer {
       return candidates;
     }
 
-    if (options?.definitionIntent === true || options?.hasIdentifierHints === true) {
-      return candidates;
-    }
-
     const queryTokens = Array.from(tokenizeTextForRanking(query));
     const preferSourcePaths = classifyQueryIntentRaw(query) === "source";
     const docIntent = classifyDocIntent(queryTokens) === "docs";
+
+    if (options?.definitionIntent === true) {
+      return candidates;
+    }
+
+    if (options?.hasIdentifierHints === true && preferSourcePaths && !docIntent) {
+      return candidates;
+    }
 
     const topN = Math.min(reranker.topN, candidates.length);
     const head = candidates.slice(0, topN);
@@ -2867,70 +2871,7 @@ export class Indexer {
       : baseFiltered
     ).slice(0, maxResults);
 
-    // Apply reranking if enabled and available
-    let finalResults = filtered;
-    if (this.reranker?.isAvailable() && filtered.length > 1) {
-      const rerankStartTime = performance.now();
-
-      // Read content for reranking
-      const documentsForRerank = await Promise.all(
-        filtered.map(async (r) => {
-          try {
-            const fileContent = await fsPromises.readFile(r.metadata.filePath, "utf-8");
-            const lines = fileContent.split("\n");
-            return lines.slice(r.metadata.startLine - 1, r.metadata.endLine).join("\n");
-          } catch {
-            return r.metadata.name ?? r.metadata.chunkType;
-          }
-        })
-      );
-
-      try {
-        const rerankResponse = await this.reranker.rerank(
-          query,
-          documentsForRerank,
-          this.config.reranker?.topN ?? filtered.length
-        );
-
-        if (rerankResponse.results.length > 0) {
-          // Create a map of original index to rerank score
-          const rerankScores = new Map<number, number>();
-          for (const result of rerankResponse.results) {
-            rerankScores.set(result.index, result.relevanceScore);
-          }
-
-          // Reorder results based on rerank scores
-          const rerankedIndices = rerankResponse.results
-            .sort((a, b) => b.relevanceScore - a.relevanceScore)
-            .map(r => r.index);
-
-          // Build final results: reranked first, then remaining
-          const rerankedSet = new Set(rerankedIndices);
-          const reranked = rerankedIndices
-            .filter(idx => idx < filtered.length)
-            .map(idx => ({
-              ...filtered[idx],
-              score: rerankScores.get(idx) ?? filtered[idx].score,
-            }));
-          const remaining = filtered
-            .filter((_, idx) => !rerankedSet.has(idx));
-
-          finalResults = [...reranked, ...remaining].slice(0, maxResults);
-        }
-
-        const rerankMs = performance.now() - rerankStartTime;
-        this.logger.search("debug", "Reranking complete", {
-          documentsReranked: documentsForRerank.length,
-          rerankMs: Math.round(rerankMs * 100) / 100,
-          tokensUsed: rerankResponse.tokensUsed,
-        });
-      } catch (error) {
-        // Reranking failed, use original results
-        this.logger.search("warn", "Reranking failed, using original results", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    const finalResults = filtered;
 
     const totalSearchMs = performance.now() - searchStartTime;
     this.logger.recordSearch(totalSearchMs, {

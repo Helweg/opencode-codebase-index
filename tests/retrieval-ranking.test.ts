@@ -547,6 +547,65 @@ describe("retrieval ranking", () => {
     globalThis.fetch = fetchSpy;
   });
 
+  it("allows external reranker for documentation intent even when identifier hints are present", async () => {
+    const config = parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-embed",
+        dimensions: 8,
+      },
+      reranker: {
+        enabled: true,
+        provider: "custom",
+        model: "mock-reranker",
+        baseUrl: "https://rerank.example/v1",
+        topN: 3,
+      },
+    });
+    const indexer = new Indexer("/repo", config);
+
+    const fetchSpy = globalThis.fetch;
+    let rerankCalled = false;
+    let rerankDocuments: string[] | undefined;
+    globalThis.fetch = (async (input, init) => {
+      if (String(input).includes("/rerank")) {
+        rerankCalled = true;
+        rerankDocuments = (JSON.parse(String(init?.body ?? "{}")) as { documents?: string[] }).documents;
+        return new Response(JSON.stringify({
+          results: [
+            { index: 1, relevance_score: 0.99 },
+            { index: 0, relevance_score: 0.6 },
+          ],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [{ embedding: Array.from({ length: 8 }, () => 0.1) }], usage: { total_tokens: 1 } }), { status: 200 });
+    }) as typeof fetch;
+
+    const candidates: Candidate[] = [
+      { id: "impl", score: 0.9, metadata: meta({ filePath: "/repo/src/indexer/index.ts", name: "rankHybridResults", chunkType: "function", startLine: 1, endLine: 3 }) },
+      { id: "docs-readme", score: 0.89, metadata: meta({ filePath: "/repo/README.md", name: "retrieval documentation", chunkType: "other", startLine: 1, endLine: 3 }) },
+      { id: "docs-guide", score: 0.88, metadata: meta({ filePath: "/repo/docs/guide.md", name: "rankHybridResults guide", chunkType: "other", startLine: 1, endLine: 3 }) },
+    ];
+
+    const reranked = await (indexer as unknown as {
+      rerankCandidatesWithApi(
+        query: string,
+        items: Candidate[],
+        options?: { definitionIntent?: boolean; hasIdentifierHints?: boolean }
+      ): Promise<Candidate[]>;
+    }).rerankCandidatesWithApi("rankHybridResults documentation guide", candidates, {
+      hasIdentifierHints: true,
+    });
+
+    expect(rerankCalled).toBe(true);
+    expect(reranked.map((candidate) => candidate.id)).toEqual(["docs-guide", "docs-readme", "impl"]);
+    expect(rerankDocuments?.length).toBe(2);
+    expect(rerankDocuments?.[0]).toContain("path: /repo/README.md");
+    expect(rerankDocuments?.[1]).toContain("path: /repo/docs/guide.md");
+    globalThis.fetch = fetchSpy;
+  });
+
   it("diversifies external reranker output for exploratory queries", async () => {
     const config = parseConfig({
       embeddingProvider: "custom",
