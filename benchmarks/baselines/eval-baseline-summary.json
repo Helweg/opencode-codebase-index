@@ -19,6 +19,8 @@
     "hitAt10": 1,
     "mrrAt10": 0.875,
     "ndcgAt10": 0.9127302324517832,
+    "distinctTop3Ratio": 1,
+    "rawDistinctTop3Ratio": 1,
     "latencyMs": {
       "p50": 26.173166000000037,
       "p95": 52.931082999999944,

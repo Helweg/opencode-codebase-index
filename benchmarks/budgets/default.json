@@ -5,9 +5,11 @@
   "thresholds": {
     "hitAt5MaxDrop": 0.03,
     "mrrAt10MaxDrop": 0.03,
+    "rawDistinctTop3RatioMaxDrop": 0.1,
     "p95LatencyMaxMultiplier": 1.35,
     "p95LatencyMaxAbsoluteMs": 4000,
     "minHitAt5": 0.4,
-    "minMrrAt10": 0.25
+    "minMrrAt10": 0.25,
+    "minRawDistinctTop3Ratio": 0.5
   }
 }
