@@ -34,6 +34,16 @@ describe("routing hints", () => {
       expect(assessment.intent).toBe("exact_identifier");
     });
 
+    it("does not alternate exact-identifier detection for repeated backticked queries", () => {
+      const first = assessRoutingIntent("Find all references to `validateToken`");
+      const second = assessRoutingIntent("Find all references to `otherSymbol`");
+      const third = assessRoutingIntent("Find all references to `validateToken`");
+
+      expect(first.intent).toBe("exact_identifier");
+      expect(second.intent).toBe("exact_identifier");
+      expect(third.intent).toBe("exact_identifier");
+    });
+
     it("detects definition lookups separately from conceptual discovery", () => {
       const assessment = assessRoutingIntent("Where is the payment handler defined?");
 

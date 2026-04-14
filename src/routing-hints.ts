@@ -119,6 +119,7 @@ const CAMEL_OR_PASCAL_PATTERN = /\b[A-Za-z_$][A-Za-z0-9_$]*\b/g;
 const SNAKE_PATTERN = /\b[a-z0-9]+_[a-z0-9_]+\b/g;
 const KEBAB_PATTERN = /\b[a-z0-9]+-[a-z0-9-]+\b/g;
 const BACKTICK_IDENTIFIER_PATTERN = /`([^`]+)`/g;
+const BACKTICK_IDENTIFIER_PRESENCE_PATTERN = /`([^`]+)`/;
 
 function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, " ");
@@ -149,12 +150,12 @@ function hasIdentifierShape(text: string): boolean {
       return false;
     }
 
-    return /[A-Z]/.test(match) || match.includes("_") || match.includes("-") || /`/.test(text);
+    return /[A-Z]/.test(match) || match.includes("_") || match.includes("-") || /`/.test(match);
   });
 }
 
 function containsQuotedIdentifier(text: string): boolean {
-  return BACKTICK_IDENTIFIER_PATTERN.test(text) || /"[^"]+"/.test(text) || /'[^']+'/.test(text);
+  return BACKTICK_IDENTIFIER_PRESENCE_PATTERN.test(text) || /"[^"]+"/.test(text) || /'[^']+'/.test(text);
 }
 
 function looksLikeDirectPath(text: string): boolean {
