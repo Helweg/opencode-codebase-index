@@ -91,6 +91,18 @@ jobs:
 
       - name: Create eval quality config from secrets
         run: |
+          if [ "${{ steps.eval-provider.outputs.provider_source }}" = "github-models" ]; then
+            EMBED_CONCURRENCY=1
+            EMBED_REQUEST_INTERVAL_MS=5000
+            EMBED_RETRIES=5
+            EMBED_RETRY_DELAY_MS=15000
+          else
+            EMBED_CONCURRENCY=3
+            EMBED_REQUEST_INTERVAL_MS=1000
+            EMBED_RETRIES=3
+            EMBED_RETRY_DELAY_MS=1000
+          fi
+
           cat > .github/eval-quality-config.json <<EOF
           {
             "embeddingProvider": "custom",
@@ -99,14 +111,18 @@ jobs:
               "apiKey": "${{ steps.eval-provider.outputs.api_key }}",
               "model": "${{ steps.eval-provider.outputs.model }}",
               "dimensions": ${{ steps.eval-provider.outputs.dimensions }},
-              "timeoutMs": 30000
+              "timeoutMs": 30000,
+              "concurrency": $EMBED_CONCURRENCY,
+              "requestIntervalMs": $EMBED_REQUEST_INTERVAL_MS
             },
             "indexing": {
               "autoIndex": false,
               "watchFiles": false,
               "respectGitignore": true,
               "semanticOnly": false,
-              "requireProjectMarker": false
+              "requireProjectMarker": false,
+              "retries": $EMBED_RETRIES,
+              "retryDelayMs": $EMBED_RETRY_DELAY_MS
             },
             "search": {
               "maxResults": 10,
