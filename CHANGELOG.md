@@ -7,17 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-14
+
 ### Added
 - **Knowledge base support**: Added `add_knowledge_base`, `list_knowledge_bases`, and `remove_knowledge_base` tools to manage external document folders indexed alongside the project
 - **Reranking with SiliconFlow**: Added `BAAI/bge-reranker-v2-m3` reranking support via SiliconFlow API for improved search result quality
+- **Routing hints for local discovery**: Added dynamic routing hints so local search can steer retrieval toward more relevant code paths before semantic reranking
 - **TXT/HTML file support**: Added `*.txt`, `*.html`, `*.htm` to default include patterns for document indexing
 - **Config merging**: Global and project configs are now merged, allowing shared provider settings at global level and knowledge base paths at project level
 - **Hidden file exclusion**: Files and folders starting with `.` are now excluded from indexing and file watching
 - **Build folder exclusion**: Folders containing "build" in their name (e.g., `build`, `mingwBuildDebug`) are now excluded from indexing and file watching
 - **additionalInclude config**: Added new config option to extend default file patterns without replacing them
+- **Eval diversity quality gates**: Added raw and distinct top-k diversity metrics, budgets, and regression coverage for eval runs and reranker benchmarking
 
 ### Changed
 - **Default verbose=false**: Changed `/index` command default to `verbose=false` to reduce token consumption
+- **Dependency hardening**: Added targeted npm overrides and refreshed lockfile resolution to keep vulnerable transitive packages patched in release builds
+
+### Fixed
+- **Knowledge base refresh behavior**: Adding or removing knowledge bases now rebuilds the shared in-memory indexer immediately instead of requiring a restart
+- **Watcher-triggered reindexing**: Restored automatic reindexing on file changes so watched projects and attached knowledge bases stay current during a live session
+- **Parser and call-graph stability**: Fixed recursion-limit and segmentation-fault regressions, removed unsupported parent traversal paths, and improved PHP method-call extraction reliability
+- **Plugin/runtime packaging**: Kept `@opencode-ai/plugin` available at runtime by shipping it as a dependency instead of relying on dev-only installation
+- **Eval workflow rate limiting**: Throttled GitHub Models quality runs to avoid rate-limit failures in the release verification pipeline
 
 ## [0.6.1] - 2026-03-29
 
@@ -249,7 +261,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
-[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.1...v0.5.2
