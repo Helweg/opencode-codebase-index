@@ -30,6 +30,10 @@ export function initializeTools(projectRoot: string, config: ParsedCodebaseIndex
   sharedIndexer = new Indexer(projectRoot, config);
 }
 
+export function getSharedIndexer(): Indexer {
+  return getIndexer();
+}
+
 function getIndexer(): Indexer {
   if (!sharedIndexer) {
     throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");

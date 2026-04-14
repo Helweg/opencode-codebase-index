@@ -4,7 +4,6 @@ import { fileURLToPath } from "url";
 
 import { parseConfig } from "./config/schema.js";
 import { loadMergedConfig } from "./config/merger.js";
-import { Indexer } from "./indexer/index.js";
 import { createWatcherWithIndexer } from "./watcher/index.js";
 import {
   codebase_search,
@@ -20,6 +19,7 @@ import {
   add_knowledge_base,
   list_knowledge_bases,
   remove_knowledge_base,
+  getSharedIndexer,
   initializeTools,
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
@@ -44,7 +44,7 @@ const plugin: Plugin = async ({ directory }) => {
 
     initializeTools(projectRoot, config);
 
-    const indexer = new Indexer(projectRoot, config);
+    const indexer = getSharedIndexer();
     const routingHints = config.search.routingHints
       ? new RoutingHintController(() => indexer.getStatus())
       : null;
