@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { FileWatcher, GitHeadWatcher, FileChange } from "../src/watcher/index.js";
+import {
+  FileWatcher,
+  GitHeadWatcher,
+  FileChange,
+  createWatcherWithIndexer,
+} from "../src/watcher/index.js";
 import { ParsedCodebaseIndexConfig } from "../src/config/schema.js";
 
 const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): ParsedCodebaseIndexConfig => ({
@@ -118,6 +123,73 @@ describe("FileWatcher", () => {
 
       expect(tsChanges.length).toBeGreaterThanOrEqual(0);
       expect(mdChanges.length).toBe(0);
+    });
+
+    it("should include matching root-level files", async () => {
+      const changes: FileChange[] = [];
+      watcher = new FileWatcher(tempDir, createTestConfig({ include: ["**/*.ts"] }));
+
+      watcher.start(async (c) => {
+        changes.push(...c);
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      fs.writeFileSync(path.join(tempDir, "root.ts"), "export const root = 1;");
+
+      await new Promise((r) => setTimeout(r, 1500));
+
+      expect(changes.some((c) => c.path.endsWith("root.ts"))).toBe(true);
+    });
+  });
+
+  describe("createWatcherWithIndexer", () => {
+    it("uses the latest indexer instance for file-triggered reindexing", async () => {
+      const staleIndexer = {
+        index: vi.fn().mockResolvedValue(undefined),
+      };
+      const refreshedIndexer = {
+        index: vi.fn().mockResolvedValue(undefined),
+      };
+
+      let currentIndexer = staleIndexer;
+      const combinedWatcher = createWatcherWithIndexer(
+        () => currentIndexer,
+        tempDir,
+        createTestConfig()
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+      currentIndexer = refreshedIndexer;
+
+      fs.writeFileSync(path.join(tempDir, "src", "reindex-me.ts"), "export const value = 1;");
+
+      await new Promise((r) => setTimeout(r, 1500));
+
+      expect(refreshedIndexer.index).toHaveBeenCalledTimes(1);
+      expect(staleIndexer.index).not.toHaveBeenCalled();
+
+      combinedWatcher.stop();
+    });
+
+    it("stops the watcher cleanly after start", () => {
+      const indexer = {
+        index: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const combinedWatcher = createWatcherWithIndexer(
+        () => indexer,
+        tempDir,
+        createTestConfig()
+      );
+
+      expect(combinedWatcher.fileWatcher.isRunning()).toBe(true);
+      expect(combinedWatcher.gitWatcher?.isRunning() ?? false).toBe(false);
+
+      combinedWatcher.stop();
+
+      expect(combinedWatcher.fileWatcher.isRunning()).toBe(false);
+      expect(combinedWatcher.gitWatcher?.isRunning() ?? false).toBe(false);
     });
   });
 });

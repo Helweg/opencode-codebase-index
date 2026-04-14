@@ -25,6 +25,14 @@ import {
 import { loadCommandsFromDirectory } from "./commands/loader.js";
 import { RoutingHintController } from "./routing-hints.js";
 import { hasProjectMarker } from "./utils/files.js";
+import type { CombinedWatcher } from "./watcher/index.js";
+
+let activeWatcher: CombinedWatcher | null = null;
+
+function replaceActiveWatcher(nextWatcher: CombinedWatcher | null): void {
+  activeWatcher?.stop();
+  activeWatcher = nextWatcher;
+}
 
 function getCommandsDir(): string {
   let currentDir = process.cwd();
@@ -65,7 +73,9 @@ const plugin: Plugin = async ({ directory }) => {
     }
 
     if (config.indexing.watchFiles && isValidProject) {
-      createWatcherWithIndexer(indexer, projectRoot, config);
+      replaceActiveWatcher(createWatcherWithIndexer(getSharedIndexer, projectRoot, config));
+    } else {
+      replaceActiveWatcher(null);
     }
 
     return {

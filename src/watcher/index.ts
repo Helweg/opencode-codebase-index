@@ -1,9 +1,9 @@
 import chokidar, { FSWatcher } from "chokidar";
 import * as path from "path";
 
-import { CodebaseIndexConfig } from "../config/schema.js";
+import type { CodebaseIndexConfig } from "../config/schema.js";
 import { createIgnoreFilter, shouldIncludeFile } from "../utils/files.js";
-import { Indexer } from "../indexer/index.js";
+import type { Indexer } from "../indexer/index.js";
 import { isGitRepo, getHeadPath, getCurrentBranch } from "../git/index.js";
 
 export type FileChangeType = "add" | "change" | "unlink";
@@ -243,7 +243,7 @@ export interface CombinedWatcher {
 }
 
 export function createWatcherWithIndexer(
-  indexer: Indexer,
+  getIndexer: () => Indexer,
   projectRoot: string,
   config: CodebaseIndexConfig
 ): CombinedWatcher {
@@ -256,7 +256,7 @@ export function createWatcherWithIndexer(
     const hasDelete = changes.some((c) => c.type === "unlink");
 
     if (hasAddOrChange || hasDelete) {
-      await indexer.index();
+      await getIndexer().index();
     }
   });
 
@@ -266,7 +266,7 @@ export function createWatcherWithIndexer(
     gitWatcher = new GitHeadWatcher(projectRoot);
     gitWatcher.start(async (oldBranch, newBranch) => {
       console.log(`Branch changed: ${oldBranch ?? "(none)"} -> ${newBranch}`);
-      await indexer.index();
+      await getIndexer().index();
     });
   }
 
