@@ -23,6 +23,7 @@ import {
   initializeTools,
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
+import { RoutingHintController } from "./routing-hints.js";
 import { hasProjectMarker } from "./utils/files.js";
 
 function getCommandsDir(): string {
@@ -44,6 +45,9 @@ const plugin: Plugin = async ({ directory }) => {
     initializeTools(projectRoot, config);
 
     const indexer = new Indexer(projectRoot, config);
+    const routingHints = config.search.routingHints
+      ? new RoutingHintController(() => indexer.getStatus())
+      : null;
 
     const isValidProject = !config.indexing.requireProjectMarker || hasProjectMarker(projectRoot);
 
@@ -79,6 +83,19 @@ const plugin: Plugin = async ({ directory }) => {
         add_knowledge_base,
         list_knowledge_bases,
         remove_knowledge_base,
+      },
+
+      async "chat.message"(input, output) {
+        routingHints?.observeUserMessage(input.sessionID, output.parts);
+      },
+
+      async "experimental.chat.system.transform"(input, output) {
+        const hints = await routingHints?.getSystemHints(input.sessionID) ?? [];
+        output.system.push(...hints);
+      },
+
+      async "tool.execute.after"(input) {
+        routingHints?.markToolUsed(input.sessionID, input.tool);
       },
 
       async config(cfg) {

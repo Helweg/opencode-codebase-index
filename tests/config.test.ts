@@ -289,6 +289,16 @@ describe("config schema", () => {
         expect(config.search.fusionStrategy).toBe("rrf");
         expect(config.search.rrfK).toBe(60);
         expect(config.search.rerankTopN).toBe(20);
+        expect(config.search.routingHints).toBe(true);
+      });
+
+      it("should parse routingHints boolean", () => {
+        expect(parseConfig({ search: { routingHints: false } }).search.routingHints).toBe(false);
+        expect(parseConfig({ search: { routingHints: true } }).search.routingHints).toBe(true);
+      });
+
+      it("should fallback routingHints to default for invalid values", () => {
+        expect(parseConfig({ search: { routingHints: "nope" } }).search.routingHints).toBe(true);
       });
 
       it("should fallback fusionStrategy to default for invalid values", () => {
