@@ -132,12 +132,13 @@ src/api/checkout.ts:89      (Route handler for /pay)
 | Don't know the function name | `codebase_search` | Semantic search finds by meaning |
 | Exploring unfamiliar codebase | `codebase_search` | Discovers related code across files |
 | Just need to find locations | `codebase_peek` | Returns metadata only, saves ~90% tokens |
+| Need the authoritative definition site | `implementation_lookup` | Prioritizes real implementation definitions over docs/tests |
 | Understand code flow | `call_graph` | Find callers/callees of any function |
 | Know exact identifier | `grep` | Faster, finds all occurrences |
 | Need ALL matches | `grep` | Semantic returns top N only |
 | Mixed discovery + precision | `/find` (hybrid) | Best of both worlds |
 
-**Rule of thumb**: `codebase_peek` to find locations → `Read` to examine → `grep` for precision.
+**Rule of thumb**: `codebase_peek` to find locations → `Read` to examine → `grep` for precision. For symbol-definition questions, use `implementation_lookup` first.
 
 ## 📊 Token Usage
 
@@ -295,6 +296,12 @@ The plugin exposes these tools to the OpenCode agent:
   Use Read tool to examine specific files.
   ```
 - **Workflow**: `codebase_peek` → find locations → `Read` specific files
+
+### `implementation_lookup`
+**Definition-first lookup.** Jumps to the authoritative definition site for a symbol or natural-language definition query.
+- **Use for**: "Where is X defined?", symbol-definition requests, and cases where you want the implementation site rather than all usages.
+- **Behavior**: Prefers real implementation files over tests, docs, examples, and fixtures.
+- **Fallback**: If nothing authoritative is found, use `codebase_search` for broader discovery.
 
 ### `find_similar`
 Find code similar to a provided snippet.
@@ -530,7 +537,8 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "fusionStrategy": "rrf",                  // rrf | weighted
     "rrfK": 60,                               // RRF smoothing constant
     "rerankTopN": 20,                         // Deterministic rerank depth
-    "contextLines": 0                         // Extra lines before/after match
+    "contextLines": 0,                        // Extra lines before/after match
+    "routingHints": true                      // Runtime nudges for local discovery/definition queries
   },
   "reranker": {
     "enabled": false,
@@ -600,6 +608,7 @@ String values in `codebase-index.json` can reference environment variables with 
 | `rrfK` | `60` | RRF smoothing constant. Higher values flatten rank impact, lower values prioritize top-ranked candidates more strongly |
 | `rerankTopN` | `20` | Deterministic rerank depth cap. Applies lightweight name/path/chunk-type rerank to top-N only |
 | `contextLines` | `0` | Extra lines to include before/after each match |
+| `routingHints` | `true` | Inject lightweight runtime hints for local conceptual discovery and definition lookups. Set to `false` to disable plugin-side routing nudges. |
 | **reranker** | | Optional second-stage model reranker for the top candidate pool |
 | `enabled` | `false` | Turn external reranking on/off |
 | `provider` | `"custom"` | Hosted shortcuts: `cohere`, `jina`, or `custom` |
@@ -621,6 +630,7 @@ String values in `codebase-index.json` can reference environment variables with 
 ### Retrieval ranking behavior
 
 - `codebase_search` and `codebase_peek` use the hybrid path: semantic + keyword retrieval → fusion (`fusionStrategy`) → deterministic rerank (`rerankTopN`) → optional external reranker (`reranker`) → filtering.
+- When `search.routingHints` is enabled (default), the plugin adds tiny per-turn runtime hints for local conceptual discovery and definition queries. Conceptual discovery is nudged toward `codebase_peek` / `codebase_search`, while definition questions are nudged toward `implementation_lookup`. Exact identifier and unrelated operational tasks are left alone.
 - `find_similar` stays semantic-only: semantic retrieval + deterministic rerank only (no keyword retrieval, no RRF).
 - For compatibility rollbacks, set `search.fusionStrategy` to `"weighted"` to use the legacy weighted fusion path.
 - When enabled, the external reranker sees path metadata plus a bounded on-disk code snippet for each candidate so it can distinguish real implementations from docs/tests more reliably.
