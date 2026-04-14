@@ -111,7 +111,16 @@ export function shouldIncludeFile(
 }
 
 function matchGlob(filePath: string, pattern: string): boolean {
-  let regexPattern = pattern
+  if (pattern.startsWith("**/")) {
+    const withoutPrefix = pattern.slice(3);
+    if (withoutPrefix && matchGlob(filePath, withoutPrefix)) {
+      return true;
+    }
+  }
+
+  const escapedPattern = pattern.replace(/[.+^$()|[\]\\]/g, "\\$&");
+
+  let regexPattern = escapedPattern
     .replace(/\*\*/g, "<<<DOUBLESTAR>>>")
     .replace(/\*/g, "[^/]*")
     .replace(/<<<DOUBLESTAR>>>/g, ".*")

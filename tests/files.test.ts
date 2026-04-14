@@ -82,6 +82,22 @@ describe("files utilities", () => {
         )
       ).toBe(false);
     });
+
+    it("should include root-level files with dots in their names", () => {
+      const filter = createIgnoreFilter(tempDir);
+      const includePatterns = ["**/*.{ts,tsx,js,jsx,mjs,cjs}"];
+      const excludePatterns = ["**/.*"];
+
+      expect(
+        shouldIncludeFile(
+          path.join(tempDir, "watcher.probe.ts"),
+          tempDir,
+          includePatterns,
+          excludePatterns,
+          filter
+        )
+      ).toBe(true);
+    });
   });
 
   describe("collectFiles", () => {

@@ -2,12 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import {
-  FileWatcher,
-  GitHeadWatcher,
-  FileChange,
-  createWatcherWithIndexer,
-} from "../src/watcher/index.js";
+import { FileWatcher, GitHeadWatcher, FileChange, createWatcherWithIndexer } from "../src/watcher/index.js";
 import { ParsedCodebaseIndexConfig } from "../src/config/schema.js";
 
 const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): ParsedCodebaseIndexConfig => ({

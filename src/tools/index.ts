@@ -1,7 +1,7 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
+import { parseConfig, type ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { Indexer } from "../indexer/index.js";
-import { ParsedCodebaseIndexConfig } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
 import type { LogLevel } from "../config/schema.js";
 import type { LogEntry } from "../utils/logger.js";
@@ -32,6 +32,14 @@ export function initializeTools(projectRoot: string, config: ParsedCodebaseIndex
 
 export function getSharedIndexer(): Indexer {
   return getIndexer();
+}
+
+function refreshIndexerFromConfig(): void {
+  if (!sharedProjectRoot) {
+    throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");
+  }
+
+  sharedIndexer = new Indexer(sharedProjectRoot, parseConfig(loadConfig()));
 }
 
 function getIndexer(): Indexer {
@@ -376,6 +384,7 @@ export const add_knowledge_base: ToolDefinition = tool({
     knowledgeBases.push(resolvedPath);
     config.knowledgeBases = knowledgeBases;
     saveConfig(config);
+    refreshIndexerFromConfig();
 
     let result = `${resolvedPath}\n`;
     result += `Total knowledge bases: ${knowledgeBases.length}\n`;
@@ -462,6 +471,7 @@ export const remove_knowledge_base: ToolDefinition = tool({
     const removed = knowledgeBases.splice(index, 1)[0];
     config.knowledgeBases = knowledgeBases;
     saveConfig(config);
+    refreshIndexerFromConfig();
 
     let result = `Removed: ${removed}\n\n`;
     result += `Remaining knowledge bases: ${knowledgeBases.length}\n`;
