@@ -1,0 +1,189 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  RoutingHintController,
+  assessRoutingIntent,
+  buildRoutingHint,
+  extractUserText,
+} from "../src/routing-hints.js";
+
+describe("routing hints", () => {
+  describe("extractUserText", () => {
+    it("combines text parts and ignores non-text parts", () => {
+      const text = extractUserText([
+        { type: "text", text: "where is the auth flow" },
+        { type: "tool", text: "ignored" },
+        { type: "text", text: "implemented" },
+      ]);
+
+      expect(text).toBe("where is the auth flow implemented");
+    });
+  });
+
+  describe("assessRoutingIntent", () => {
+    it("detects conceptual local discovery", () => {
+      const assessment = assessRoutingIntent("Where is the auth flow implemented?");
+
+      expect(assessment.intent).toBe("local_conceptual");
+      expect(assessment.reason).toBe("conceptual_local_discovery");
+    });
+
+    it("detects exact identifier lookups", () => {
+      const assessment = assessRoutingIntent("Find all references to `validateToken`");
+
+      expect(assessment.intent).toBe("exact_identifier");
+    });
+
+    it("detects definition lookups separately from conceptual discovery", () => {
+      const assessment = assessRoutingIntent("Where is the payment handler defined?");
+
+      expect(assessment.intent).toBe("definition_lookup");
+      expect(assessment.reason).toBe("definition_lookup_request");
+    });
+
+    it("detects direct path requests", () => {
+      const assessment = assessRoutingIntent("Inspect src/indexer/index.ts for ranking logic");
+
+      expect(assessment.intent).toBe("direct_path");
+    });
+
+    it("detects external lookups", () => {
+      const assessment = assessRoutingIntent("Check the official docs for Next.js app router");
+
+      expect(assessment.intent).toBe("external");
+    });
+
+    it("leaves unrelated coding tasks alone", () => {
+      const assessment = assessRoutingIntent("Run the tests and fix the failing build");
+
+      expect(assessment.intent).toBe("other");
+    });
+  });
+
+  describe("buildRoutingHint", () => {
+    it("returns a semantic routing hint when the index is ready", () => {
+      const hint = buildRoutingHint(
+        assessRoutingIntent("Where is the webhook validation logic?"),
+        { indexed: true, compatibility: { compatible: true } },
+      );
+
+      expect(hint).toContain("prefer `codebase_peek`");
+      expect(hint).toContain("`codebase_search`");
+      expect(hint).toContain("`grep`");
+    });
+
+    it("returns an index bootstrap hint when the index is missing", () => {
+      const hint = buildRoutingHint(
+        assessRoutingIntent("Which file handles retry backoff logic?"),
+        { indexed: false, compatibility: null },
+      );
+
+      expect(hint).toContain("check `index_status` first");
+      expect(hint).toContain("run `index_codebase`");
+    });
+
+    it("returns null for non-conceptual intents", () => {
+      const hint = buildRoutingHint(
+        assessRoutingIntent("Find all references to validateToken"),
+        { indexed: true, compatibility: { compatible: true } },
+      );
+
+      expect(hint).toBeNull();
+    });
+
+    it("returns a definition-specific hint when the index is ready", () => {
+      const hint = buildRoutingHint(
+        assessRoutingIntent("Where is the payment handler defined?"),
+        { indexed: true, compatibility: { compatible: true } },
+      );
+
+      expect(hint).toContain("prefer `implementation_lookup`");
+      expect(hint).toContain("`codebase_search`");
+    });
+
+    it("returns an index bootstrap hint for definition lookups when the index is missing", () => {
+      const hint = buildRoutingHint(
+        assessRoutingIntent("Where is the payment handler defined?"),
+        { indexed: false, compatibility: null },
+      );
+
+      expect(hint).toContain("check `index_status` first");
+      expect(hint).toContain("`implementation_lookup`");
+    });
+  });
+
+  describe("RoutingHintController", () => {
+    it("stores conceptual discovery state and emits one hint", async () => {
+      const controller = new RoutingHintController(async () => ({
+        indexed: true,
+        compatibility: { compatible: true },
+      }));
+
+      controller.observeUserMessage("session-1", [{ type: "text", text: "Where is the auth flow implemented?" }]);
+
+      const state = controller.getSessionState("session-1");
+      expect(state?.assessment.intent).toBe("local_conceptual");
+      expect(state?.pendingHint).toBe(true);
+
+      const hints = await controller.getSystemHints("session-1");
+      expect(hints).toHaveLength(1);
+      expect(hints[0]).toContain("prefer `codebase_peek`");
+    });
+
+    it("stops nudging after a codebase tool is used", async () => {
+      const controller = new RoutingHintController(async () => ({
+        indexed: true,
+        compatibility: { compatible: true },
+      }));
+
+      controller.observeUserMessage("session-2", [{ type: "text", text: "Find the code that validates webhook signatures" }]);
+      controller.markToolUsed("session-2", "codebase_peek");
+
+      const state = controller.getSessionState("session-2");
+      expect(state?.pendingHint).toBe(false);
+
+      const hints = await controller.getSystemHints("session-2");
+      expect(hints).toEqual([]);
+    });
+
+    it("does not create hints for exact identifier lookups", async () => {
+      const controller = new RoutingHintController(async () => ({
+        indexed: true,
+        compatibility: { compatible: true },
+      }));
+
+      controller.observeUserMessage("session-3", [{ type: "text", text: "Find all references to `validateToken`" }]);
+
+      const hints = await controller.getSystemHints("session-3");
+      expect(hints).toEqual([]);
+    });
+
+    it("stops nudging after implementation_lookup is used for definition requests", async () => {
+      const controller = new RoutingHintController(async () => ({
+        indexed: true,
+        compatibility: { compatible: true },
+      }));
+
+      controller.observeUserMessage("session-4", [{ type: "text", text: "Where is the payment handler defined?" }]);
+      controller.markToolUsed("session-4", "implementation_lookup");
+
+      const state = controller.getSessionState("session-4");
+      expect(state?.pendingHint).toBe(false);
+
+      const hints = await controller.getSystemHints("session-4");
+      expect(hints).toEqual([]);
+    });
+
+    it("falls back safely when index status lookup fails", async () => {
+      const controller = new RoutingHintController(async () => {
+        throw new Error("status unavailable");
+      });
+
+      controller.observeUserMessage("session-5", [{ type: "text", text: "Where is the retry policy logic?" }]);
+
+      const hints = await controller.getSystemHints("session-5");
+      expect(hints).toHaveLength(1);
+      expect(hints[0]).toContain("check `index_status` first");
+    });
+  });
+});
