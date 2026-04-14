@@ -90,6 +90,11 @@
     "vitest": "^4.1.2",
     "zod": "^3.25.76"
   },
+  "overrides": {
+    "@hono/node-server": "1.19.14",
+    "hono": "4.12.12",
+    "vite": "8.0.8"
+  },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/plugin": "^1.0.0",
