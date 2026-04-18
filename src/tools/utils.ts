@@ -14,6 +14,14 @@ function truncateContent(content: string): string {
 
 export function formatIndexStats(stats: IndexStats, verbose: boolean = false): string {
   const lines: string[] = [];
+
+  if (stats.failedChunks > 0) {
+    lines.push(`INDEXING WARNING: ${stats.failedChunks} chunks failed to embed.`);
+    if (stats.failedBatchesPath) {
+      lines.push(`Inspect failed batches at: ${stats.failedBatchesPath}`);
+    }
+    lines.push("");
+  }
   
   if (stats.indexedChunks === 0 && stats.removedChunks === 0) {
     lines.push(`${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`);
@@ -67,6 +75,19 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
 
 export function formatStatus(status: StatusResult): string {
   if (!status.indexed) {
+    if (status.failedBatchesCount > 0) {
+      const lines = [
+        "Codebase is not indexed. The last indexing run left failed embedding batches.",
+        "Run index_codebase again after fixing the provider/model configuration.",
+      ];
+
+      if (status.failedBatchesPath) {
+        lines.push(`Failed batches: ${status.failedBatchesPath}`);
+      }
+
+      return lines.join("\n");
+    }
+
     return "Codebase is not indexed. Run index_codebase to create an index.";
   }
 
@@ -80,6 +101,14 @@ export function formatStatus(status: StatusResult): string {
   if (status.currentBranch !== "default") {
     lines.push(`Current branch: ${status.currentBranch}`);
     lines.push(`Base branch: ${status.baseBranch}`);
+  }
+
+  if (status.failedBatchesCount > 0) {
+    lines.push("");
+    lines.push(`INDEXING WARNING: ${status.failedBatchesCount} failed embedding batch${status.failedBatchesCount === 1 ? " remains" : "es remain"}.`);
+    if (status.failedBatchesPath) {
+      lines.push(`Failed batches: ${status.failedBatchesPath}`);
+    }
   }
 
   if (status.compatibility && !status.compatibility.compatible) {

@@ -128,6 +128,8 @@ export interface StatusResult {
   currentBranch: string;
   baseBranch: string;
   compatibility: IndexCompatibility | null;
+  failedBatchesCount: number;
+  failedBatchesPath?: string;
 }
 
 export interface IndexProgress {
@@ -2962,6 +2964,7 @@ export class Indexer {
 
   async getStatus(): Promise<StatusResult> {
     const { store, configuredProviderInfo } = await this.ensureInitialized();
+    const failedBatchesCount = this.getFailedBatchesCount();
 
     return {
       indexed: store.count() > 0,
@@ -2972,6 +2975,8 @@ export class Indexer {
       currentBranch: this.currentBranch,
       baseBranch: this.baseBranch,
       compatibility: this.indexCompatibility,
+      failedBatchesCount,
+      failedBatchesPath: failedBatchesCount > 0 ? this.failedBatchesPath : undefined,
     };
   }
 
