@@ -1529,22 +1529,37 @@ export class Indexer {
   private saveFailedBatches(batches: FailedBatch[]): void {
     if (batches.length === 0) {
       if (existsSync(this.failedBatchesPath)) {
-        fsPromises.unlink(this.failedBatchesPath).catch(() => { });
+        try {
+          unlinkSync(this.failedBatchesPath);
+        } catch {
+          // Ignore cleanup failures; stale diagnostics are best-effort only.
+        }
       }
       return;
     }
     writeFileSync(this.failedBatchesPath, JSON.stringify(batches, null, 2));
   }
 
-  private addFailedBatch(batch: PendingChunk[], error: string): void {
-    const existing = this.loadFailedBatches();
-    existing.push({
-      chunks: batch,
-      error,
-      attemptCount: 1,
-      lastAttempt: new Date().toISOString(),
-    });
-    this.saveFailedBatches(existing);
+  private collectRetryableFailedChunks(
+    currentFileHashes: Map<string, string>,
+    unchangedFilePaths: Set<string>
+  ): PendingChunk[] {
+    const retryableById = new Map<string, PendingChunk>();
+
+    for (const batch of this.loadFailedBatches()) {
+      for (const chunk of batch.chunks) {
+        const filePath = chunk.metadata.filePath;
+        if (!currentFileHashes.has(filePath)) {
+          continue;
+        }
+        if (!unchangedFilePaths.has(filePath)) {
+          continue;
+        }
+        retryableById.set(chunk.id, chunk);
+      }
+    }
+
+    return Array.from(retryableById.values());
   }
 
   private getProviderRateLimits(provider: string): {
@@ -2089,6 +2104,7 @@ export class Indexer {
       skippedFiles: [],
       parseFailures: [],
     };
+    const failedBatchesForCurrentRun: FailedBatch[] = [];
 
     onProgress?.({
       phase: "scanning",
@@ -2247,6 +2263,18 @@ export class Indexer {
       }
     }
 
+    const retryableFailedChunks = this.collectRetryableFailedChunks(currentFileHashes, unchangedFilePaths);
+    if (retryableFailedChunks.length > 0) {
+      const pendingChunkIds = new Set(pendingChunks.map((chunk) => chunk.id));
+      for (const chunk of retryableFailedChunks) {
+        if (!pendingChunkIds.has(chunk.id)) {
+          pendingChunks.push(chunk);
+          pendingChunkIds.add(chunk.id);
+          currentChunkIds.add(chunk.id);
+        }
+      }
+    }
+
     if (chunkDataBatch.length > 0) {
       database.upsertChunksBatch(chunkDataBatch);
     }
@@ -2378,6 +2406,7 @@ export class Indexer {
       database.addSymbolsToBranchBatch(this.currentBranch, Array.from(allSymbolIds));
       this.fileHashCache = currentFileHashes;
       this.saveFileHashCache();
+      this.saveFailedBatches([]);
       stats.durationMs = Date.now() - startTime;
       onProgress?.({
         phase: "complete",
@@ -2399,6 +2428,7 @@ export class Indexer {
       invertedIndex.save();
       this.fileHashCache = currentFileHashes;
       this.saveFileHashCache();
+      this.saveFailedBatches([]);
       stats.durationMs = Date.now() - startTime;
       onProgress?.({
         phase: "complete",
@@ -2532,7 +2562,12 @@ export class Indexer {
           });
         } catch (error) {
           stats.failedChunks += batch.length;
-          this.addFailedBatch(batch, getErrorMessage(error));
+          failedBatchesForCurrentRun.push({
+            chunks: batch,
+            error: getErrorMessage(error),
+            attemptCount: 1,
+            lastAttempt: new Date().toISOString(),
+          });
           this.logger.recordEmbeddingError();
           this.logger.embedding("error", `Failed to embed batch after retries`, {
             batchSize: batch.length,
@@ -2543,6 +2578,7 @@ export class Indexer {
     }
 
     await queue.onIdle();
+    this.saveFailedBatches(failedBatchesForCurrentRun);
 
     onProgress?.({
       phase: "storing",
