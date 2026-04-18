@@ -102,6 +102,13 @@ export const EMBEDDING_MODELS = {
 export const DEFAULT_PROVIDER_MODELS = {
   "github-copilot": "text-embedding-3-small",
   "openai": "text-embedding-3-small",
-  "google": "text-embedding-005",
+  "google": "gemini-embedding-001",
   "ollama": "nomic-embed-text",
 } as const
+
+export const AUTO_DETECT_PROVIDER_ORDER = [
+  "github-copilot",
+  "openai",
+  "google",
+  "ollama",
+] as const;
