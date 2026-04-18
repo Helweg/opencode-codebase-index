@@ -78,7 +78,7 @@ export function formatStatus(status: StatusResult): string {
     if (status.failedBatchesCount > 0) {
       const lines = [
         "Codebase is not indexed. The last indexing run left failed embedding batches.",
-        "Fix the provider/model configuration, then rerun index_codebase. If nothing changed, use force=true to retry the saved failed batches.",
+        "Fix the provider/model configuration, then rerun index_codebase normally to retry the saved failed batches. Use force=true only for a full rebuild or compatibility reset.",
       ];
 
       if (status.failedBatchesPath) {

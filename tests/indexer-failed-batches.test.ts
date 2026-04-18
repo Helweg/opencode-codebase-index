@@ -127,7 +127,7 @@ describe("indexer failed batch recovery", () => {
     expect(noopStatus.failedBatchesPath).toBeUndefined();
   });
 
-  it("mentions force reruns in not-indexed failed batch guidance", () => {
+  it("recommends a normal rerun before force rebuilds in failed batch guidance", () => {
     const message = formatStatus({
       indexed: false,
       vectorCount: 0,
@@ -141,7 +141,8 @@ describe("indexer failed batch recovery", () => {
       failedBatchesPath: "/tmp/index/failed-batches.json",
     });
 
-    expect(message).toContain("force=true");
+    expect(message).toContain("rerun index_codebase normally");
     expect(message).toContain("retry the saved failed batches");
+    expect(message).toContain("Use force=true only for a full rebuild or compatibility reset");
   });
 });
