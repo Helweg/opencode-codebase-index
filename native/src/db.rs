@@ -1188,6 +1188,17 @@ pub fn clear_branch_symbols(conn: &Connection, branch: &str) -> DbResult<usize> 
     Ok(count)
 }
 
+/// Remove all indexed data so a force rebuild starts from an empty database.
+pub fn clear_all_indexed_data(conn: &Connection) -> DbResult<()> {
+    conn.execute("DELETE FROM branch_symbols", [])?;
+    conn.execute("DELETE FROM branch_chunks", [])?;
+    conn.execute("DELETE FROM call_edges", [])?;
+    conn.execute("DELETE FROM symbols", [])?;
+    conn.execute("DELETE FROM chunks", [])?;
+    conn.execute("DELETE FROM embeddings", [])?;
+    Ok(())
+}
+
 // ============================================================================
 // Metadata Operations
 // ============================================================================
@@ -1736,6 +1747,61 @@ mod tests {
         // Edge from 'used' still exists
         let remaining_edges = get_callees(&conn, "used", "main").unwrap();
         assert_eq!(remaining_edges.len(), 1);
+    }
+
+    #[test]
+    fn test_clear_all_indexed_data() {
+        let (_temp_dir, conn) = setup_test_db();
+
+        upsert_embedding(&conn, "hash", &[1, 2, 3, 4], "chunk text", "model").unwrap();
+        upsert_chunk(
+            &conn,
+            "chunk1",
+            "hash",
+            "src/main.ts",
+            1,
+            3,
+            Some("function"),
+            Some("main"),
+            "typescript",
+        )
+        .unwrap();
+        add_chunks_to_branch(&conn, "main", &["chunk1".to_string()]).unwrap();
+
+        let symbol = SymbolRow {
+            id: "sym1".to_string(),
+            file_path: "src/main.ts".to_string(),
+            name: "main".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            start_col: 0,
+            end_line: 3,
+            end_col: 0,
+            language: "typescript".to_string(),
+        };
+        upsert_symbol(&conn, &symbol).unwrap();
+        add_symbols_to_branch(&conn, "main", &["sym1".to_string()]).unwrap();
+
+        let edge = CallEdgeRow {
+            id: "edge1".to_string(),
+            from_symbol_id: "sym1".to_string(),
+            target_name: "target".to_string(),
+            to_symbol_id: None,
+            call_type: "Call".to_string(),
+            line: 2,
+            col: 0,
+            is_resolved: false,
+        };
+        upsert_call_edge(&conn, &edge).unwrap();
+
+        clear_all_indexed_data(&conn).unwrap();
+
+        assert!(!embedding_exists(&conn, "hash").unwrap());
+        assert!(get_chunk(&conn, "chunk1").unwrap().is_none());
+        assert!(get_branch_chunk_ids(&conn, "main").unwrap().is_empty());
+        assert!(get_symbols_by_file(&conn, "src/main.ts").unwrap().is_empty());
+        assert!(get_branch_symbol_ids(&conn, "main").unwrap().is_empty());
+        assert!(get_callees(&conn, "sym1", "main").unwrap().is_empty());
     }
 
     #[test]

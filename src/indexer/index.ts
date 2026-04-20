@@ -3028,9 +3028,10 @@ export class Indexer {
     this.fileHashCache.clear();
     this.saveFileHashCache();
 
-    // Clear branch catalog
-    database.clearBranch(this.currentBranch);
-    database.clearBranchSymbols(this.currentBranch);
+     // Clear persisted index data across all branches so force rebuilds
+     // cannot reuse stale chunks, symbols, or embeddings from a prior provider.
+    database.clearAllIndexedData();
+    this.saveFailedBatches([]);
 
     // Clear index metadata so compatibility is re-evaluated from scratch
     database.deleteMetadata("index.version");

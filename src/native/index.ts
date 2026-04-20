@@ -724,6 +724,10 @@ export class Database {
     return this.inner.deleteMetadata(key);
   }
 
+  clearAllIndexedData(): void {
+    this.inner.clearAllIndexedData();
+  }
+
   gcOrphanEmbeddings(): number {
     return this.inner.gcOrphanEmbeddings();
   }

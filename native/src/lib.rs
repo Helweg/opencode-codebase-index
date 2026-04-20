@@ -674,6 +674,15 @@ impl Database {
     }
 
     #[napi]
+    pub fn clear_all_indexed_data(&self) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        db::clear_all_indexed_data(&conn).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
     pub fn gc_orphan_embeddings(&self) -> Result<u32> {
         let conn = self
             .conn
