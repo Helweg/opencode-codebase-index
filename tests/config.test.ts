@@ -7,6 +7,7 @@ import {
 } from "../src/config/schema.js";
 import {
   EMBEDDING_MODELS,
+  AUTO_DETECT_PROVIDER_ORDER,
   DEFAULT_PROVIDER_MODELS,
 } from "../src/config/constants.js";
 
@@ -836,8 +837,8 @@ describe("config schema", () => {
     it("should return correct model for google", () => {
       const model = getDefaultModelForProvider("google");
       expect(model.provider).toBe("google");
-      expect(model.model).toBe("text-embedding-005");
-      expect(model.dimensions).toBe(768);
+      expect(model.model).toBe("gemini-embedding-001");
+      expect(model.dimensions).toBe(1536);
     });
 
     it("should return correct model for ollama", () => {
@@ -936,6 +937,16 @@ describe("config schema", () => {
       const providers = Object.keys(EMBEDDING_MODELS);
       const defaultProviders = Object.keys(DEFAULT_PROVIDER_MODELS);
       expect(defaultProviders.sort()).toEqual(providers.sort());
+    });
+
+    it("should prefer Ollama before cloud providers for auto-detection", () => {
+      expect(AUTO_DETECT_PROVIDER_ORDER[0]).toBe("ollama");
+      expect(AUTO_DETECT_PROVIDER_ORDER.indexOf("github-copilot")).toBeGreaterThan(
+        AUTO_DETECT_PROVIDER_ORDER.indexOf("ollama"),
+      );
+      expect(AUTO_DETECT_PROVIDER_ORDER.indexOf("google")).toBeGreaterThan(
+        AUTO_DETECT_PROVIDER_ORDER.indexOf("github-copilot"),
+      );
     });
   });
 });

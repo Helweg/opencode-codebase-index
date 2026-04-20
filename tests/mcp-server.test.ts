@@ -4,6 +4,33 @@ import { parseConfig } from "../src/config/schema.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
+let mockIndexResult = {
+  totalFiles: 10,
+  totalChunks: 50,
+  indexedChunks: 50,
+  failedChunks: 0,
+  failedBatchesPath: undefined as string | undefined,
+  tokensUsed: 1000,
+  durationMs: 500,
+  existingChunks: 0,
+  removedChunks: 0,
+  skippedFiles: [],
+  parseFailures: [],
+};
+
+let mockStatusResult = {
+  indexed: true,
+  vectorCount: 50,
+  provider: "openai",
+  model: "text-embedding-3-small",
+  indexPath: "/tmp/index",
+  currentBranch: "main",
+  baseBranch: "main",
+  compatibility: { compatible: true },
+  failedBatchesCount: 0,
+  failedBatchesPath: undefined as string | undefined,
+};
+
 vi.mock("../src/indexer/index.js", () => {
   class MockIndexer {
     initialize = vi.fn().mockResolvedValue(undefined);
@@ -29,27 +56,8 @@ vi.mock("../src/indexer/index.js", () => {
         score: 0.88,
       },
     ]);
-    index = vi.fn().mockResolvedValue({
-      totalFiles: 10,
-      totalChunks: 50,
-      indexedChunks: 50,
-      failedChunks: 0,
-      tokensUsed: 1000,
-      durationMs: 500,
-      existingChunks: 0,
-      removedChunks: 0,
-      skippedFiles: [],
-      parseFailures: [],
-    });
-    getStatus = vi.fn().mockResolvedValue({
-      indexed: true,
-      vectorCount: 50,
-      provider: "openai",
-      model: "text-embedding-3-small",
-      indexPath: "/tmp/index",
-      currentBranch: "main",
-      baseBranch: "main",
-    });
+    index = vi.fn().mockImplementation(async () => mockIndexResult);
+    getStatus = vi.fn().mockImplementation(async () => mockStatusResult);
     healthCheck = vi.fn().mockResolvedValue({
       removed: 0,
       gcOrphanEmbeddings: 0,
@@ -104,6 +112,32 @@ describe("MCP server tools and prompts", () => {
   let server: ReturnType<typeof createMcpServer>;
 
   beforeEach(async () => {
+    mockIndexResult = {
+      totalFiles: 10,
+      totalChunks: 50,
+      indexedChunks: 50,
+      failedChunks: 0,
+      failedBatchesPath: undefined,
+      tokensUsed: 1000,
+      durationMs: 500,
+      existingChunks: 0,
+      removedChunks: 0,
+      skippedFiles: [],
+      parseFailures: [],
+    };
+    mockStatusResult = {
+      indexed: true,
+      vectorCount: 50,
+      provider: "openai",
+      model: "text-embedding-3-small",
+      indexPath: "/tmp/index",
+      currentBranch: "main",
+      baseBranch: "main",
+      compatibility: { compatible: true },
+      failedBatchesCount: 0,
+      failedBatchesPath: undefined,
+    };
+
     const config = parseConfig({});
     server = createMcpServer("/tmp/test-project", config);
     client = new Client({ name: "test-client", version: "1.0.0" });
@@ -189,8 +223,58 @@ describe("MCP server tools and prompts", () => {
     const content = result.content as Array<{ type: string; text?: string }>;
     expect(content).toHaveLength(1);
     expect(content[0].type).toBe("text");
-    expect(content[0].text).toContain("Index status");
+    expect(content[0].text).toContain("Indexed chunks");
     expect(content[0].text).toContain("50");
+    expect(content[0].text).toContain("Compatibility: Index is compatible");
+  });
+
+  it("should surface failed batch diagnostics in index_codebase output", async () => {
+    mockIndexResult = {
+      totalFiles: 10,
+      totalChunks: 50,
+      indexedChunks: 5,
+      failedChunks: 2,
+      failedBatchesPath: "/tmp/index/failed-batches.json",
+      tokensUsed: 1000,
+      durationMs: 500,
+      existingChunks: 0,
+      removedChunks: 0,
+      skippedFiles: [],
+      parseFailures: [],
+    };
+
+    const result = await client.callTool({
+      name: "index_codebase",
+      arguments: {},
+    });
+
+    const content = result.content as Array<{ type: string; text?: string }>;
+    expect(content[0].text).toContain("INDEXING WARNING");
+    expect(content[0].text).toContain("failed-batches.json");
+  });
+
+  it("should surface failed batch diagnostics in index_status output", async () => {
+    mockStatusResult = {
+      indexed: false,
+      vectorCount: 0,
+      provider: "google",
+      model: "gemini-embedding-001",
+      indexPath: "/tmp/index",
+      currentBranch: "default",
+      baseBranch: "default",
+      compatibility: null,
+      failedBatchesCount: 2,
+      failedBatchesPath: "/tmp/index/failed-batches.json",
+    };
+
+    const result = await client.callTool({
+      name: "index_status",
+      arguments: {},
+    });
+
+    const content = result.content as Array<{ type: string; text?: string }>;
+    expect(content[0].text).toContain("failed embedding batches");
+    expect(content[0].text).toContain("failed-batches.json");
   });
 
   it("should execute index_codebase with estimateOnly", async () => {

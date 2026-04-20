@@ -24,6 +24,7 @@ function createBaseStats(overrides: Partial<IndexStats> = {}): IndexStats {
     removedChunks: 0,
     skippedFiles: [],
     parseFailures: [],
+    failedBatchesPath: undefined,
     ...overrides,
   };
 }
@@ -80,6 +81,21 @@ describe("tools utils", () => {
       const result = formatIndexStats(stats);
 
       expect(result).toContain("Failed: 2 chunks");
+    });
+
+    it("should highlight failed batch path when chunks fail", () => {
+      const stats = createBaseStats({
+        totalFiles: 10,
+        indexedChunks: 5,
+        failedChunks: 2,
+        failedBatchesPath: "/tmp/failed-batches.json",
+        tokensUsed: 500,
+        durationMs: 500,
+      });
+      const result = formatIndexStats(stats);
+
+      expect(result).toContain("INDEXING WARNING");
+      expect(result).toContain("/tmp/failed-batches.json");
     });
 
     it("should not include verbose details by default", () => {
@@ -148,6 +164,8 @@ describe("tools utils", () => {
         currentBranch: "default",
         baseBranch: "default",
         compatibility: null,
+        failedBatchesCount: 0,
+        failedBatchesPath: undefined,
       };
       const result = formatStatus(status);
 
@@ -165,6 +183,8 @@ describe("tools utils", () => {
         currentBranch: "default",
         baseBranch: "default",
         compatibility: { compatible: true },
+        failedBatchesCount: 0,
+        failedBatchesPath: undefined,
       };
       const result = formatStatus(status);
 
@@ -186,6 +206,8 @@ describe("tools utils", () => {
         currentBranch: "feature-x",
         baseBranch: "main",
         compatibility: { compatible: true },
+        failedBatchesCount: 0,
+        failedBatchesPath: undefined,
       };
       const result = formatStatus(status);
 
@@ -214,6 +236,8 @@ describe("tools utils", () => {
             updatedAt: "2025-01-01",
           },
         },
+        failedBatchesCount: 0,
+        failedBatchesPath: undefined,
       };
       const result = formatStatus(status);
 
@@ -233,10 +257,50 @@ describe("tools utils", () => {
         currentBranch: "default",
         baseBranch: "default",
         compatibility: null,
+        failedBatchesCount: 0,
+        failedBatchesPath: undefined,
       };
       const result = formatStatus(status);
 
       expect(result).toContain("No compatibility information found");
+    });
+
+    it("should surface failed batches when index is not yet usable", () => {
+      const status: StatusResult = {
+        indexed: false,
+        vectorCount: 0,
+        provider: "google",
+        model: "gemini-embedding-001",
+        indexPath: "/tmp/index",
+        currentBranch: "default",
+        baseBranch: "default",
+        compatibility: null,
+        failedBatchesCount: 2,
+        failedBatchesPath: "/tmp/index/failed-batches.json",
+      };
+      const result = formatStatus(status);
+
+      expect(result).toContain("failed embedding batches");
+      expect(result).toContain("/tmp/index/failed-batches.json");
+    });
+
+    it("should warn when indexed data exists alongside failed batches", () => {
+      const status: StatusResult = {
+        indexed: true,
+        vectorCount: 100,
+        provider: "google",
+        model: "gemini-embedding-001",
+        indexPath: "/tmp/index",
+        currentBranch: "default",
+        baseBranch: "default",
+        compatibility: { compatible: true },
+        failedBatchesCount: 1,
+        failedBatchesPath: "/tmp/index/failed-batches.json",
+      };
+      const result = formatStatus(status);
+
+      expect(result).toContain("INDEXING WARNING");
+      expect(result).toContain("failed-batches.json");
     });
   });
 

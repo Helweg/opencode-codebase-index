@@ -1,6 +1,6 @@
 // Config schema without zod dependency to avoid version conflicts with OpenCode SDK
 
-import { DEFAULT_INCLUDE, DEFAULT_EXCLUDE, EMBEDDING_MODELS, DEFAULT_PROVIDER_MODELS } from "./constants.js";
+import { AUTO_DETECT_PROVIDER_ORDER, DEFAULT_INCLUDE, DEFAULT_EXCLUDE, EMBEDDING_MODELS, DEFAULT_PROVIDER_MODELS } from "./constants.js";
 import { substituteEnvString } from "./env-substitution.js";
 
 export type IndexScope = "project" | "global";
@@ -425,6 +425,10 @@ export function getDefaultModelForProvider(provider: EmbeddingProvider): Embeddi
 export type EmbeddingProvider = keyof typeof EMBEDDING_MODELS;
 
 export const availableProviders: EmbeddingProvider[] = Object.keys(EMBEDDING_MODELS) as EmbeddingProvider[]
+
+export const autoDetectProviders: EmbeddingProvider[] = AUTO_DETECT_PROVIDER_ORDER.filter(
+  (provider): provider is EmbeddingProvider => provider in EMBEDDING_MODELS,
+);
 
 export type ProviderModels = {
   [P in keyof typeof EMBEDDING_MODELS]: keyof (typeof EMBEDDING_MODELS)[P]
