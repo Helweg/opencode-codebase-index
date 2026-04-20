@@ -56,9 +56,31 @@
 3. **Index your codebase**
    Run `/index` or ask the agent to index your codebase. This only needs to be done once — subsequent updates are incremental.
 
+   **Recommended check:** run `/status` after the first index so you can confirm the detected provider/model before you start searching.
+
 4. **Start Searching**
    Ask:
    > "Find the function that handles credit card validation errors"
+
+### Provider selection notes
+
+- **Default auto-detect order:** Ollama → GitHub Copilot → OpenAI → Google
+- **Ollama** is the preferred zero-cost local option and works especially well for large repos:
+
+  ```bash
+  ollama pull nomic-embed-text
+  ```
+
+  ```json
+  {
+    "embeddingProvider": "ollama"
+  }
+  ```
+
+- **GitHub Copilot** is a good default if OpenCode already has Copilot auth and you prefer hosted embeddings.
+- **OpenAI** is a good hosted option when you want predictable API behavior and standard cloud setup.
+- **Google** is available if you prefer Gemini-hosted embeddings.
+- If `/status` reports provider or compatibility problems, follow that guidance before using `/index force`.
 
 ## 🌐 MCP Server (Cursor, Claude Code, Windsurf, etc.)
 
@@ -315,6 +337,7 @@ Manually trigger indexing.
 
 ### `index_status`
 Checks if the index is ready and healthy.
+- **Recommended workflow**: run this after `/index` to confirm the detected provider/model and whether the index is ready to search.
 
 ### `index_health_check`
 Maintenance tool to remove stale entries from deleted files and orphaned embeddings/chunks from the database.

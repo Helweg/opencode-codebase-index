@@ -117,6 +117,12 @@ ollama pull nomic-embed-text
 ### Verify Provider Detection
 Run `/status` in OpenCode to see which provider is detected.
 
+Auto-detect tries providers in this order:
+1. Ollama
+2. GitHub Copilot
+3. OpenAI
+4. Google (Gemini)
+
 ---
 
 ## Rate Limiting Errors
@@ -154,6 +160,8 @@ OpenAI has generous limits, but if you hit them:
 ### For Google
 Similar to OpenAI. Check your quota at [Google Cloud Console](https://console.cloud.google.com/).
 
+If you see provider/model errors, verify that your configured Google credentials have access to the Gemini embeddings API.
+
 ### For Large Codebases (1k+ files)
 Use Ollama locally - no rate limits:
 ```bash
@@ -185,6 +193,8 @@ Ask the agent:
 > "Force reindex the codebase"
 
 Or run `/index force`.
+
+Only use force reindex for a full rebuild. If `/status` reports failed embedding batches, fix the provider/auth issue first and rerun `/index` normally.
 
 ### Reset Everything
 Delete the entire index directory:

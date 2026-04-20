@@ -21,3 +21,7 @@ Examples:
 IMPORTANT: You MUST pass the parsed arguments to `index_codebase`. Do not ignore them.
 
 Show final statistics including files processed, chunks indexed, tokens used, and duration.
+
+If indexing completes but the codebase still is not ready, tell the user to run `/status` next.
+- If `/status` reports failed embedding batches, fix the provider/auth issue and rerun `/index` normally.
+- Use `/index force` only for a full rebuild or when `/status` reports provider/model incompatibility.
