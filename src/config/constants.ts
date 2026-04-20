@@ -107,8 +107,8 @@ export const DEFAULT_PROVIDER_MODELS = {
 } as const
 
 export const AUTO_DETECT_PROVIDER_ORDER = [
+  "ollama",
   "github-copilot",
   "openai",
   "google",
-  "ollama",
 ] as const;

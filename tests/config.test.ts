@@ -939,8 +939,11 @@ describe("config schema", () => {
       expect(defaultProviders.sort()).toEqual(providers.sort());
     });
 
-    it("should prefer GitHub Copilot before Google for auto-detection", () => {
-      expect(AUTO_DETECT_PROVIDER_ORDER[0]).toBe("github-copilot");
+    it("should prefer Ollama before cloud providers for auto-detection", () => {
+      expect(AUTO_DETECT_PROVIDER_ORDER[0]).toBe("ollama");
+      expect(AUTO_DETECT_PROVIDER_ORDER.indexOf("github-copilot")).toBeGreaterThan(
+        AUTO_DETECT_PROVIDER_ORDER.indexOf("ollama"),
+      );
       expect(AUTO_DETECT_PROVIDER_ORDER.indexOf("google")).toBeGreaterThan(
         AUTO_DETECT_PROVIDER_ORDER.indexOf("github-copilot"),
       );
