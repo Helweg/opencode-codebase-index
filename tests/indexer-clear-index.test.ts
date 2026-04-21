@@ -428,6 +428,71 @@ describe("indexer clearIndex force rebuild", () => {
     expect(failedBatches.some((batch) => batch.chunks.some((chunk) => chunk.metadata.filePath === projectBFile))).toBe(true);
   });
 
+  it("clears current-repo branch ownership for DB-only chunks left by failed embeddings", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const sharedDir = path.join(tempDir, "shared-kb");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+    const sharedFile = path.join(sharedDir, "shared.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.mkdirSync(path.dirname(sharedFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(sharedFile, "export function sharedDoc() { return 'shared'; }\n", "utf-8");
+
+    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      scope: "global",
+      knowledgeBases: [sharedDir],
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    }));
+
+    await createKbIndexer(projectA).index();
+    await createKbIndexer(projectB).index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectABranch = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
+    const projectBBranch = `${hashContent(path.resolve(projectB)).slice(0, 16)}:default`;
+    const sharedChunk = db.getChunksByFile(sharedFile)[0];
+
+    db.deleteBranchChunksForBranch(projectABranch, [sharedChunk.chunkId]);
+    db.deleteBranchChunksForBranch(projectBBranch, [sharedChunk.chunkId]);
+    db.deleteChunksByFile(sharedFile);
+    db.upsertChunksBatch([
+      {
+        chunkId: sharedChunk.chunkId,
+        contentHash: sharedChunk.contentHash,
+        filePath: sharedFile,
+        startLine: sharedChunk.startLine,
+        endLine: sharedChunk.endLine,
+        nodeType: sharedChunk.nodeType,
+        name: sharedChunk.name,
+        language: sharedChunk.language,
+      },
+    ]);
+    db.addChunksToBranchBatch(projectABranch, [sharedChunk.chunkId]);
+
+    await createKbIndexer(projectA).clearIndex();
+
+    expect(db.chunkExistsOnBranch(projectABranch, sharedChunk.chunkId)).toBe(false);
+    expect(db.getChunksByFile(sharedFile)).toHaveLength(0);
+  });
+
   it("preserves resolved call edges for shared symbols kept by another global project", async () => {
     vi.stubEnv("HOME", tempHome);
 
