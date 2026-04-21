@@ -262,30 +262,128 @@ describe("indexer clearIndex force rebuild", () => {
     expect(db.getChunksByFile(projectAFile)).toHaveLength(0);
     expect(db.getChunksByFile(projectBFile).length).toBeGreaterThan(0);
     expect(db.getChunksByFile(kbFile).length).toBeGreaterThan(0);
+
+    const searchResults = await createKbIndexer(projectB).search("sharedDoc", 5);
+    expect(searchResults.some((result) => result.filePath === kbFile)).toBe(true);
   });
 
-  it("keeps legacy global branch catalogs readable until the project is reindexed", async () => {
+  it("keeps legacy global branch catalogs readable across repos until each project is reindexed", async () => {
     vi.stubEnv("HOME", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
     const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
     fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
     fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return 'b'; }\n", "utf-8");
 
-    const legacyIndexer = createIndexer(projectA, 8, "global");
-    await legacyIndexer.index();
+    await createIndexer(projectA, 8, "global").index();
+    await createIndexer(projectB, 8, "global").index();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
     const db = new Database(dbPath);
-    const currentChunk = db.getChunksByFile(projectAFile)[0];
+    const projectBChunk = db.getChunksByFile(projectBFile)[0];
+    const projectAKey = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
     const currentBranchKey = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
+    const projectBKey = `${hashContent(path.resolve(projectB)).slice(0, 16)}:default`;
 
-    db.clearBranch(currentBranchKey);
-    db.addChunksToBranchBatch("default", [currentChunk.chunkId]);
-    db.deleteMetadata("index.globalBranchKeyVersion");
+    db.clearBranch(projectBKey);
+    db.addChunksToBranchBatch("default", [projectBChunk.chunkId]);
+    db.clearBranch(projectAKey);
 
-    const migratedIndexer = createIndexer(projectA, 8, "global");
-    const searchResults = await migratedIndexer.search("alpha", 5);
-    expect(searchResults.some((result) => result.filePath === projectAFile)).toBe(true);
+    const searchResults = await createIndexer(projectB, 8, "global").search("beta", 5);
+    expect(searchResults.some((result) => result.filePath === projectBFile)).toBe(true);
+  });
+
+  it("preserves resolved call edges for shared symbols kept by another global project", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const sharedDir = path.join(tempDir, "shared-kb");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+    const sharedFile = path.join(sharedDir, "shared.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.mkdirSync(path.dirname(sharedFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return sharedHelper(); }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return sharedHelper(); }\n", "utf-8");
+    fs.writeFileSync(sharedFile, "export const shared = 'shared';\n", "utf-8");
+
+    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      scope: "global",
+      knowledgeBases: [sharedDir],
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    }));
+
+    await createKbIndexer(projectA).index();
+    await createKbIndexer(projectB).index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectABranch = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
+    const projectBBranch = `${hashContent(path.resolve(projectB)).slice(0, 16)}:default`;
+
+    const sharedSymbolId = `sym_${hashContent(`${sharedFile}:sharedHelper:function:1`).slice(0, 16)}`;
+    const betaSymbolId = `sym_${hashContent(`${projectBFile}:beta:function:1`).slice(0, 16)}`;
+    const edgeId = `edge_${hashContent(`${betaSymbolId}:sharedHelper:1:0`).slice(0, 16)}`;
+
+    db.upsertSymbolsBatch([
+      {
+        id: sharedSymbolId,
+        filePath: sharedFile,
+        name: "sharedHelper",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 30,
+        language: "typescript",
+      },
+      {
+        id: betaSymbolId,
+        filePath: projectBFile,
+        name: "beta",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 1,
+        endCol: 40,
+        language: "typescript",
+      },
+    ]);
+    db.upsertCallEdgesBatch([
+      {
+        id: edgeId,
+        fromSymbolId: betaSymbolId,
+        targetName: "sharedHelper",
+        toSymbolId: sharedSymbolId,
+        callType: "Call",
+        line: 1,
+        col: 0,
+        isResolved: true,
+      },
+    ]);
+    db.addSymbolsToBranchBatch(projectABranch, [sharedSymbolId]);
+    db.addSymbolsToBranchBatch(projectBBranch, [sharedSymbolId, betaSymbolId]);
+
+    await createKbIndexer(projectA).clearIndex();
+
+    const callers = await createKbIndexer(projectB).getCallers("sharedHelper");
+    expect(callers.some((caller) => caller.id === edgeId && caller.fromSymbolFilePath === projectBFile)).toBe(true);
   });
 });
