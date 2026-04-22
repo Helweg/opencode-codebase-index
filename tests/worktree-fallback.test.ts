@@ -66,7 +66,7 @@ describe("worktree fallback (issue #60)", () => {
 
     expect(configPath).toBe(path.join(mainRepoDir, ".opencode", "codebase-index.json"));
     expect(loaded.scope).toBe("project");
-    expect(loaded.knowledgeBases).toEqual(["docs/reference"]);
+    expect(loaded.knowledgeBases).toEqual([path.join("..", "main-repo", "docs", "reference")]);
   });
 
   it("resolves the project index path to the main repo when the worktree has no local index", async () => {
@@ -94,5 +94,25 @@ describe("worktree fallback (issue #60)", () => {
     expect(configPath).toBe(path.join(worktreeDir, ".opencode", "codebase-index.json"));
     expect(indexPath).toBe(path.join(worktreeDir, ".opencode", "index"));
     expect(loaded.knowledgeBases).toEqual(["worktree-only"]);
+  });
+
+  it("keeps a worktree-local config on a local worktree index boundary", () => {
+    fs.mkdirSync(path.join(worktreeDir, ".opencode"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(worktreeDir, ".opencode", "codebase-index.json"),
+      JSON.stringify({
+        embeddingProvider: "custom",
+        customProvider: {
+          baseUrl: "http://localhost:11434/v1",
+          model: "worktree-model",
+          dimensions: 16,
+        },
+        scope: "project",
+      }, null, 2),
+      "utf-8"
+    );
+
+    expect(resolveProjectIndexPath(worktreeDir, "project")).toBe(path.join(worktreeDir, ".opencode", "index"));
   });
 });

@@ -17,6 +17,10 @@ function resolveWorktreeFallbackPath(projectRoot: string, relativePath: string):
   return existsSync(fallbackPath) ? fallbackPath : null;
 }
 
+function hasProjectConfig(projectRoot: string): boolean {
+  return existsSync(path.join(projectRoot, PROJECT_CONFIG_RELATIVE_PATH));
+}
+
 export function getGlobalIndexPath(): string {
   return path.join(os.homedir(), ".opencode", "global-index");
 }
@@ -37,6 +41,10 @@ export function resolveProjectIndexPath(projectRoot: string, scope: "project" | 
 
   const localIndexPath = path.join(projectRoot, PROJECT_INDEX_RELATIVE_PATH);
   if (existsSync(localIndexPath)) {
+    return localIndexPath;
+  }
+
+  if (hasProjectConfig(projectRoot)) {
     return localIndexPath;
   }
 

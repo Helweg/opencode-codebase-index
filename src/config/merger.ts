@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import * as os from "os";
+import * as path from "path";
 
 import { resolveProjectConfigPath } from "./paths.js";
 
@@ -11,6 +12,28 @@ function loadJsonFile(filePath: string): unknown {
     }
   } catch { /* ignore */ }
   return null;
+}
+
+function rebasePathEntries(
+  values: unknown,
+  fromDir: string,
+  toDir: string,
+): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => {
+      const trimmed = value.trim();
+      if (!trimmed || path.isAbsolute(trimmed)) {
+        return trimmed;
+      }
+
+      return path.normalize(path.relative(toDir, path.resolve(fromDir, trimmed)));
+    })
+    .filter(Boolean);
 }
 
 /**
@@ -28,6 +51,7 @@ export function loadMergedConfig(projectRoot: string): unknown {
   const globalConfig = loadJsonFile(globalConfigPath) as Record<string, unknown> | null;
   const projectConfigPath = resolveProjectConfigPath(projectRoot);
   const projectConfig = loadJsonFile(projectConfigPath) as Record<string, unknown> | null;
+  const projectConfigBaseDir = path.dirname(path.dirname(projectConfigPath));
 
   // If neither exists, return empty
   if (!globalConfig && !projectConfig) {
@@ -41,6 +65,9 @@ export function loadMergedConfig(projectRoot: string): unknown {
 
   // If only project exists, return it
   if (!globalConfig && projectConfig) {
+    if (Array.isArray(projectConfig.knowledgeBases)) {
+      projectConfig.knowledgeBases = rebasePathEntries(projectConfig.knowledgeBases, projectConfigBaseDir, projectRoot);
+    }
     return projectConfig;
   }
 
@@ -142,7 +169,9 @@ export function loadMergedConfig(projectRoot: string): unknown {
 
   // For knowledgeBases: merge arrays (union, deduplicated)
   const globalKbs = globalConfig && Array.isArray(globalConfig.knowledgeBases) ? globalConfig.knowledgeBases : [];
-  const projectKbs = projectConfig && Array.isArray(projectConfig.knowledgeBases) ? projectConfig.knowledgeBases : [];
+  const projectKbs = projectConfig
+    ? rebasePathEntries(projectConfig.knowledgeBases, projectConfigBaseDir, projectRoot)
+    : [];
   const allKbs = [...globalKbs, ...projectKbs];
   const uniqueKbs = [...new Set(allKbs.map(p => String(p).trim()))];
   merged.knowledgeBases = uniqueKbs;
