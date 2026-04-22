@@ -1,11 +1,9 @@
 use crate::SearchResult;
 use anyhow::{anyhow, Result};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use usearch::{new_index, Index, IndexOptions, MetricKind, ScalarKind};
 
 #[derive(Serialize, Deserialize, Default)]
@@ -128,27 +126,25 @@ impl VectorStoreInner {
 
         let current_size = self.index.size();
         let needed_capacity = current_size + batch_size;
-        let num_threads = rayon::current_num_threads();
-        self.index
-            .reserve_capacity_and_threads(needed_capacity, num_threads)?;
+        if self.index.capacity() < needed_capacity {
+            let new_capacity = std::cmp::max(self.index.capacity() * 2, needed_capacity);
+            self.index.reserve(new_capacity)?;
+        }
 
         let start_id = self.stored.next_id;
-        let failure_count = AtomicUsize::new(0);
+        let mut failure_count = 0usize;
 
-        let ids: Vec<u64> = (0..batch_size).map(|i| start_id + i as u64).collect();
+        for (i, vector) in vectors.iter().enumerate() {
+            let id = start_id + i as u64;
+            if self.index.add(id, vector).is_err() {
+                failure_count += 1;
+            }
+        }
 
-        ids.par_iter()
-            .zip(vectors.par_iter())
-            .for_each(|(&id, vector)| {
-                if self.index.add(id, vector).is_err() {
-                    failure_count.fetch_add(1, Ordering::Relaxed);
-                }
-            });
-
-        if failure_count.load(Ordering::Relaxed) > 0 {
+        if failure_count > 0 {
             return Err(anyhow!(
                 "Failed to add {} vectors to index",
-                failure_count.load(Ordering::Relaxed)
+                failure_count
             ));
         }
 
