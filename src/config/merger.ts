@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
-import * as path from "path";
 import * as os from "os";
+
+import { resolveProjectConfigPath } from "./paths.js";
 
 function loadJsonFile(filePath: string): unknown {
   try {
@@ -23,9 +24,9 @@ function loadJsonFile(filePath: string): unknown {
  * - For include/exclude: project overrides global if set, otherwise load global
  */
 export function loadMergedConfig(projectRoot: string): unknown {
-  const globalConfigPath = path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
+  const globalConfigPath = os.homedir() + "/.config/opencode/codebase-index.json";
   const globalConfig = loadJsonFile(globalConfigPath) as Record<string, unknown> | null;
-  const projectConfigPath = path.join(projectRoot, ".opencode", "codebase-index.json");
+  const projectConfigPath = resolveProjectConfigPath(projectRoot);
   const projectConfig = loadJsonFile(projectConfigPath) as Record<string, unknown> | null;
 
   // If neither exists, return empty

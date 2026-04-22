@@ -33,6 +33,7 @@ import {
 } from "../native/index.js";
 import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
+import { resolveProjectIndexPath } from "../config/paths.js";
 
 const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php"]);
 const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
@@ -1456,11 +1457,7 @@ export class Indexer {
   }
 
   private getIndexPath(): string {
-    if (this.config.scope === "global") {
-      const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-      return path.join(homeDir, ".opencode", "global-index");
-    }
-    return path.join(this.projectRoot, ".opencode", "index");
+    return resolveProjectIndexPath(this.projectRoot, this.config.scope);
   }
 
   private loadFileHashCache(): void {
