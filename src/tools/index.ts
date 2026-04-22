@@ -19,6 +19,7 @@ import {
 import { existsSync, writeFileSync, mkdirSync, statSync } from "fs";
 import * as path from "path";
 import { loadMergedConfig } from "../config/merger.js";
+import { resolveProjectConfigPath } from "../config/paths.js";
 
 const z = tool.schema;
 
@@ -50,7 +51,7 @@ function getIndexer(): Indexer {
 }
 
 function getConfigPath(): string {
-  return path.join(sharedProjectRoot, ".opencode", "codebase-index.json");
+  return resolveProjectConfigPath(sharedProjectRoot);
 }
 
 function loadConfig(): Record<string, unknown> {
@@ -81,11 +82,11 @@ function loadConfig(): Record<string, unknown> {
 }
 
 function saveConfig(config: Record<string, unknown>): void {
-  const configDir = path.join(sharedProjectRoot, ".opencode");
+  const configPath = getConfigPath();
+  const configDir = path.dirname(configPath);
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true });
   }
-  const configPath = getConfigPath();
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
 
