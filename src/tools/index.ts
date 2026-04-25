@@ -99,12 +99,6 @@ function loadConfig(): Record<string, unknown> {
     });
   }
   
-  if (Array.isArray(config.additionalInclude)) {
-    config.additionalInclude = (config.additionalInclude as string[]).map(pattern => {
-      return normalizeConfigPathValue(pattern, configBaseDir);
-    });
-  }
-  
   return config;
 }
 
@@ -121,12 +115,6 @@ function saveConfig(config: Record<string, unknown>): void {
   if (Array.isArray(serializableConfig.knowledgeBases)) {
     serializableConfig.knowledgeBases = (serializableConfig.knowledgeBases as string[]).map(kb =>
       serializeConfigPathValue(kb, configBaseDir)
-    );
-  }
-
-  if (Array.isArray(serializableConfig.additionalInclude)) {
-    serializableConfig.additionalInclude = (serializableConfig.additionalInclude as string[]).map(pattern =>
-      serializeConfigPathValue(pattern, configBaseDir)
     );
   }
 

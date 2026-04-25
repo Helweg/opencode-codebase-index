@@ -200,4 +200,84 @@ describe("knowledge base tool config refresh", () => {
     const savedMainConfig = JSON.parse(fs.readFileSync(mainConfigPath, "utf-8")) as { knowledgeBases?: string[] };
     expect(savedMainConfig.knowledgeBases).toEqual(["docs/reference", path.normalize(kbDir)]);
   });
+
+  it("preserves additionalInclude globs when tools rewrite local config", async () => {
+    const configPath = path.join(tempDir, ".opencode", "codebase-index.json");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        embeddingProvider: "custom",
+        customProvider: {
+          baseUrl: "http://localhost:11434/v1",
+          model: "mock-model",
+          dimensions: 8,
+        },
+        indexing: { watchFiles: false },
+        additionalInclude: ["docs/**/*.md"],
+        knowledgeBases: [],
+      }, null, 2),
+      "utf-8"
+    );
+
+    indexerInstances.length = 0;
+    initializeTools(tempDir, parseConfig(loadMergedConfig(tempDir)));
+
+    await add_knowledge_base.execute({ path: kbDir });
+
+    const savedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8")) as {
+      additionalInclude?: string[];
+      knowledgeBases?: string[];
+    };
+    expect(savedConfig.additionalInclude).toEqual(["docs/**/*.md"]);
+    expect(savedConfig.knowledgeBases).toEqual([path.normalize(kbDir)]);
+    expect(indexerInstances.at(-1)?.config.additionalInclude).toEqual(["docs/**/*.md"]);
+  });
+
+  it("preserves inherited additionalInclude globs when saving back to the source config", async () => {
+    const mainRepoDir = path.join(tempDir, "main-repo");
+    const worktreeDir = path.join(tempDir, "worktree-feature");
+    const worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "feature");
+
+    fs.mkdirSync(path.join(mainRepoDir, ".git", "refs", "heads"), { recursive: true });
+    fs.mkdirSync(path.join(mainRepoDir, ".opencode"), { recursive: true });
+    fs.mkdirSync(worktreeGitDir, { recursive: true });
+    fs.mkdirSync(worktreeDir, { recursive: true });
+
+    fs.writeFileSync(path.join(mainRepoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+    fs.writeFileSync(path.join(mainRepoDir, ".git", "refs", "heads", "main"), "1111111111111111111111111111111111111111\n");
+    fs.writeFileSync(path.join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
+    fs.writeFileSync(path.join(worktreeGitDir, "HEAD"), "ref: refs/heads/feature\n");
+    fs.writeFileSync(path.join(worktreeGitDir, "commondir"), "../..\n");
+
+    const mainConfigPath = path.join(mainRepoDir, ".opencode", "codebase-index.json");
+    fs.writeFileSync(
+      mainConfigPath,
+      JSON.stringify({
+        embeddingProvider: "custom",
+        customProvider: {
+          baseUrl: "http://localhost:11434/v1",
+          model: "mock-model",
+          dimensions: 8,
+        },
+        indexing: { watchFiles: false },
+        additionalInclude: ["docs/**/*.md"],
+        knowledgeBases: [],
+      }, null, 2),
+      "utf-8"
+    );
+
+    indexerInstances.length = 0;
+    initializeTools(worktreeDir, parseConfig(loadMergedConfig(worktreeDir)));
+
+    await add_knowledge_base.execute({ path: kbDir });
+
+    const savedMainConfig = JSON.parse(fs.readFileSync(mainConfigPath, "utf-8")) as {
+      additionalInclude?: string[];
+      knowledgeBases?: string[];
+    };
+    expect(savedMainConfig.additionalInclude).toEqual(["docs/**/*.md"]);
+    expect(savedMainConfig.knowledgeBases).toEqual([path.normalize(kbDir)]);
+    expect(indexerInstances.at(-1)?.config.additionalInclude).toEqual(["docs/**/*.md"]);
+  });
 });
