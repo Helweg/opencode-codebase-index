@@ -261,6 +261,64 @@ describe("indexer clearIndex force rebuild", () => {
     await expect(indexer.healthCheck()).rejects.toThrow("Automatic repair is disabled for global scope");
   });
 
+  it("surfaces rebuild guidance when automatic orphan GC resets a corrupted local index", async () => {
+    embeddingDimensions = 8;
+    const indexer = new Indexer(tempDir, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+        autoGc: true,
+        gcOrphanThreshold: 0,
+      },
+    }));
+
+    const initialStats = await indexer.index();
+    expect(initialStats.indexedChunks).toBeGreaterThan(0);
+
+    const database = (indexer as unknown as { database: Database }).database;
+    vi.spyOn(database, "getStats").mockReturnValue({
+      embeddingCount: 2,
+      chunkCount: 1,
+      branchChunkCount: 1,
+      branchCount: 1,
+      symbolCount: 0,
+      callEdgeCount: 0,
+    });
+    const realGcOrphanEmbeddings = database.gcOrphanEmbeddings.bind(database);
+    vi.spyOn(database, "gcOrphanEmbeddings").mockImplementation(() => realGcOrphanEmbeddings());
+    vi.spyOn(database, "gcOrphanChunks").mockImplementation(() => {
+      throw new Error("SQLite error: database disk image is malformed");
+    });
+
+    const maybeRunOrphanGc = vi.spyOn(indexer as unknown as { maybeRunOrphanGc: () => Promise<unknown> }, "maybeRunOrphanGc");
+
+    fs.writeFileSync(sourceFile, [
+      "export function alpha() {",
+      "  return 'alpha-updated';",
+      "}",
+      "",
+      "export function gamma() {",
+      "  return alpha();",
+      "}",
+    ].join("\n"), "utf-8");
+
+    const result = await indexer.index();
+    expect(maybeRunOrphanGc).toHaveBeenCalled();
+    expect(result.resetCorruptedIndex).toBe(true);
+    expect(result.warning).toContain("reset the local index");
+
+    const status = await indexer.getStatus();
+    expect(status.indexed).toBe(false);
+    expect(status.vectorCount).toBe(0);
+  });
+
   it("preserves shared knowledge-base rows still referenced by another global project", async () => {
     vi.stubEnv("HOME", tempHome);
 

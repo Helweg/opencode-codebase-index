@@ -98,6 +98,21 @@ describe("tools utils", () => {
       expect(result).toContain("/tmp/failed-batches.json");
     });
 
+    it("should surface corrupted index reset guidance instead of a success summary", () => {
+      const stats = createBaseStats({
+        totalFiles: 10,
+        indexedChunks: 5,
+        removedChunks: 2,
+        resetCorruptedIndex: true,
+        warning: "Detected a corrupted local SQLite index and reset the local index. Run index_codebase to rebuild search data.",
+      });
+      const result = formatIndexStats(stats);
+
+      expect(result).toContain("corrupted local SQLite index");
+      expect(result).toContain("Run index_codebase to rebuild search data");
+      expect(result).not.toContain("5 new chunks embedded");
+    });
+
     it("should not include verbose details by default", () => {
       const stats = createBaseStats({
         totalFiles: 10,

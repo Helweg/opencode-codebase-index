@@ -106,6 +106,13 @@ export interface IndexStats {
   skippedFiles: SkippedFile[];
   parseFailures: string[];
   failedBatchesPath?: string;
+  warning?: string;
+  resetCorruptedIndex?: boolean;
+}
+
+interface CorruptedIndexResetResult {
+  warning: string;
+  resetCorruptedIndex: true;
 }
 
 export interface SearchResult {
@@ -2125,11 +2132,11 @@ export class Indexer {
     }
   }
 
-  private async maybeRunOrphanGc(): Promise<void> {
-    if (!this.database) return;
+  private async maybeRunOrphanGc(): Promise<CorruptedIndexResetResult | null> {
+    if (!this.database) return null;
 
     const stats = this.database.getStats();
-    if (!stats) return;
+    if (!stats) return null;
 
     const orphanCount = stats.embeddingCount - stats.chunkCount;
     if (orphanCount > this.config.indexing.gcOrphanThreshold) {
@@ -2138,12 +2145,17 @@ export class Indexer {
         this.database.gcOrphanChunks();
       } catch (error) {
         if (await this.tryResetCorruptedIndex("running automatic orphan garbage collection", error)) {
-          return;
+          return {
+            resetCorruptedIndex: true,
+            warning: this.getCorruptedIndexWarning(path.join(this.indexPath, "codebase.db")),
+          };
         }
         throw error;
       }
       this.database.setMetadata("lastGcTimestamp", Date.now().toString());
     }
+
+    return null;
   }
 
   private getCorruptedIndexWarning(dbPath: string): string {
@@ -2910,7 +2922,25 @@ export class Indexer {
 
     // Auto-GC after indexing: check if orphan count exceeds threshold
     if (this.config.indexing.autoGc && stats.removedChunks > 0) {
-      await this.maybeRunOrphanGc();
+      const gcReset = await this.maybeRunOrphanGc();
+      if (gcReset) {
+        stats.durationMs = Date.now() - startTime;
+        stats.warning = gcReset.warning;
+        stats.resetCorruptedIndex = true;
+
+        this.logger.recordIndexingEnd();
+        this.logger.warn("Indexing ended after resetting corrupted local index during automatic GC", {
+          files: stats.totalFiles,
+          indexed: stats.indexedChunks,
+          existing: stats.existingChunks,
+          removed: stats.removedChunks,
+          failed: stats.failedChunks,
+          tokens: stats.tokensUsed,
+          durationMs: stats.durationMs,
+        });
+
+        return stats;
+      }
     }
 
     stats.durationMs = Date.now() - startTime;

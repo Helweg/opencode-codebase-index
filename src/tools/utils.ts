@@ -13,6 +13,10 @@ function truncateContent(content: string): string {
 }
 
 export function formatIndexStats(stats: IndexStats, verbose: boolean = false): string {
+  if (stats.resetCorruptedIndex) {
+    return stats.warning ?? "Detected a corrupted local index and reset it during indexing. Run index_codebase again to rebuild search data.";
+  }
+
   const lines: string[] = [];
 
   if (stats.failedChunks > 0) {
