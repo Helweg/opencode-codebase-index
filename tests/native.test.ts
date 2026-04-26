@@ -394,7 +394,7 @@ trait Timestampable {
       const batchSize = 1000;
       const items = Array.from({ length: batchSize }, (_unused, index) => ({
         id: `chunk${index}`,
-        vector: index === 777 ? [1, 0, 0] : [0, 1, 0],
+        vector: [Math.cos(index / 25), Math.sin(index / 25), index === 777 ? 1 : 0],
         metadata: {
           filePath: `file-${index}.ts`,
           startLine: index + 1,
@@ -423,6 +423,9 @@ trait Timestampable {
       expect(reloadedStore.count()).toBe(batchSize);
       expect(reloadedStore.getMetadata("chunk777")?.filePath).toBe("file-777.ts");
       expect(reloadedStore.getMetadata("chunk999")?.hash).toBe("hash-999");
+
+      const reloadedResults = reloadedStore.search(items[777].vector, 10);
+      expect(reloadedResults[0]?.id).toBe("chunk777");
     });
 
     it("should clear all data", () => {
