@@ -289,6 +289,145 @@ trait Timestampable {
       expect(newStore.count()).toBe(1);
     });
 
+    it("should add vectors in batch and keep metadata searchable", () => {
+      store.addBatch([
+        {
+          id: "chunk1",
+          vector: [1, 0, 0],
+          metadata: {
+            filePath: "a.ts",
+            startLine: 1,
+            endLine: 5,
+            chunkType: "function",
+            language: "typescript",
+            hash: "abc123",
+          },
+        },
+        {
+          id: "chunk2",
+          vector: [0, 1, 0],
+          metadata: {
+            filePath: "b.ts",
+            startLine: 10,
+            endLine: 15,
+            chunkType: "class",
+            language: "typescript",
+            hash: "def456",
+          },
+        },
+        {
+          id: "chunk3",
+          vector: [0, 0, 1],
+          metadata: {
+            filePath: "c.ts",
+            startLine: 20,
+            endLine: 25,
+            chunkType: "method",
+            language: "typescript",
+            hash: "ghi789",
+          },
+        },
+      ]);
+
+      expect(store.count()).toBe(3);
+
+      const results = store.search([1, 0.1, 0], 2);
+      expect(results.length).toBe(2);
+      expect(results[0]?.id).toBe("chunk1");
+
+      const metadataMap = store.getMetadataBatch(["chunk1", "chunk3"]);
+      expect(metadataMap.size).toBe(2);
+      expect(metadataMap.get("chunk1")?.filePath).toBe("a.ts");
+      expect(metadataMap.get("chunk3")?.chunkType).toBe("method");
+    });
+
+    it("should replace existing keys when updating via batch", () => {
+      store.add("chunk1", [1, 0, 0], {
+        filePath: "original.ts",
+        startLine: 1,
+        endLine: 5,
+        chunkType: "function",
+        language: "typescript",
+        hash: "old-hash",
+      });
+
+      store.addBatch([
+        {
+          id: "chunk1",
+          vector: [0, 1, 0],
+          metadata: {
+            filePath: "updated.ts",
+            startLine: 6,
+            endLine: 12,
+            chunkType: "class",
+            language: "typescript",
+            hash: "new-hash",
+          },
+        },
+        {
+          id: "chunk2",
+          vector: [0, 0, 1],
+          metadata: {
+            filePath: "second.ts",
+            startLine: 20,
+            endLine: 25,
+            chunkType: "method",
+            language: "typescript",
+            hash: "second-hash",
+          },
+        },
+      ]);
+
+      expect(store.count()).toBe(2);
+
+      const updated = store.getMetadata("chunk1");
+      expect(updated?.filePath).toBe("updated.ts");
+      expect(updated?.hash).toBe("new-hash");
+      expect(updated?.chunkType).toBe("class");
+
+      const results = store.search([0, 1, 0], 2);
+      expect(results[0]?.id).toBe("chunk1");
+      expect(results[0]?.metadata.filePath).toBe("updated.ts");
+    });
+
+    it("should handle high-volume batch inserts without losing search or metadata", () => {
+      const batchSize = 1000;
+      const items = Array.from({ length: batchSize }, (_unused, index) => ({
+        id: `chunk${index}`,
+        vector: [Math.cos(index / 25), Math.sin(index / 25), index === 777 ? 1 : 0],
+        metadata: {
+          filePath: `file-${index}.ts`,
+          startLine: index + 1,
+          endLine: index + 2,
+          chunkType: index % 2 === 0 ? "function" : "class",
+          language: "typescript",
+          hash: `hash-${index}`,
+        },
+      }));
+
+      store.addBatch(items);
+
+      expect(store.count()).toBe(batchSize);
+
+      const metadataMap = store.getMetadataBatch(["chunk0", "chunk777", "chunk999"]);
+      expect(metadataMap.size).toBe(3);
+      expect(metadataMap.get("chunk0")?.hash).toBe("hash-0");
+      expect(metadataMap.get("chunk777")?.filePath).toBe("file-777.ts");
+      expect(metadataMap.get("chunk999")?.endLine).toBe(1001);
+
+      store.save();
+
+      const reloadedStore = new VectorStore(path.join(tempDir, "vectors"), 3);
+      reloadedStore.load();
+
+      expect(reloadedStore.count()).toBe(batchSize);
+      expect(reloadedStore.getMetadata("chunk777")?.filePath).toBe("file-777.ts");
+      expect(reloadedStore.getMetadata("chunk999")?.hash).toBe("hash-999");
+
+      const reloadedResults = reloadedStore.search(items[777].vector, 10);
+      expect(reloadedResults[0]?.id).toBe("chunk777");
+    });
+
     it("should clear all data", () => {
       store.add("chunk1", [1, 0, 0], {
         filePath: "test.ts",

@@ -142,10 +142,7 @@ impl VectorStoreInner {
         }
 
         if failure_count > 0 {
-            return Err(anyhow!(
-                "Failed to add {} vectors to index",
-                failure_count
-            ));
+            return Err(anyhow!("Failed to add {} vectors to index", failure_count));
         }
 
         for (i, key) in keys.iter().enumerate() {
