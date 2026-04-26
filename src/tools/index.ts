@@ -18,8 +18,8 @@ import {
 } from "./utils.js";
 import { existsSync, writeFileSync, mkdirSync, statSync } from "fs";
 import * as path from "path";
-import { loadMergedConfig } from "../config/merger.js";
-import { resolveProjectConfigPath, resolveWritableProjectConfigPath } from "../config/paths.js";
+import { loadMergedConfig, materializeLocalProjectConfig } from "../config/merger.js";
+import { resolveWritableProjectConfigPath } from "../config/paths.js";
 
 const z = tool.schema;
 
@@ -54,10 +54,6 @@ function getConfigPath(): string {
   return resolveWritableProjectConfigPath(sharedProjectRoot);
 }
 
-function getResolvedConfigPath(): string {
-  return resolveProjectConfigPath(sharedProjectRoot);
-}
-
 function normalizeConfigPathValue(value: string, baseDir: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -89,17 +85,16 @@ function serializeConfigPathValue(value: string, baseDir: string): string {
 function loadConfig(): Record<string, unknown> {
   const rawConfig = loadMergedConfig(sharedProjectRoot);
   const config: Record<string, unknown> = {};
-  const configBaseDir = path.dirname(path.dirname(getResolvedConfigPath()));
-  
+
   if (rawConfig && typeof rawConfig === "object") {
     for (const key of Object.keys(rawConfig)) {
       config[key] = rawConfig[key as keyof typeof rawConfig];
     }
   }
-  
+
   if (Array.isArray(config.knowledgeBases)) {
     config.knowledgeBases = (config.knowledgeBases as string[]).map(kb => {
-      return normalizeConfigPathValue(kb, configBaseDir);
+      return normalizeConfigPathValue(kb, sharedProjectRoot);
     });
   }
   
@@ -157,7 +152,7 @@ export const index_codebase: ToolDefinition = tool({
     verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
   },
   async execute(args, context) {
-    const indexer = getIndexer();
+    let indexer = getIndexer();
 
     if (args.estimateOnly) {
       const estimate = await indexer.estimateCost();
@@ -165,6 +160,14 @@ export const index_codebase: ToolDefinition = tool({
     }
 
     if (args.force) {
+      const status = await indexer.getStatus();
+      const localIndexPath = path.join(sharedProjectRoot, ".opencode", "index");
+      const currentConfig = parseConfig(loadConfig());
+      if (currentConfig.scope === "project" && path.resolve(status.indexPath) !== path.resolve(localIndexPath)) {
+        materializeLocalProjectConfig(sharedProjectRoot, loadMergedConfig(sharedProjectRoot));
+        refreshIndexerFromConfig();
+        indexer = getIndexer();
+      }
       await indexer.clearIndex();
     }
 

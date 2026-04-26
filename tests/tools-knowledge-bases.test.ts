@@ -115,7 +115,7 @@ describe("knowledge base tool config refresh", () => {
     expect(indexerInstances[2]?.config.knowledgeBases).toEqual([]);
   });
 
-  it("writes inherited worktree config updates back to the resolved source config", async () => {
+  it("materializes a local config boundary for fresh worktree knowledge base edits", async () => {
     const mainRepoDir = path.join(tempDir, "main-repo");
     const worktreeDir = path.join(tempDir, "worktree-feature");
     const worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "feature");
@@ -152,14 +152,16 @@ describe("knowledge base tool config refresh", () => {
 
     await add_knowledge_base.execute({ path: kbDir });
 
+    const localConfigPath = path.join(worktreeDir, ".opencode", "codebase-index.json");
     const savedMainConfig = JSON.parse(fs.readFileSync(mainConfigPath, "utf-8")) as { knowledgeBases?: string[] };
-    expect(savedMainConfig.knowledgeBases).toEqual([path.normalize(kbDir)]);
-    expect(fs.existsSync(path.join(worktreeDir, ".opencode", "codebase-index.json"))).toBe(false);
+    const localConfig = JSON.parse(fs.readFileSync(localConfigPath, "utf-8")) as { knowledgeBases?: string[] };
+    expect(savedMainConfig.knowledgeBases).toEqual([]);
+    expect(localConfig.knowledgeBases).toEqual([path.normalize(kbDir)]);
     expect(indexerInstances.at(-1)?.projectRoot).toBe(worktreeDir);
     expect(indexerInstances.at(-1)?.config.knowledgeBases).toEqual([path.normalize(kbDir)]);
   });
 
-  it("preserves inherited relative config paths when saving back to the source config", async () => {
+  it("keeps repo-local inherited knowledge bases relative when materializing a local boundary", async () => {
     const mainRepoDir = path.join(tempDir, "main-repo");
     const worktreeDir = path.join(tempDir, "worktree-feature");
     const worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "feature");
@@ -197,8 +199,11 @@ describe("knowledge base tool config refresh", () => {
 
     await add_knowledge_base.execute({ path: kbDir });
 
+    const localConfigPath = path.join(worktreeDir, ".opencode", "codebase-index.json");
     const savedMainConfig = JSON.parse(fs.readFileSync(mainConfigPath, "utf-8")) as { knowledgeBases?: string[] };
-    expect(savedMainConfig.knowledgeBases).toEqual(["docs/reference", path.normalize(kbDir)]);
+    const localConfig = JSON.parse(fs.readFileSync(localConfigPath, "utf-8")) as { knowledgeBases?: string[] };
+    expect(savedMainConfig.knowledgeBases).toEqual(["docs/reference"]);
+    expect(localConfig.knowledgeBases).toEqual(["docs/reference", path.normalize(kbDir)]);
   });
 
   it("preserves additionalInclude globs when tools rewrite local config", async () => {
@@ -234,7 +239,7 @@ describe("knowledge base tool config refresh", () => {
     expect(indexerInstances.at(-1)?.config.additionalInclude).toEqual(["docs/**/*.md"]);
   });
 
-  it("preserves inherited additionalInclude globs when saving back to the source config", async () => {
+  it("preserves inherited additionalInclude globs when materializing a local config boundary", async () => {
     const mainRepoDir = path.join(tempDir, "main-repo");
     const worktreeDir = path.join(tempDir, "worktree-feature");
     const worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "feature");
@@ -272,12 +277,19 @@ describe("knowledge base tool config refresh", () => {
 
     await add_knowledge_base.execute({ path: kbDir });
 
+    const localConfigPath = path.join(worktreeDir, ".opencode", "codebase-index.json");
     const savedMainConfig = JSON.parse(fs.readFileSync(mainConfigPath, "utf-8")) as {
       additionalInclude?: string[];
       knowledgeBases?: string[];
     };
+    const localConfig = JSON.parse(fs.readFileSync(localConfigPath, "utf-8")) as {
+      additionalInclude?: string[];
+      knowledgeBases?: string[];
+    };
     expect(savedMainConfig.additionalInclude).toEqual(["docs/**/*.md"]);
-    expect(savedMainConfig.knowledgeBases).toEqual([path.normalize(kbDir)]);
+    expect(savedMainConfig.knowledgeBases).toEqual([]);
+    expect(localConfig.additionalInclude).toEqual(["docs/**/*.md"]);
+    expect(localConfig.knowledgeBases).toEqual([path.normalize(kbDir)]);
     expect(indexerInstances.at(-1)?.config.additionalInclude).toEqual(["docs/**/*.md"]);
   });
 
