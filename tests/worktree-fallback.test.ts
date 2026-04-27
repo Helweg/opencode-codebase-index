@@ -71,6 +71,37 @@ describe("worktree fallback (issue #60)", () => {
     expect(loaded.knowledgeBases).toEqual(["docs/reference"]);
   });
 
+  it("rebases inherited absolute repo-local knowledge bases onto the worktree", () => {
+    const absoluteRepoLocalKb = path.join(mainRepoDir, "docs", "reference");
+
+    fs.writeFileSync(
+      path.join(mainRepoDir, ".opencode", "codebase-index.json"),
+      JSON.stringify(
+        {
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "mock-model",
+            dimensions: 8,
+          },
+          scope: "project",
+          indexing: {
+            watchFiles: false,
+          },
+          additionalInclude: ["docs/**/*.md"],
+          knowledgeBases: [absoluteRepoLocalKb],
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const loaded = loadMergedConfig(worktreeDir) as Record<string, unknown>;
+
+    expect(loaded.knowledgeBases).toEqual(["docs/reference"]);
+  });
+
   it("resolves the project index path to the main repo when the worktree has no local index", async () => {
     const config = parseConfig(loadMergedConfig(worktreeDir));
     const indexer = new Indexer(worktreeDir, config);

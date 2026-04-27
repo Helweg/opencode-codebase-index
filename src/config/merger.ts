@@ -54,8 +54,16 @@ export function resolveInheritedKnowledgeBaseEntries(
     .filter((value): value is string => typeof value === "string")
     .map((value) => {
       const trimmed = value.trim();
-      if (!trimmed || path.isAbsolute(trimmed)) {
+      if (!trimmed) {
         return trimmed;
+      }
+
+      if (path.isAbsolute(trimmed)) {
+        if (isWithinRoot(sourceRoot, trimmed)) {
+          return path.normalize(path.relative(sourceRoot, trimmed) || ".");
+        }
+
+        return path.normalize(trimmed);
       }
 
       const resolvedFromSource = path.resolve(sourceRoot, trimmed);
