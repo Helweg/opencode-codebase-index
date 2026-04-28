@@ -3,6 +3,7 @@ import { createEmbeddingProvider, CustomProviderNonRetryableError } from "../src
 import { createCustomProviderInfo, type ConfiguredProviderInfo } from "../src/embeddings/detector.js";
 import { Indexer } from "../src/indexer/index.js";
 import { parseConfig } from "../src/config/schema.js";
+import { EMBEDDING_MODELS } from "../src/config/constants.js";
 import pRetry from "p-retry";
 import * as fs from "fs";
 import * as os from "os";
@@ -432,6 +433,52 @@ describe("CustomEmbeddingProvider", () => {
 
     // Should have been called 3 times (1 initial + 2 retries)
     expect(attempts).toBe(3);
+  });
+});
+
+describe("OllamaEmbeddingProvider", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  function createOllamaProvider(model: keyof typeof EMBEDDING_MODELS.ollama = "nomic-embed-text") {
+    return createEmbeddingProvider({
+      provider: "ollama",
+      credentials: {
+        provider: "ollama",
+        baseUrl: "http://localhost:11434",
+      },
+      modelInfo: EMBEDDING_MODELS.ollama[model],
+    });
+  }
+
+  it("retries oversize prompts with truncation for ollama", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "the input length exceeds the context length" }), { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ embedding: new Array(768).fill(0.1) }), { status: 200 }));
+
+    const provider = createOllamaProvider();
+    const oversized = "x".repeat(9000);
+    const result = await provider.embedBatch([oversized]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string) as { prompt: string };
+    const secondBody = JSON.parse((fetchSpy.mock.calls[1] as [string, RequestInit])[1].body as string) as { prompt: string };
+    expect(secondBody.prompt.length).toBeLessThan(firstBody.prompt.length);
+    expect(result.embeddings).toHaveLength(1);
+  });
+
+  it("rethrows non-context ollama errors", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ error: "boom" }), { status: 500 }));
+
+    const provider = createOllamaProvider();
+    await expect(provider.embedBatch(["hello"])).rejects.toThrow("Ollama embedding API error: 500");
   });
 });
 
