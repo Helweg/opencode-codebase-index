@@ -336,4 +336,154 @@ describe("indexer failed batch recovery", () => {
     expect(embedPrompts.some((prompt) => prompt.includes("Part 1/"))).toBe(true);
     expect(embedPrompts.some((prompt) => prompt.includes("Part 2/"))).toBe(true);
   });
+
+  it("rebuilds retryable legacy failed-batch prompts with the provider-aware split budget", async () => {
+    const indexer = createOllamaIndexer();
+    await indexer.initialize();
+
+    const failedBatchesPath = path.join(tempDir, ".opencode", "index", "failed-batches.json");
+    fs.mkdirSync(path.dirname(failedBatchesPath), { recursive: true });
+    fs.writeFileSync(
+      failedBatchesPath,
+      JSON.stringify([
+        {
+          chunks: [
+            {
+              id: "legacy-retryable",
+              text: "triggerFailure legacy retryable prompt",
+              content: "triggerFailure ".repeat(900),
+              contentHash: "legacy-retryable-hash",
+              metadata: {
+                filePath: sourceFile,
+                startLine: 1,
+                endLine: 1,
+                language: "typescript",
+                chunkType: "function",
+                hash: "legacy-retryable-hash",
+                name: "legacyRetryable",
+              },
+            },
+          ],
+          error: "legacy retryable oversize failure",
+          attemptCount: 1,
+          lastAttempt: new Date().toISOString(),
+        },
+      ], null, 2),
+      "utf-8"
+    );
+
+    fs.writeFileSync(
+      sourceFile,
+      [
+        "export function legacyRetryable() {",
+        `  return ${JSON.stringify("triggerFailure ".repeat(900))};`,
+        "}",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const embedPrompts: string[] = [];
+    fetchSpy.mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/api/tags")) {
+        return new Response(JSON.stringify({
+          models: [{ name: "nomic-embed-text" }],
+        }), { status: 200 });
+      }
+
+      const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string };
+      const prompt = body.prompt ?? "";
+      embedPrompts.push(prompt);
+
+      if (prompt.includes("triggerFailure") && !prompt.includes("Part ")) {
+        return new Response(JSON.stringify({ error: "the input length exceeds the context length" }), { status: 500 });
+      }
+
+      return new Response(JSON.stringify({
+        embedding: Array.from({ length: 768 }, () => 0.1),
+      }), { status: 200 });
+    });
+
+    const stats = await indexer.index();
+
+    expect(stats.failedChunks).toBe(0);
+    expect(stats.indexedChunks).toBeGreaterThan(0);
+    expect(embedPrompts.length).toBeGreaterThan(1);
+    expect(embedPrompts.some((prompt) => prompt.includes("Part 1/"))).toBe(true);
+    expect(embedPrompts.some((prompt) => prompt.includes("Part 2/"))).toBe(true);
+
+    const status = await indexer.getStatus();
+    expect(status.failedBatchesCount).toBe(0);
+  });
+
+  it("preserves foreign legacy failed batches without rewriting them during global scoped saves", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "failed-batches-global-home-"));
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return 'b'; }\n", "utf-8");
+
+    const globalFailedBatchesPath = path.join(tempHome, ".opencode", "global-index", "failed-batches.json");
+    fs.mkdirSync(path.dirname(globalFailedBatchesPath), { recursive: true });
+    fs.writeFileSync(
+      globalFailedBatchesPath,
+      JSON.stringify([
+        {
+          chunks: [
+            {
+              id: "foreign-legacy",
+              text: "triggerFailure foreign legacy prompt",
+              content: "triggerFailure ".repeat(900),
+              contentHash: "foreign-legacy-hash",
+              metadata: {
+                filePath: projectBFile,
+                startLine: 1,
+                endLine: 1,
+                language: "typescript",
+                chunkType: "function",
+                hash: "foreign-legacy-hash",
+                name: "foreignLegacy",
+              },
+            },
+          ],
+          error: "foreign legacy oversize failure",
+          attemptCount: 1,
+          lastAttempt: new Date().toISOString(),
+        },
+      ], null, 2),
+      "utf-8"
+    );
+
+    const indexer = new Indexer(projectA, parseConfig({
+      embeddingProvider: "ollama",
+      embeddingModel: "nomic-embed-text",
+      scope: "global",
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    }));
+
+    const stats = await indexer.index();
+    expect(stats.failedChunks).toBe(0);
+
+    const persistedBatches = JSON.parse(fs.readFileSync(globalFailedBatchesPath, "utf-8")) as Array<{
+      chunks: Array<{ metadata: { filePath: string }; text?: string; texts?: unknown[] }>;
+    }>;
+    const foreignChunk = persistedBatches
+      .flatMap((batch) => batch.chunks)
+      .find((chunk) => chunk.metadata.filePath === projectBFile);
+
+    expect(foreignChunk).toBeDefined();
+    expect(typeof foreignChunk?.text).toBe("string");
+    expect(foreignChunk?.texts).toBeUndefined();
+
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
 });

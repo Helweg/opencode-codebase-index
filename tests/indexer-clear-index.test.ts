@@ -285,6 +285,429 @@ describe("indexer clearIndex force rebuild", () => {
     expect(rebuiltStats.indexedChunks).toBeGreaterThan(0);
   });
 
+  it("allows a global embedding strategy rebuild without deleting other projects", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return 'b'; }\n", "utf-8");
+
+    const indexerA = createIndexer(projectA, 8, "global");
+    const indexerB = createIndexer(projectB, 8, "global");
+
+    await indexerA.index();
+    await indexerB.index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const projectBHash = hashContent(path.resolve(projectB)).slice(0, 16);
+    db.setMetadata(`index.embeddingStrategyVersion.${projectAHash}`, "1");
+
+    const restartedIndexerA = createIndexer(projectA, 8, "global");
+    const statusBefore = await restartedIndexerA.getStatus();
+    expect(statusBefore.compatibility?.compatible).toBe(false);
+    expect(statusBefore.compatibility?.reason).toContain("Embedding strategy mismatch");
+
+    await restartedIndexerA.clearIndex();
+
+    expect(db.getChunksByFile(projectAFile)).toHaveLength(0);
+    expect(db.getChunksByFile(projectBFile).length).toBeGreaterThan(0);
+    expect(db.getMetadata(`index.embeddingStrategyVersion.${projectAHash}`)).toBeNull();
+    expect(db.getMetadata(`index.embeddingStrategyVersion.${projectBHash}`)).toBe("2");
+
+    const rebuiltStats = await restartedIndexerA.index();
+    expect(rebuiltStats.failedChunks).toBe(0);
+    expect(rebuiltStats.indexedChunks).toBeGreaterThan(0);
+
+    expect(db.getChunksByFile(projectAFile).length).toBeGreaterThan(0);
+    expect(db.getChunksByFile(projectBFile).length).toBeGreaterThan(0);
+  });
+
+  it("detects global embedding strategy mismatch from DB-only scoped state", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+
+    const indexer = createIndexer(projectA, 8, "global");
+    await indexer.index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const chunk = db.getChunksByFile(projectAFile)[0];
+    const projectHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const branchKey = `${projectHash}:default`;
+
+    db.setMetadata("index.embeddingStrategyVersion", "1");
+    db.deleteMetadata(`index.embeddingStrategyVersion.${projectHash}`);
+    db.deleteBranchChunksForBranch(branchKey, [chunk.chunkId]);
+    db.addChunksToBranchBatch(branchKey, [chunk.chunkId]);
+
+    const storeFile = path.join(tempHome, ".opencode", "global-index", "vectors.usearch");
+    fs.rmSync(storeFile, { force: true });
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors"), { recursive: true, force: true });
+
+    const restartedIndexer = createIndexer(projectA, 8, "global");
+    const status = await restartedIndexer.getStatus();
+
+    expect(status.compatibility?.compatible).toBe(false);
+    expect(status.compatibility?.reason).toContain("Embedding strategy mismatch");
+  });
+
+  it("detects DB-only scoped mismatch on a non-default branch during startup", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    fs.mkdirSync(path.join(projectA, ".git", "refs", "heads", "feature"), { recursive: true });
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.writeFileSync(path.join(projectA, ".git", "HEAD"), "ref: refs/heads/feature/test\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "feature", "test"), "1111111111111111111111111111111111111111\n");
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+
+    const indexer = createIndexer(projectA, 8, "global");
+    await indexer.index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const chunk = db.getChunksByFile(projectAFile)[0];
+    const projectHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const branchKey = `${projectHash}:feature/test`;
+
+    db.setMetadata("index.embeddingStrategyVersion", "1");
+    db.deleteMetadata(`index.embeddingStrategyVersion.${projectHash}`);
+    db.deleteBranchChunksForBranch(branchKey, [chunk.chunkId]);
+    db.addChunksToBranchBatch(branchKey, [chunk.chunkId]);
+
+    const storeFile = path.join(tempHome, ".opencode", "global-index", "vectors.usearch");
+    fs.rmSync(storeFile, { force: true });
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors"), { recursive: true, force: true });
+
+    const restartedIndexer = createIndexer(projectA, 8, "global");
+    const status = await restartedIndexer.getStatus();
+
+    expect(status.currentBranch).toBe("feature/test");
+    expect(status.compatibility?.compatible).toBe(false);
+    expect(status.compatibility?.reason).toContain("Embedding strategy mismatch");
+  });
+
+  it("detects file-hash-only scoped mismatch during startup status checks", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+
+    await createIndexer(projectA, 8, "global").index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const branchKey = `${projectHash}:default`;
+
+    db.setMetadata("index.embeddingStrategyVersion", "1");
+    db.deleteMetadata(`index.embeddingStrategyVersion.${projectHash}`);
+    db.clearBranch(branchKey);
+    db.deleteChunksByFile(projectAFile);
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors.usearch"), { force: true });
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors"), { recursive: true, force: true });
+
+    const status = await createIndexer(projectA, 8, "global").getStatus();
+
+    expect(status.compatibility?.compatible).toBe(false);
+    expect(status.compatibility?.reason).toContain("Embedding strategy mismatch");
+  });
+
+  it("re-embeds shared knowledge-base chunks after a global embedding strategy reset", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const kbDir = path.join(tempDir, "shared-kb");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+    const kbFile = path.join(kbDir, "docs", "shared.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.mkdirSync(path.dirname(kbFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(kbFile, "export function sharedDoc() { return 'shared'; }\n", "utf-8");
+
+    const embedInputs: string[][] = [];
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+      const texts = Array.isArray(body.input) ? body.input : [];
+      embedInputs.push(texts);
+
+      const data = texts.map((text) => {
+        let seed = 0;
+        for (const ch of text) {
+          seed = (seed * 31 + ch.charCodeAt(0)) % 1000;
+        }
+        const embedding = Array.from(
+          { length: embeddingDimensions },
+          (_, idx) => ((seed + idx * 17) % 997) / 997
+        );
+        return { embedding };
+      });
+
+      return new Response(
+        JSON.stringify({
+          data,
+          usage: { total_tokens: Math.max(1, texts.length * embeddingDimensions) },
+        }),
+        { status: 200 }
+      );
+    });
+
+    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      scope: "global",
+      knowledgeBases: [kbDir],
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    }));
+
+    await createKbIndexer(projectA).index();
+    await createKbIndexer(projectB).index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    db.setMetadata(`index.embeddingStrategyVersion.${projectAHash}`, "1");
+
+    const beforeResetCalls = embedInputs.length;
+    const restartedIndexer = createKbIndexer(projectA);
+    await restartedIndexer.clearIndex();
+
+    const resetStatus = await restartedIndexer.getStatus();
+    expect(resetStatus.compatibility?.compatible).toBe(true);
+
+    const rebuiltStats = await restartedIndexer.index();
+    expect(rebuiltStats.failedChunks).toBe(0);
+
+    const afterResetInputs = embedInputs.slice(beforeResetCalls).flat();
+    expect(afterResetInputs.some((text) => text.includes("sharedDoc"))).toBe(true);
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBeNull();
+  });
+
+  it("keeps forced re-embed pending across restart until a failed shared chunk is re-embedded", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const kbDir = path.join(tempDir, "shared-kb");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+    const kbFile = path.join(kbDir, "docs", "shared.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.mkdirSync(path.dirname(kbFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(kbFile, "export function sharedDoc() { return 'shared'; }\n", "utf-8");
+
+    const kbPrompt = "export function sharedDoc() { return 'shared'; }";
+    let failSharedKbEmbedding = false;
+    const embedInputs: string[][] = [];
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+      const texts = Array.isArray(body.input) ? body.input : [];
+      embedInputs.push(texts);
+
+      if (failSharedKbEmbedding && texts.some((text) => text.includes(kbPrompt))) {
+        return new Response(JSON.stringify({ error: "simulated shared kb failure" }), { status: 500 });
+      }
+
+      const data = texts.map((text) => {
+        let seed = 0;
+        for (const ch of text) {
+          seed = (seed * 31 + ch.charCodeAt(0)) % 1000;
+        }
+        const embedding = Array.from(
+          { length: embeddingDimensions },
+          (_, idx) => ((seed + idx * 17) % 997) / 997
+        );
+        return { embedding };
+      });
+
+      return new Response(
+        JSON.stringify({
+          data,
+          usage: { total_tokens: Math.max(1, texts.length * embeddingDimensions) },
+        }),
+        { status: 200 }
+      );
+    });
+
+    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      scope: "global",
+      knowledgeBases: [kbDir],
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    }));
+
+    await createKbIndexer(projectA).index();
+    await createKbIndexer(projectB).index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const projectABranch = `${projectAHash}:default`;
+    db.setMetadata(`index.embeddingStrategyVersion.${projectAHash}`, "1");
+
+    const resettingIndexer = createKbIndexer(projectA);
+    await resettingIndexer.clearIndex();
+
+    failSharedKbEmbedding = true;
+    const failedStats = await resettingIndexer.index();
+    expect(failedStats.failedChunks).toBeGreaterThan(0);
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBe("true");
+
+    const sharedChunkId = db.getChunksByFile(kbFile)[0]?.chunkId;
+    expect(sharedChunkId).toBeTruthy();
+    expect(db.chunkExistsOnBranch(projectABranch, sharedChunkId!)).toBe(false);
+
+    failSharedKbEmbedding = false;
+    const restartedIndexer = createKbIndexer(projectA);
+    const restartStatus = await restartedIndexer.getStatus();
+    expect(restartStatus.compatibility?.compatible).toBe(true);
+
+    const beforeRecoveryCalls = embedInputs.length;
+    const recoveredStats = await restartedIndexer.index();
+    expect(recoveredStats.failedChunks).toBe(0);
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBeNull();
+    expect(db.chunkExistsOnBranch(projectABranch, sharedChunkId!)).toBe(true);
+
+    const recoveryInputs = embedInputs.slice(beforeRecoveryCalls).flat();
+    expect(recoveryInputs.some((text) => text.includes(kbPrompt))).toBe(true);
+  });
+
+  it("rejects a full global reset when another tenant survives only in DB branch rows", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return 'b'; }\n", "utf-8");
+
+    await createIndexer(projectA, 8, "global").index();
+    await createIndexer(projectB, 8, "global").index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const projectBHash = hashContent(path.resolve(projectB)).slice(0, 16);
+    const projectAChunk = db.getChunksByFile(projectAFile)[0];
+    const projectBChunk = db.getChunksByFile(projectBFile)[0];
+
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors.usearch"), { force: true });
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors"), { recursive: true, force: true });
+    fs.writeFileSync(
+      path.join(tempHome, ".opencode", "global-index", "file-hashes.json"),
+      JSON.stringify({}, null, 2),
+      "utf-8"
+    );
+    db.clearBranch(`${projectAHash}:default`);
+    db.clearBranch(`${projectBHash}:default`);
+    db.addChunksToBranchBatch(`${projectAHash}:default`, [projectAChunk.chunkId]);
+    db.addChunksToBranchBatch(`${projectBHash}:default`, [projectBChunk.chunkId]);
+
+    embeddingDimensions = 4;
+    await expect(createIndexer(projectA, 4, "global").clearIndex()).rejects.toThrow(
+      "Global index compatibility reset is unsafe"
+    );
+  });
+
+  it("rejects a full global reset when another tenant survives only in DB branch symbol rows", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return 'b'; }\n", "utf-8");
+
+    await createIndexer(projectA, 8, "global").index();
+    await createIndexer(projectB, 8, "global").index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const projectBHash = hashContent(path.resolve(projectB)).slice(0, 16);
+    const projectAChunk = db.getChunksByFile(projectAFile)[0];
+    const projectBChunk = db.getChunksByFile(projectBFile)[0];
+    const projectASymbol = `sym_${hashContent(`${projectAFile}:alpha:function:1`).slice(0, 16)}`;
+    const projectBSymbol = `sym_${hashContent(`${projectBFile}:beta:function:1`).slice(0, 16)}`;
+
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors.usearch"), { force: true });
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors"), { recursive: true, force: true });
+    fs.writeFileSync(
+      path.join(tempHome, ".opencode", "global-index", "file-hashes.json"),
+      JSON.stringify({}, null, 2),
+      "utf-8"
+    );
+
+    db.clearBranch(`${projectAHash}:default`);
+    db.clearBranch(`${projectBHash}:default`);
+    db.deleteBranchSymbolsForBranch(`${projectAHash}:default`, [projectASymbol]);
+    db.deleteBranchSymbolsForBranch(`${projectBHash}:default`, [projectBSymbol]);
+    db.deleteChunksByFile(projectAFile);
+    db.deleteChunksByFile(projectBFile);
+    db.addSymbolsToBranchBatch(`${projectAHash}:default`, [projectASymbol]);
+    db.addSymbolsToBranchBatch(`${projectBHash}:default`, [projectBSymbol]);
+
+    expect(db.getBranchChunkIds(`${projectBHash}:default`)).toHaveLength(0);
+    expect(db.getBranchSymbolIds(`${projectBHash}:default`)).toContain(projectBSymbol);
+    expect(projectAChunk).toBeTruthy();
+    expect(projectBChunk).toBeTruthy();
+
+    embeddingDimensions = 4;
+    await expect(createIndexer(projectA, 4, "global").clearIndex()).rejects.toThrow(
+      "Global index compatibility reset is unsafe"
+    );
+  });
+
   it("resets a corrupted local sqlite index during health check and reports rebuild guidance", async () => {
     embeddingDimensions = 8;
     const indexer = createIndexer(tempDir, 8);
