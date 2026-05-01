@@ -207,6 +207,122 @@ describe("call-graph", () => {
         expect(importNames).toContain("ArrayHelper");
       });
     });
+
+    describe("apex call extraction", () => {
+      it("should extract direct function calls", () => {
+        const content = fs.readFileSync(
+          path.join(fixturesDir, "apex-simple-calls.cls"),
+          "utf-8",
+        );
+        const calls = extractCalls(content, "apex");
+
+        const callNames = calls.map((c) => c.calleeName);
+        expect(callNames).toContain("directcall");
+        expect(callNames).toContain("helper");
+        expect(callNames).toContain("compute");
+
+        const directCall = calls.find((c) => c.calleeName === "directcall");
+        expect(directCall).toBeDefined();
+        expect(directCall!.callType).toBe("Call");
+      });
+
+      it("should normalize Apex function names to lowercase (case-insensitive language)", () => {
+        const content = fs.readFileSync(
+          path.join(fixturesDir, "apex-simple-calls.cls"),
+          "utf-8",
+        );
+        const calls = extractCalls(content, "apex");
+
+        // Both `helper(...)` invocations + `HELPER()` invocation should normalize to `helper`.
+        const helperCalls = calls.filter(
+          (c) => c.calleeName === "helper" && c.callType === "Call",
+        );
+        expect(helperCalls.length).toBe(3);
+
+        // `MyFunc()` should normalize to `myfunc`.
+        const myFuncCall = calls.find((c) => c.calleeName === "myfunc");
+        expect(myFuncCall).toBeDefined();
+        expect(myFuncCall!.callType).toBe("Call");
+      });
+
+      it("should extract method calls", () => {
+        const content = fs.readFileSync(
+          path.join(fixturesDir, "apex-method-calls.cls"),
+          "utf-8",
+        );
+        const calls = extractCalls(content, "apex");
+
+        const methodCalls = calls.filter((c) => c.callType === "MethodCall");
+        const methodNames = methodCalls.map((c) => c.calleeName);
+        expect(methodNames).toContain("validate");
+        expect(methodNames).toContain("add");
+        expect(methodNames).toContain("subtract");
+        expect(methodNames).toContain("cleanup");
+      });
+
+      it("should extract static method calls as method calls", () => {
+        const content = fs.readFileSync(
+          path.join(fixturesDir, "apex-method-calls.cls"),
+          "utf-8",
+        );
+        const calls = extractCalls(content, "apex");
+
+        // Apex grammar produces method_invocation with object field for both
+        // instance and static calls; we report both as MethodCall.
+        const staticDo = calls.find((c) => c.calleeName === "staticdo");
+        expect(staticDo).toBeDefined();
+        expect(staticDo!.callType).toBe("MethodCall");
+      });
+
+      it("should extract chained method calls with case normalization", () => {
+        const content = fs.readFileSync(
+          path.join(fixturesDir, "apex-method-calls.cls"),
+          "utf-8",
+        );
+        const calls = extractCalls(content, "apex");
+
+        // Foo.Bar.DeepCall() → method_invocation with object=field_access(Foo.Bar)
+        // and name=DeepCall, normalized to lowercase.
+        const deepCall = calls.find((c) => c.calleeName === "deepcall");
+        expect(deepCall).toBeDefined();
+        expect(deepCall!.callType).toBe("MethodCall");
+
+        // Method() should also normalize
+        const methodCall = calls.find(
+          (c) => c.calleeName === "method" && c.callType === "MethodCall",
+        );
+        expect(methodCall).toBeDefined();
+      });
+
+      it("should extract constructor calls preserving original case", () => {
+        const content = fs.readFileSync(
+          path.join(fixturesDir, "apex-constructors.cls"),
+          "utf-8",
+        );
+        const calls = extractCalls(content, "apex");
+
+        const constructorCalls = calls.filter(
+          (c) => c.callType === "Constructor",
+        );
+        const constructorNames = constructorCalls.map((c) => c.calleeName);
+        // Constructor names keep original casing (they need to match
+        // class_declaration symbols which use exact-case names).
+        expect(constructorNames).toContain("Account");
+        expect(constructorNames).toContain("SimpleClass");
+        expect(constructorNames).toContain("ClassWithArgs");
+      });
+
+      it("should not produce import edges (Apex has no imports)", () => {
+        const content = fs.readFileSync(
+          path.join(fixturesDir, "apex-method-calls.cls"),
+          "utf-8",
+        );
+        const calls = extractCalls(content, "apex");
+
+        const importCalls = calls.filter((c) => c.callType === "Import");
+        expect(importCalls.length).toBe(0);
+      });
+    });
   });
 
   describe("call graph storage", () => {

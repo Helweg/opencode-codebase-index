@@ -30,6 +30,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Rust => tree_sitter_rust::LANGUAGE.into(),
         Language::Go => tree_sitter_go::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(vec![]),
     };
 
@@ -53,6 +54,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Rust => include_str!("../queries/rust-calls.scm"),
         Language::Go => include_str!("../queries/go-calls.scm"),
         Language::Php => include_str!("../queries/php-calls.scm"),
+        Language::Apex => include_str!("../queries/apex-calls.scm"),
         _ => return Ok(vec![]),
     };
 
@@ -160,10 +162,13 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         // @call is only for direct function calls
         // So we need to check if the call was already classified as a method call
         if let (Some(name), Some(ct), Some(pos)) = (callee_name, call_type, position) {
-            // PHP function/method names are case-insensitive; normalize to lowercase
-            // so that HELPER() matches symbol helper during resolution and lookup.
-            // Import names and constructor names should keep their original case for proper symbol resolution
-            let normalized_name = if language == Language::Php
+            // PHP and Apex are case-insensitive at the language level; normalize
+            // callee names to lowercase so that HELPER() matches symbol `helper`
+            // during resolution and lookup. Constructor names keep their original
+            // casing because they need to match class declarations (which are
+            // resolved by exact name in this codebase). Import names are PHP-only
+            // and similarly preserve their casing.
+            let normalized_name = if (language == Language::Php || language == Language::Apex)
                 && ct != CallType::Import
                 && ct != CallType::Constructor
             {
