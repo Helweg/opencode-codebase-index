@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Apex semantic parsing**: Added tree-sitter-based semantic chunking for Salesforce Apex source files (`.cls` and `.trigger`) via the [`tree-sitter-sfapex`](https://github.com/aheber/tree-sitter-sfapex) grammar. Recognizes class, interface, enum, method, constructor, and trigger declarations with leading JavaDoc-style block comments attached to their target chunks. Anonymous Apex (`.apex`), SOQL, and SOSL standalone files are out of scope.
+
 ## [0.7.0] - 2026-04-14
 
 ### Added

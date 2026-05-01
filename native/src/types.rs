@@ -32,6 +32,7 @@ pub enum Language {
     Markdown,
     Html,
     Php,
+    Apex,
     Text,
 }
 
@@ -58,6 +59,7 @@ impl Language {
             "html" | "htm" => Language::Html,
             "txt" => Language::Text,
             "php" | "inc" => Language::Php,
+            "cls" | "trigger" => Language::Apex,
             _ => Language::Text,
         }
     }
@@ -83,6 +85,7 @@ impl Language {
             Language::Markdown => "markdown",
             Language::Html => "html",
             Language::Php => "php",
+            Language::Apex => "apex",
             Language::Text => "text",
         }
     }
@@ -109,6 +112,7 @@ impl Language {
             "html" | "htm" => Language::Html,
             "text" | "txt" => Language::Text,
             "php" => Language::Php,
+            "apex" => Language::Apex,
             _ => Language::Text,
         }
     }

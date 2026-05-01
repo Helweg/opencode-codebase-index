@@ -211,7 +211,7 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Bash, C, C++, JSON, TOML, YAML
+**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML
 
 **Additional Supported Formats (line-based chunking)**: TXT, HTML, HTM, Markdown, Shell scripts
 
@@ -222,7 +222,7 @@ graph TD
 **/*.{rb,php,inc,swift}         **/*.{vue,svelte,astro}
 **/*.{sql,graphql,proto}        **/*.{yaml,yml,toml}
 **/*.{md,mdx}                   **/*.{sh,bash,zsh}
-**/*.{txt,html,htm}
+**/*.{txt,html,htm}              **/*.{cls,trigger}
 ```
 
 Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*.pdf"`, `"**/*.csv"`).

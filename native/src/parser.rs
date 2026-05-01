@@ -46,6 +46,7 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
         Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(chunk_by_lines(content, &language)),
     };
 
@@ -255,6 +256,7 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::Toml => matches!(node_type, "comment"),
         Language::Yaml => matches!(node_type, "comment"),
         Language::Php => matches!(node_type, "comment"),
+        Language::Apex => matches!(node_type, "line_comment" | "block_comment"),
         _ => false,
     }
 }
@@ -445,6 +447,20 @@ lazy_static! {
         set.insert("enum_declaration");
         set
     };
+    // Apex grammar (tree-sitter-sfapex) is Java-derived: the declaration node
+    // kinds match Java exactly, plus `trigger_declaration` which is unique to
+    // Apex (Salesforce database triggers). Verified against tree-sitter-sfapex
+    // 3.0 by parsing representative classes/triggers/interfaces.
+    static ref APEX_SEMANTIC_NODES: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("class_declaration");
+        set.insert("method_declaration");
+        set.insert("constructor_declaration");
+        set.insert("interface_declaration");
+        set.insert("enum_declaration");
+        set.insert("trigger_declaration");
+        set
+    };
 }
 
 fn is_semantic_node(node_type: &str, language: &Language) -> bool {
@@ -472,6 +488,7 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
         Language::Toml => TOML_SEMANTIC_NODES.contains(node_type),
         Language::Yaml => YAML_SEMANTIC_NODES.contains(node_type),
         Language::Php => PHP_SEMANTIC_NODES.contains(node_type),
+        Language::Apex => APEX_SEMANTIC_NODES.contains(node_type),
         _ => false,
     };
 
@@ -1121,5 +1138,76 @@ Please read CONTRIBUTING.md for details.
         // Should be block type since we use line-based chunking
         let has_block = chunks.iter().any(|c| c.chunk_type == "block");
         assert!(has_block, "Markdown should use block chunking");
+    }
+
+    #[test]
+    fn test_parse_apex() {
+        let content = r#"
+public with sharing class AccountService {
+    public AccountService() {}
+
+    public static Account createAccount(String name) {
+        Account a = new Account(Name = name);
+        insert a;
+        return a;
+    }
+
+    public Integer countActive() {
+        return [SELECT COUNT() FROM Account WHERE Active__c = TRUE];
+    }
+}
+"#;
+
+        let chunks = parse_file_internal("AccountService.cls", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for Apex");
+
+        let has_class = chunks.iter().any(|c| c.chunk_type == "class_declaration");
+        assert!(has_class, "Should find class_declaration");
+    }
+
+    #[test]
+    fn test_parse_apex_trigger() {
+        let content = r#"
+trigger AccountTrigger on Account (before insert, before update, after delete) {
+    for (Account a : Trigger.new) {
+        a.Description = 'Updated by trigger';
+    }
+}
+"#;
+
+        let chunks = parse_file_internal("AccountTrigger.trigger", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for Apex trigger");
+
+        let has_trigger = chunks
+            .iter()
+            .any(|c| c.chunk_type == "trigger_declaration");
+        assert!(has_trigger, "Should find trigger_declaration");
+    }
+
+    #[test]
+    fn test_apex_doc_comment_extraction() {
+        let content = r#"
+/**
+ * Service for managing Account records.
+ * Used by Aura controllers and batch jobs.
+ */
+public class AccountService {
+    public void doWork() {}
+}
+"#;
+
+        let chunks = parse_file_internal("AccountService.cls", content).unwrap();
+        let class_chunk = chunks
+            .iter()
+            .find(|c| c.chunk_type == "class_declaration");
+        assert!(class_chunk.is_some(), "Should find class_declaration");
+        assert!(
+            class_chunk
+                .unwrap()
+                .content
+                .contains("Service for managing Account"),
+            "Class chunk should include leading block comment: {}",
+            class_chunk.unwrap().content
+        );
     }
 }
