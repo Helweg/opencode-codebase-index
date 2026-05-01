@@ -1885,6 +1885,40 @@ export class Indexer {
     return primary === legacy ? [primary] : [primary, legacy];
   }
 
+  private getProjectScopedBranchCatalogCleanupKeys(projectChunkIds: string[], projectSymbolIds: string[]): string[] {
+    if (this.config.scope !== "global") {
+      return this.getBranchCatalogCleanupKeys();
+    }
+
+    const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
+    const keys = new Set<string>();
+    const projectChunkIdSet = new Set(projectChunkIds);
+    const projectSymbolIdSet = new Set(projectSymbolIds);
+
+    for (const branchKey of this.database?.getAllBranches() ?? []) {
+      if (branchKey.startsWith(`${projectHash}:`)) {
+        keys.add(branchKey);
+        continue;
+      }
+
+      if (branchKey.includes(":")) {
+        continue;
+      }
+
+      const referencesProjectChunks = this.database?.getBranchChunkIds(branchKey).some((chunkId) => projectChunkIdSet.has(chunkId)) ?? false;
+      const referencesProjectSymbols = this.database?.getBranchSymbolIds(branchKey).some((symbolId) => projectSymbolIdSet.has(symbolId)) ?? false;
+      if (referencesProjectChunks || referencesProjectSymbols) {
+        keys.add(branchKey);
+      }
+    }
+
+    for (const branchKey of this.getBranchCatalogCleanupKeys()) {
+      keys.add(branchKey);
+    }
+
+    return Array.from(keys);
+  }
+
   private isFileInCurrentScope(filePath: string, roots: string[]): boolean {
     return roots.some((root) => isPathWithinRoot(filePath, root));
   }
@@ -1987,6 +2021,11 @@ export class Indexer {
       ...scopedEntries.map(({ metadata }) => metadata.filePath),
     ]);
 
+    const projectRootPath = path.resolve(this.projectRoot);
+    const projectLocalFilePaths = new Set<string>(
+      Array.from(filePaths).filter((filePath) => isPathWithinRoot(filePath, projectRootPath))
+    );
+
     const removedChunkIds = new Set<string>(scopedEntries.map(({ key }) => key));
     for (const filePath of filePaths) {
       for (const chunk of database.getChunksByFile(filePath)) {
@@ -1995,7 +2034,29 @@ export class Indexer {
     }
     const removedChunkIdList = Array.from(removedChunkIds);
 
-    for (const branchKey of this.getBranchCatalogCleanupKeys()) {
+    const projectLocalChunkIds = new Set<string>(
+      scopedEntries
+        .filter(({ metadata }) => isPathWithinRoot(metadata.filePath, projectRootPath))
+        .map(({ key }) => key)
+    );
+    for (const filePath of projectLocalFilePaths) {
+      for (const chunk of database.getChunksByFile(filePath)) {
+        projectLocalChunkIds.add(chunk.chunkId);
+      }
+    }
+
+    const symbolIds: string[] = [];
+    const projectLocalSymbolIds = new Set<string>();
+    for (const filePath of filePaths) {
+      for (const symbol of database.getSymbolsByFile(filePath)) {
+        symbolIds.push(symbol.id);
+        if (projectLocalFilePaths.has(filePath)) {
+          projectLocalSymbolIds.add(symbol.id);
+        }
+      }
+    }
+
+    for (const branchKey of this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
       database.deleteBranchChunksForBranch(branchKey, removedChunkIdList);
     }
     const sharedChunkIds = new Set(database.getReferencedChunkIds(removedChunkIdList));
@@ -2006,14 +2067,7 @@ export class Indexer {
       invertedIndex.removeChunk(chunkId);
     }
 
-    const symbolIds: string[] = [];
-    for (const filePath of filePaths) {
-      for (const symbol of database.getSymbolsByFile(filePath)) {
-        symbolIds.push(symbol.id);
-      }
-    }
-
-    for (const branchKey of this.getBranchCatalogCleanupKeys()) {
+    for (const branchKey of this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
       database.deleteBranchSymbolsForBranch(branchKey, symbolIds);
     }
     const sharedSymbolIds = new Set(database.getReferencedSymbolIds(symbolIds));

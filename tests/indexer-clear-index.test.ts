@@ -994,6 +994,155 @@ describe("indexer clearIndex force rebuild", () => {
     expect(searchResults.filter((result) => result.filePath === projectAFile)).toHaveLength(1);
   });
 
+  it("clears namespaced and legacy branch rows for the current repo's other branches during strategy reset", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    fs.mkdirSync(path.join(projectA, ".git", "refs", "heads", "feature"), { recursive: true });
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.writeFileSync(path.join(projectA, ".git", "HEAD"), "ref: refs/heads/default\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "default"), "1111111111111111111111111111111111111111\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "feature", "test"), "2222222222222222222222222222222222222222\n");
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+
+    embeddingDimensions = 8;
+    const indexerA = createIndexer(projectA, 8, "global");
+    await indexerA.index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const defaultBranch = `${projectAHash}:default`;
+    const featureBranch = `${projectAHash}:feature/test`;
+    const legacyFeatureBranch = "feature/test";
+    const projectAChunk = db.getChunksByFile(projectAFile)[0];
+
+    db.addChunksToBranchBatch(featureBranch, [projectAChunk.chunkId]);
+    db.addChunksToBranchBatch(legacyFeatureBranch, [projectAChunk.chunkId]);
+    db.setMetadata(`index.embeddingStrategyVersion.${projectAHash}`, "1");
+
+    const globalIndexDir = path.join(tempHome, ".opencode", "global-index");
+    fs.writeFileSync(
+      path.join(globalIndexDir, "file-hashes.json"),
+      JSON.stringify({ [projectAFile]: "project-a-hash" }, null, 2),
+      "utf-8"
+    );
+    fs.writeFileSync(path.join(globalIndexDir, "failed-batches.json"), "[]", "utf-8");
+
+    embeddingDimensions = 8;
+    const resettingIndexer = createIndexer(projectA, 8, "global");
+    await resettingIndexer.clearIndex();
+
+    expect(db.chunkExistsOnBranch(defaultBranch, projectAChunk.chunkId)).toBe(false);
+    expect(db.chunkExistsOnBranch(featureBranch, projectAChunk.chunkId)).toBe(false);
+    expect(db.chunkExistsOnBranch(legacyFeatureBranch, projectAChunk.chunkId)).toBe(false);
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBe("true");
+  });
+
+  it("clears DB-only legacy branch rows for deleted same-project branches during strategy reset", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    fs.mkdirSync(path.join(projectA, ".git", "refs", "heads"), { recursive: true });
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.writeFileSync(path.join(projectA, ".git", "HEAD"), "ref: refs/heads/default\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "default"), "1111111111111111111111111111111111111111\n");
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+
+    await createIndexer(projectA, 8, "global").index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const defaultBranch = `${projectAHash}:default`;
+    const deletedLegacyBranch = "feature/old";
+    const projectAChunk = db.getChunksByFile(projectAFile)[0];
+
+    db.addChunksToBranchBatch(deletedLegacyBranch, [projectAChunk.chunkId]);
+    db.setMetadata(`index.embeddingStrategyVersion.${projectAHash}`, "1");
+
+    const globalIndexDir = path.join(tempHome, ".opencode", "global-index");
+    fs.writeFileSync(
+      path.join(globalIndexDir, "file-hashes.json"),
+      JSON.stringify({ [projectAFile]: "project-a-hash" }, null, 2),
+      "utf-8"
+    );
+    fs.writeFileSync(path.join(globalIndexDir, "failed-batches.json"), "[]", "utf-8");
+
+    await createIndexer(projectA, 8, "global").clearIndex();
+
+    expect(db.chunkExistsOnBranch(defaultBranch, projectAChunk.chunkId)).toBe(false);
+    expect(db.chunkExistsOnBranch(deletedLegacyBranch, projectAChunk.chunkId)).toBe(false);
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBe("true");
+  });
+
+  it("preserves foreign legacy shared-kb branch rows during strategy reset", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const sharedDir = path.join(tempDir, "shared-kb");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+    const sharedFile = path.join(sharedDir, "shared.ts");
+
+    fs.mkdirSync(path.join(projectA, ".git", "refs", "heads", "feature"), { recursive: true });
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.writeFileSync(path.join(projectA, ".git", "HEAD"), "ref: refs/heads/default\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "default"), "1111111111111111111111111111111111111111\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "feature", "test"), "2222222222222222222222222222222222222222\n");
+
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.mkdirSync(path.dirname(sharedFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(sharedFile, "export function sharedDoc() { return 'shared'; }\n", "utf-8");
+
+    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      scope: "global",
+      knowledgeBases: [sharedDir],
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    }));
+
+    await createKbIndexer(projectA).index();
+    await createKbIndexer(projectB).index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const projectAProjectChunk = db.getChunksByFile(projectAFile)[0];
+    const sharedChunk = db.getChunksByFile(sharedFile)[0];
+    const foreignLegacyBranch = "feature/test";
+
+    db.addChunksToBranchBatch(foreignLegacyBranch, [sharedChunk.chunkId]);
+    db.setMetadata(`index.embeddingStrategyVersion.${projectAHash}`, "1");
+
+    const globalIndexDir = path.join(tempHome, ".opencode", "global-index");
+    fs.writeFileSync(
+      path.join(globalIndexDir, "file-hashes.json"),
+      JSON.stringify({ [projectAFile]: "project-a-hash", [projectBFile]: "project-b-hash", [sharedFile]: "shared-hash" }, null, 2),
+      "utf-8"
+    );
+    fs.writeFileSync(path.join(globalIndexDir, "failed-batches.json"), "[]", "utf-8");
+
+    await createKbIndexer(projectA).clearIndex();
+
+    expect(db.chunkExistsOnBranch(foreignLegacyBranch, sharedChunk.chunkId)).toBe(true);
+    expect(db.chunkExistsOnBranch(foreignLegacyBranch, projectAProjectChunk.chunkId)).toBe(false);
+  });
+
   it("preserves foreign failed-batch and file-hash state during global clear when no vectors exist yet", async () => {
     vi.stubEnv("HOME", tempHome);
 
