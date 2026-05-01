@@ -46,6 +46,7 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
         Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        Language::Zig => tree_sitter_zig::LANGUAGE.into(),
         Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(chunk_by_lines(content, &language)),
     };
@@ -256,6 +257,7 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::Toml => matches!(node_type, "comment"),
         Language::Yaml => matches!(node_type, "comment"),
         Language::Php => matches!(node_type, "comment"),
+        Language::Zig => matches!(node_type, "line_comment" | "doc_comment"),
         Language::Apex => matches!(node_type, "line_comment" | "block_comment"),
         _ => false,
     }
@@ -447,6 +449,17 @@ lazy_static! {
         set.insert("enum_declaration");
         set
     };
+    static ref ZIG_SEMANTIC_NODES: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("function_declaration");
+        set.insert("test_declaration");
+        set.insert("struct_declaration");
+        set.insert("enum_declaration");
+        set.insert("union_declaration");
+        set.insert("opaque_declaration");
+        set.insert("error_set_declaration");
+        set
+    };
     // Apex grammar (tree-sitter-sfapex) is Java-derived: the declaration node
     // kinds match Java exactly, plus `trigger_declaration` which is unique to
     // Apex (Salesforce database triggers). Verified against tree-sitter-sfapex
@@ -488,6 +501,7 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
         Language::Toml => TOML_SEMANTIC_NODES.contains(node_type),
         Language::Yaml => YAML_SEMANTIC_NODES.contains(node_type),
         Language::Php => PHP_SEMANTIC_NODES.contains(node_type),
+        Language::Zig => ZIG_SEMANTIC_NODES.contains(node_type),
         Language::Apex => APEX_SEMANTIC_NODES.contains(node_type),
         _ => false,
     };
@@ -732,11 +746,11 @@ function greet(name: string): string {
 
 class Greeter {
     private name: string;
-    
+
     constructor(name: string) {
         this.name = name;
     }
-    
+
     greet(): string {
         return `Hello, ${this.name}!`;
     }
@@ -756,7 +770,7 @@ def greet(name: str) -> str:
 class Greeter:
     def __init__(self, name: str):
         self.name = name
-    
+
     def greet(self) -> str:
         return f"Hello, {self.name}!"
 "#;

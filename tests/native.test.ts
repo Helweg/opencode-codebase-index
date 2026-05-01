@@ -231,6 +231,28 @@ public class AccountService {
       // Language label is consistent.
       expect(chunks.every((c) => c.language === "apex")).toBe(true);
     });
+
+    it("should parse Zig files", () => {
+      const content = `
+const std = @import("std");
+
+pub fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+
+const Point = struct {
+    x: f32,
+    y: f32,
+};
+
+test "add works" {
+    try std.testing.expect(add(1, 2) == 3);
+}
+`;
+      const chunks = parseFile("main.zig", content);
+      expect(chunks.length).toBeGreaterThanOrEqual(1);
+      expect(chunks.some((c) => c.content.includes("fn add") || c.content.includes("Point"))).toBe(true);
+    });
   });
 
   describe("parseFiles", () => {
@@ -609,7 +631,7 @@ public class AccountService {
       });
 
       const metadataMap = store.getMetadataBatch(["chunk1", "chunk3", "nonexistent"]);
-      
+
       expect(metadataMap.size).toBe(2);
       expect(metadataMap.get("chunk1")?.filePath).toBe("a.ts");
       expect(metadataMap.get("chunk3")?.filePath).toBe("c.ts");

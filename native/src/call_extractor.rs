@@ -30,6 +30,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Rust => tree_sitter_rust::LANGUAGE.into(),
         Language::Go => tree_sitter_go::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        Language::Zig => tree_sitter_zig::LANGUAGE.into(),
         Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(vec![]),
     };
@@ -54,6 +55,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Rust => include_str!("../queries/rust-calls.scm"),
         Language::Go => include_str!("../queries/go-calls.scm"),
         Language::Php => include_str!("../queries/php-calls.scm"),
+        Language::Zig => include_str!("../queries/zig-calls.scm"),
         Language::Apex => include_str!("../queries/apex-calls.scm"),
         _ => return Ok(vec![]),
     };

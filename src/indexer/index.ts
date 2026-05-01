@@ -36,7 +36,7 @@ import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
 
-export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex"]);
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig"]);
 // Languages whose identifiers are case-insensitive at the language level.
 // The Rust call_extractor lowercases callee names for these languages (except
 // constructors and imports), so same-file resolution in this file must use
@@ -66,6 +66,9 @@ export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "mod_item",
   "trait_declaration",
   "trigger_declaration",
+  "test_declaration",
+  "struct_declaration",
+  "union_declaration",
 ]);
 
 function float32ArrayToBuffer(arr: number[]): Buffer {
@@ -4495,7 +4498,7 @@ export class Indexer {
     }
   ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
-    
+
     const compatibility = this.checkCompatibility();
     if (!compatibility.compatible) {
       throw new Error(
