@@ -795,6 +795,14 @@ export class PgDatabaseBackend implements IDatabaseBackend {
     return rowCount ?? 0;
   }
 
+  async getChunkFilePaths(): Promise<string[]> {
+    const pool = await this.getPool();
+    const { rows } = await pool.query(
+      `SELECT DISTINCT file_path FROM ${this.t("chunks")}`
+    );
+    return rows.map((r: { file_path: string }) => r.file_path);
+  }
+
   // ── Branch catalog ────────────────────────────────────────────────
 
   async addChunksToBranch(branch: string, chunkIds: string[]): Promise<void> {

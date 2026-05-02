@@ -202,6 +202,10 @@ export class SqliteDatabaseBackend implements IDatabaseBackend {
     return this.inner!.deleteChunksByFile(filePath);
   }
 
+  async getChunkFilePaths(): Promise<string[]> {
+    return Array.from(this.readFileHashesFromDisk().keys());
+  }
+
   // ── Branch catalog ───────────────────────────────────────────────
 
   async addChunksToBranch(branch: string, chunkIds: string[]): Promise<void> {

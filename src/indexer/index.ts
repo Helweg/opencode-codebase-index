@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, promises as fsPromises } from "fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, promises as fsPromises } from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
 import PQueue from "p-queue";
@@ -16,9 +16,7 @@ import { collectFiles, SkippedFile } from "../utils/files.js";
 import { createCostEstimate, CostEstimate } from "../utils/cost.js";
 import { Logger, initializeLogger } from "../utils/logger.js";
 import {
-  VectorStore,
   InvertedIndex,
-  Database,
   parseFiles,
   createEmbeddingTexts,
   generateChunkId,
@@ -33,6 +31,8 @@ import {
   estimateTokens,
 } from "../native/index.js";
 import type { SymbolData, CallEdgeData } from "../native/index.js";
+import type { IDatabaseBackend, IVectorStoreBackend } from "../db/index.js";
+import { createDatabaseBackend, createVectorStoreBackend } from "../db/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
 
@@ -174,9 +174,12 @@ export interface StatusResult {
   failedBatchesCount: number;
   failedBatchesPath?: string;
   warning?: string;
+  indexingInProgress: boolean;
+  progress?: IndexProgress;
 }
 
 const STARTUP_WARNING_METADATA_KEY = "index.startupWarning";
+const PROGRESS_SNAPSHOT_KEY = "index.progressSnapshot";
 
 export interface IndexProgress {
   phase: "scanning" | "parsing" | "embedding" | "storing" | "complete";
@@ -184,7 +187,9 @@ export interface IndexProgress {
   totalFiles: number;
   chunksProcessed: number;
   totalChunks: number;
-  currentFile?: string;
+  currentFiles?: string[];
+  /** Estimated seconds until embedding completes. Only present during the embedding phase. */
+  estimatedSecondsRemaining?: number;
 }
 
 export type ProgressCallback = (progress: IndexProgress) => void;
@@ -492,6 +497,10 @@ const rankingQueryTokenCache = new Map<string, Set<string>>();
 const rankingNameTokenCache = new Map<string, Set<string>>();
 const rankingPathTokenCache = new Map<string, Set<string>>();
 const rankingTextTokenCache = new Map<string, Set<string>>();
+const queryIntentRawCache = new Map<string, "source" | "doc_test">();
+const queryIdentifierHintsCache = new Map<string, string[]>();
+const implementationPathCache = new Map<string, boolean>();
+const testOrDocPathCache = new Map<string, boolean>();
 
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "from", "that", "this", "into", "using", "where",
@@ -560,6 +569,68 @@ const DOC_INTENT_HINTS = new Set([
   "guide",
   "usage",
 ]);
+
+const CLASSIFY_RAW_SOURCE_HINTS = [
+  "implement",
+  "implementation",
+  "implements",
+  "function",
+  "method",
+  "class",
+  "logic",
+  "algorithm",
+  "pipeline",
+  "indexer",
+];
+
+const CLASSIFY_RAW_DOC_TEST_REGEXES = Array.from(DOC_TEST_INTENT_HINTS).map(
+  (hint) => new RegExp(`\\b${hint}\\b`)
+);
+const CLASSIFY_RAW_SOURCE_REGEXES = CLASSIFY_RAW_SOURCE_HINTS.map(
+  (hint) => new RegExp(`\\b${hint}\\b`)
+);
+const WHERE_IS_PATTERN = /\bwhere\s+is\b/;
+
+const IMPLEMENTATION_CHUNK_TYPES = new Set([
+  "export_statement",
+  "function",
+  "function_declaration",
+  "method",
+  "method_definition",
+  "class",
+  "class_declaration",
+  "interface",
+  "type",
+  "enum",
+  "module",
+]);
+
+const NON_IMPLEMENTATION_EXTENSIONS = new Set([
+  "md", "mdx", "txt", "rst", "adoc", "snap", "json", "yaml", "yml", "lock",
+]);
+
+const DOCUMENTATION_EXTENSIONS = new Set([
+  "md", "mdx", "rst", "adoc", "txt",
+]);
+
+const DOC_TEST_INTENT_TOKENS = ["test", "tests", "fixture", "fixtures", "benchmark"];
+
+const IDENTIFIER_HINT_PATTERN = /[A-Za-z_][A-Za-z0-9_]*/g;
+const HAS_UPPERCASE_PATTERN = /[A-Z]/;
+
+function setBoundedMapCache<V>(
+  cache: Map<string, V>,
+  key: string,
+  value: V
+): void {
+  if (cache.size >= RANKING_TOKEN_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) {
+      cache.delete(oldest);
+    }
+  }
+  cache.set(key, value);
+}
 
 function setBoundedCache(
   cache: Map<string, Set<string>>,
@@ -658,27 +729,46 @@ function chunkTypeBoost(chunkType: string): number {
 }
 
 function isTestOrDocPath(filePath: string): boolean {
-  return TEST_PATH_SEGMENTS.some((segment) => filePath.includes(segment));
+  const cached = testOrDocPathCache.get(filePath);
+  if (cached !== undefined) return cached;
+  let result = false;
+  for (let i = 0; i < TEST_PATH_SEGMENTS.length; i += 1) {
+    if (filePath.includes(TEST_PATH_SEGMENTS[i])) {
+      result = true;
+      break;
+    }
+  }
+  setBoundedMapCache(testOrDocPathCache, filePath, result);
+  return result;
 }
 
 function isLikelyImplementationPath(filePath: string): boolean {
+  const cached = implementationPathCache.get(filePath);
+  if (cached !== undefined) return cached;
   const lowered = filePath.toLowerCase();
-  if (IMPLEMENTATION_EXCLUDE_PATH_SEGMENTS.some((segment) => lowered.includes(segment))) {
-    return false;
+  let result = true;
+  for (let i = 0; i < IMPLEMENTATION_EXCLUDE_PATH_SEGMENTS.length; i += 1) {
+    if (lowered.includes(IMPLEMENTATION_EXCLUDE_PATH_SEGMENTS[i])) {
+      result = false;
+      break;
+    }
   }
-
-  const ext = lowered.split(".").pop() ?? "";
-  if (["md", "mdx", "txt", "rst", "adoc", "snap", "json", "yaml", "yml", "lock"].includes(ext)) {
-    return false;
+  if (result) {
+    const dotIdx = lowered.lastIndexOf(".");
+    const ext = dotIdx >= 0 ? lowered.slice(dotIdx + 1) : "";
+    if (NON_IMPLEMENTATION_EXTENSIONS.has(ext)) {
+      result = false;
+    }
   }
-
-  return true;
+  setBoundedMapCache(implementationPathCache, filePath, result);
+  return result;
 }
 
 function isDocumentationPath(filePath: string): boolean {
   const lowered = filePath.toLowerCase();
-  const ext = lowered.split(".").pop() ?? "";
-  return lowered.includes("readme") || ["md", "mdx", "rst", "adoc", "txt"].includes(ext);
+  const dotIdx = lowered.lastIndexOf(".");
+  const ext = dotIdx >= 0 ? lowered.slice(dotIdx + 1) : "";
+  return lowered.includes("readme") || DOCUMENTATION_EXTENSIONS.has(ext);
 }
 
 function classifyExternalRerankBand(
@@ -712,50 +802,57 @@ function classifyExternalRerankBand(
 }
 
 function classifyQueryIntent(tokens: string[]): "source" | "doc_test" {
-  const sourceIntentHits = tokens.filter((t) => SOURCE_INTENT_HINTS.has(t)).length;
-  const docTestIntentHits = tokens.filter((t) => DOC_TEST_INTENT_HINTS.has(t)).length;
+  let sourceIntentHits = 0;
+  let docTestIntentHits = 0;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const t = tokens[i];
+    if (SOURCE_INTENT_HINTS.has(t)) sourceIntentHits += 1;
+    if (DOC_TEST_INTENT_HINTS.has(t)) docTestIntentHits += 1;
+  }
   return sourceIntentHits >= docTestIntentHits ? "source" : "doc_test";
 }
 
 function classifyQueryIntentRaw(query: string): "source" | "doc_test" {
+  const cached = queryIntentRawCache.get(query);
+  if (cached !== undefined) return cached;
+
   const lowerQuery = query.toLowerCase();
-  const docTestRawHits = Array.from(DOC_TEST_INTENT_HINTS).filter((hint) =>
-    new RegExp(`\\b${hint}\\b`).test(lowerQuery)
-  ).length;
-  const sourceRawHits = [
-    "implement",
-    "implementation",
-    "implements",
-    "function",
-    "method",
-    "class",
-    "logic",
-    "algorithm",
-    "pipeline",
-    "indexer",
-  ].filter((hint) => new RegExp(`\\b${hint}\\b`).test(lowerQuery)).length;
+  let docTestRawHits = 0;
+  for (let i = 0; i < CLASSIFY_RAW_DOC_TEST_REGEXES.length; i += 1) {
+    if (CLASSIFY_RAW_DOC_TEST_REGEXES[i].test(lowerQuery)) docTestRawHits += 1;
+  }
+  let sourceRawHits = 0;
+  for (let i = 0; i < CLASSIFY_RAW_SOURCE_REGEXES.length; i += 1) {
+    if (CLASSIFY_RAW_SOURCE_REGEXES[i].test(lowerQuery)) sourceRawHits += 1;
+  }
 
+  let result: "source" | "doc_test";
   if (docTestRawHits > sourceRawHits) {
-    return "doc_test";
+    result = "doc_test";
+  } else if (sourceRawHits > docTestRawHits) {
+    result = "source";
+  } else if (
+    WHERE_IS_PATTERN.test(lowerQuery) &&
+    extractIdentifierHints(query).length > 0 &&
+    docTestRawHits === 0
+  ) {
+    result = "source";
+  } else {
+    const queryTokens = Array.from(tokenizeTextForRanking(query));
+    result = classifyQueryIntent(queryTokens);
   }
-
-  if (sourceRawHits > docTestRawHits) {
-    return "source";
-  }
-
-  const hasWhereIsPattern = /\bwhere\s+is\b/.test(lowerQuery);
-  const hasIdentifierHints = extractIdentifierHints(query).length > 0;
-  if (hasWhereIsPattern && hasIdentifierHints && docTestRawHits === 0) {
-    return "source";
-  }
-
-  const queryTokens = Array.from(tokenizeTextForRanking(query));
-  return classifyQueryIntent(queryTokens);
+  setBoundedMapCache(queryIntentRawCache, query, result);
+  return result;
 }
 
 function classifyDocIntent(tokens: string[]): "docs" | "test" | "mixed" | "none" {
-  const docHits = tokens.filter((t) => DOC_INTENT_HINTS.has(t)).length;
-  const testHits = tokens.filter((t) => ["test", "tests", "fixture", "fixtures", "benchmark"].includes(t)).length;
+  let docHits = 0;
+  let testHits = 0;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const t = tokens[i];
+    if (DOC_INTENT_HINTS.has(t)) docHits += 1;
+    if (DOC_TEST_INTENT_TOKENS.indexOf(t) !== -1) testHits += 1;
+  }
 
   if (docHits > 0 && testHits === 0) return "docs";
   if (testHits > 0 && docHits === 0) return "test";
@@ -764,31 +861,32 @@ function classifyDocIntent(tokens: string[]): "docs" | "test" | "mixed" | "none"
 }
 
 function isImplementationChunkType(chunkType: string): boolean {
-  return [
-    "export_statement",
-    "function",
-    "function_declaration",
-    "method",
-    "method_definition",
-    "class",
-    "class_declaration",
-    "interface",
-    "type",
-    "enum",
-    "module",
-  ].includes(chunkType);
+  return IMPLEMENTATION_CHUNK_TYPES.has(chunkType);
 }
 
 function extractIdentifierHints(query: string): string[] {
-  const identifiers = query.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
-  return identifiers
-    .filter((id) => id.length >= 3)
-    .filter((id) => {
-      const lower = id.toLowerCase();
-      if (STOPWORDS.has(lower)) return false;
-      return /[A-Z]/.test(id) || id.includes("_") || id.endsWith("Results") || id.endsWith("Result");
-    })
-    .map((id) => id.toLowerCase());
+  const cached = queryIdentifierHintsCache.get(query);
+  if (cached !== undefined) return cached;
+
+  IDENTIFIER_HINT_PATTERN.lastIndex = 0;
+  const result: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = IDENTIFIER_HINT_PATTERN.exec(query)) !== null) {
+    const id = match[0];
+    if (id.length < 3) continue;
+    const lower = id.toLowerCase();
+    if (STOPWORDS.has(lower)) continue;
+    if (
+      HAS_UPPERCASE_PATTERN.test(id) ||
+      id.indexOf("_") !== -1 ||
+      id.endsWith("Results") ||
+      id.endsWith("Result")
+    ) {
+      result.push(lower);
+    }
+  }
+  setBoundedMapCache(queryIdentifierHintsCache, query, result);
+  return result;
 }
 
 function extractCodeTermHints(query: string): string[] {
@@ -1292,15 +1390,15 @@ export function rankSemanticOnlyResults(
   });
 }
 
-function promoteIdentifierMatches(
+async function promoteIdentifierMatches(
   query: string,
   combined: RankedCandidate[],
   semanticCandidates: RankedCandidate[],
   keywordCandidates: RankedCandidate[],
-  database?: Database,
+  database?: IDatabaseBackend,
   branchChunkIds?: Set<string> | null,
   prioritizeSourcePaths: boolean = classifyQueryIntentRaw(query) === "source"
-): RankedCandidate[] {
+): Promise<RankedCandidate[]> {
   if (combined.length === 0) {
     return combined;
   }
@@ -1327,9 +1425,9 @@ function promoteIdentifierMatches(
 
   if (database) {
     for (const identifier of identifierHints) {
-      const symbols = database.getSymbolsByName(identifier);
+      const symbols = await database.getSymbolsByName(identifier);
       for (const symbol of symbols) {
-        const chunks = database.getChunksByFile(symbol.filePath);
+        const chunks = await database.getChunksByFile(symbol.filePath);
         for (const chunk of chunks) {
           if (branchChunkIds && !branchChunkIds.has(chunk.chunkId)) {
             continue;
@@ -1413,14 +1511,14 @@ function promoteIdentifierMatches(
   return [...promoted, ...remainder];
 }
 
-function buildSymbolDefinitionLane(
+async function buildSymbolDefinitionLane(
   query: string,
-  database: Database,
+  database: IDatabaseBackend,
   branchChunkIds: Set<string> | null,
   limit: number,
   fallbackCandidates: RankedCandidate[],
   prioritizeSourcePaths: boolean = classifyQueryIntentRaw(query) === "source"
-): RankedCandidate[] {
+): Promise<RankedCandidate[]> {
   if (!prioritizeSourcePaths) {
     return [];
   }
@@ -1436,7 +1534,7 @@ function buildSymbolDefinitionLane(
   const primaryHint = extractPrimaryIdentifierQueryHint(query);
 
   const upsertChunkCandidate = (
-    chunk: ReturnType<Database["getChunksByName"]>[number],
+    chunk: ChunkData,
     identifier: string,
     normalizedIdentifier: string,
     baseScore?: number
@@ -1489,13 +1587,13 @@ function buildSymbolDefinitionLane(
 
   for (const identifier of normalizedHints) {
     const symbols = [
-      ...database.getSymbolsByName(identifier),
-      ...database.getSymbolsByNameCi(identifier),
+      ...(await database.getSymbolsByName(identifier)),
+      ...(await database.getSymbolsByNameCi(identifier)),
     ];
 
     const chunksByName = [
-      ...database.getChunksByName(identifier),
-      ...database.getChunksByNameCi(identifier),
+      ...(await database.getChunksByName(identifier)),
+      ...(await database.getChunksByNameCi(identifier)),
     ];
 
     const normalizedIdentifier = identifier.replace(/_/g, "");
@@ -1506,7 +1604,7 @@ function buildSymbolDefinitionLane(
     }
 
     for (const symbol of dedupSymbols.values()) {
-      const chunks = database.getChunksByFile(symbol.filePath);
+      const chunks = await database.getChunksByFile(symbol.filePath);
       for (const chunk of chunks) {
         if (chunk.startLine > symbol.startLine || chunk.endLine < symbol.endLine) {
           continue;
@@ -1528,8 +1626,8 @@ function buildSymbolDefinitionLane(
 
   if (filePathHint && primaryHint) {
     const primaryChunks = [
-      ...database.getChunksByName(primaryHint),
-      ...database.getChunksByNameCi(primaryHint),
+      ...(await database.getChunksByName(primaryHint)),
+      ...(await database.getChunksByNameCi(primaryHint)),
     ];
     const dedupPrimaryChunks = new Map<string, typeof primaryChunks[number]>();
     for (const chunk of primaryChunks) {
@@ -1703,63 +1801,133 @@ export class Indexer {
   private config: ParsedCodebaseIndexConfig;
   private projectRoot: string;
   private indexPath: string;
-  private store: VectorStore | null = null;
+  private store: IVectorStoreBackend | null = null;
   private invertedIndex: InvertedIndex | null = null;
-  private database: Database | null = null;
+  private database: IDatabaseBackend | null = null;
   private provider: EmbeddingProviderInterface | null = null;
   private configuredProviderInfo: ConfiguredProviderInfo | null = null;
   private reranker: RerankerInterface | null = null;
-  private fileHashCache: Map<string, string> = new Map();
-  private fileHashCachePath: string = "";
   private failedBatchesPath: string = "";
   private currentBranch: string = "default";
   private baseBranch: string = "main";
   private logger: Logger;
+  private client?: { app?: { log: (entry: unknown) => Promise<unknown> } };
+  private currentProgress?: IndexProgress;
+  private lastProgressLogAt = 0;
+  private lastProgressSnapshot = "";
+  private embeddingPhaseStartTime = 0;
+  private embeddingChunksAtStart = 0;
+  private lastProgressPersistAt = 0;
   private queryEmbeddingCache: Map<string, { embedding: number[]; timestamp: number }> = new Map();
   private readonly maxQueryCacheSize = 100;
   private readonly queryCacheTtlMs = 5 * 60 * 1000;
   private readonly querySimilarityThreshold = 0.85;
   private indexCompatibility: IndexCompatibility | null = null;
-  private indexingLockPath: string = "";
+  /** Cached flag: whether the global branch catalog migration has been completed. */
+  private branchMigrationDone = false;
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
     this.projectRoot = projectRoot;
     this.config = config;
     this.indexPath = this.getIndexPath();
-    this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
     this.failedBatchesPath = path.join(this.indexPath, "failed-batches.json");
-    this.indexingLockPath = path.join(this.indexPath, "indexing.lock");
     this.logger = initializeLogger(config.debug);
+  }
+
+  private updateProgress(progress: IndexProgress, onProgress?: ProgressCallback): void {
+    // Compute ETA for embedding phase
+    let estimatedSecondsRemaining: number | undefined;
+    if (progress.phase === "embedding") {
+      if (this.embeddingPhaseStartTime === 0 && progress.chunksProcessed > 0) {
+        this.embeddingPhaseStartTime = Date.now();
+        this.embeddingChunksAtStart = progress.chunksProcessed;
+      }
+      if (this.embeddingPhaseStartTime > 0) {
+        const elapsedMs = Date.now() - this.embeddingPhaseStartTime;
+        const done = progress.chunksProcessed - this.embeddingChunksAtStart;
+        const remaining = progress.totalChunks - progress.chunksProcessed;
+        if (done > 0 && elapsedMs > 0 && remaining >= 0) {
+          const ratePerSec = done / (elapsedMs / 1000);
+          estimatedSecondsRemaining = Math.ceil(remaining / ratePerSec);
+        }
+      }
+    } else {
+      this.embeddingPhaseStartTime = 0;
+      this.embeddingChunksAtStart = 0;
+    }
+
+    const enriched: IndexProgress = estimatedSecondsRemaining !== undefined
+      ? { ...progress, estimatedSecondsRemaining }
+      : progress;
+
+    this.currentProgress = enriched;
+    onProgress?.(enriched);
+    this.emitProgressLog(enriched);
+
+    // Persist snapshot to DB for cross-invocation status (debounced, fire-and-forget)
+    const now = Date.now();
+    if (this.database && progress.phase !== "complete" && now - this.lastProgressPersistAt >= 5000) {
+      this.lastProgressPersistAt = now;
+      void this.database.setMetadata(PROGRESS_SNAPSHOT_KEY, JSON.stringify({ ...enriched, persistedAt: now }))
+        .catch(() => { /* best-effort */ });
+    }
+  }
+
+  private emitProgressLog(progress: IndexProgress): void {
+    if (!this.client?.app?.log) {
+      return;
+    }
+
+    const now = Date.now();
+    const snapshot = `${progress.phase}:${progress.filesProcessed}/${progress.totalFiles}:${progress.chunksProcessed}/${progress.totalChunks}:${progress.currentFiles?.join(",") ?? ""}`;
+    const shouldLog =
+      progress.phase === "scanning"
+      || progress.phase === "storing"
+      || progress.phase === "complete"
+      || this.lastProgressSnapshot === ""
+      || snapshot !== this.lastProgressSnapshot && now - this.lastProgressLogAt >= 1500;
+
+    if (!shouldLog) {
+      return;
+    }
+
+    this.lastProgressLogAt = now;
+    this.lastProgressSnapshot = snapshot;
+
+    const message = (() => {
+      switch (progress.phase) {
+        case "scanning":
+          return "Indexing: scanning files";
+        case "parsing":
+          return `Indexing: parsed ${progress.filesProcessed}/${progress.totalFiles} files`;
+        case "embedding":
+          return `Indexing: embedded ${progress.chunksProcessed}/${progress.totalChunks} chunks`;
+        case "storing":
+          return "Indexing: saving index data";
+        case "complete":
+          return "Indexing complete";
+      }
+    })();
+
+    void this.client.app.log({
+      body: {
+        service: "codebase-index",
+        level: "info",
+        message,
+        extra: {
+          phase: progress.phase,
+          filesProcessed: progress.filesProcessed,
+          totalFiles: progress.totalFiles,
+          chunksProcessed: progress.chunksProcessed,
+          totalChunks: progress.totalChunks,
+          currentFiles: progress.currentFiles,
+        },
+      },
+    }).catch(() => { /* best-effort */ });
   }
 
   private getIndexPath(): string {
     return resolveProjectIndexPath(this.projectRoot, this.config.scope);
-  }
-
-  private loadFileHashCache(): void {
-    try {
-      if (existsSync(this.fileHashCachePath)) {
-        const data = readFileSync(this.fileHashCachePath, "utf-8");
-        const parsed = JSON.parse(data);
-        this.fileHashCache = new Map(Object.entries(parsed));
-      }
-    } catch {
-      this.fileHashCache = new Map();
-    }
-  }
-
-  private saveFileHashCache(): void {
-    const obj: Record<string, string> = {};
-    for (const [k, v] of this.fileHashCache) {
-      obj[k] = v;
-    }
-    this.atomicWriteSync(this.fileHashCachePath, JSON.stringify(obj));
-  }
-
-  private atomicWriteSync(targetPath: string, data: string): void {
-    const tempPath = `${targetPath}.tmp`;
-    writeFileSync(tempPath, data);
-    renameSync(tempPath, targetPath);
   }
 
   private getScopedRoots(): string[] {
@@ -1801,22 +1969,24 @@ export class Indexer {
     return `index.forceReembed.${projectHash}`;
   }
 
-  private hasProjectForceReembedPending(): boolean {
-    return this.config.scope === "global" && this.database?.getMetadata(this.getProjectForceReembedMetadataKey()) === "true";
+  private async hasProjectForceReembedPending(): Promise<boolean> {
+    return this.config.scope === "global"
+      && (await this.database?.getMetadata(this.getProjectForceReembedMetadataKey())) === "true";
   }
 
-  private hasScopedIndexedData(): boolean {
+  private async hasScopedIndexedData(): Promise<boolean> {
     if (!this.store || this.config.scope !== "global") {
       return false;
     }
 
-    if (this.hasProjectForceReembedPending()) {
+    if (await this.hasProjectForceReembedPending()) {
       return false;
     }
 
     const roots = this.getScopedRoots();
+    const scopedFilePaths = await this.database?.getFilePathsInRoots(roots) ?? [];
 
-    if (Array.from(this.fileHashCache.keys()).some((filePath) => this.isFileInCurrentScope(filePath, roots))) {
+    if (scopedFilePaths.length > 0) {
       return true;
     }
 
@@ -1833,52 +2003,53 @@ export class Indexer {
       return false;
     }
 
-    if (this.getBranchCatalogKeys().some((branchKey) => {
-      const branchChunkIds = this.database!.getBranchChunkIds(branchKey);
+    for (const branchKey of this.getBranchCatalogKeys()) {
+      const branchChunkIds = await this.database!.getBranchChunkIds(branchKey);
       if (branchChunkIds.length > 0) {
         return true;
       }
 
-      return this.database!.getBranchSymbolIds(branchKey).length > 0;
-    })) {
-      return true;
+      if ((await this.database!.getBranchSymbolIds(branchKey)).length > 0) {
+        return true;
+      }
     }
 
-    const hasAnyBranchRows = this.database.getAllBranches().some((branchKey) => {
-      const branchChunkIds = this.database!.getBranchChunkIds(branchKey);
+    const allBranches = await this.database.getAllBranches();
+    const hasAnyBranchRows = await Promise.all(allBranches.map(async (branchKey) => {
+      const branchChunkIds = await this.database!.getBranchChunkIds(branchKey);
       if (branchChunkIds.length > 0) {
         return true;
       }
 
-      return this.database!.getBranchSymbolIds(branchKey).length > 0;
-    });
+      return (await this.database!.getBranchSymbolIds(branchKey)).length > 0;
+    })).then((results) => results.some(Boolean));
     if (hasAnyBranchRows) {
       return false;
     }
 
-    return this.store.getAllMetadata().some(({ metadata }) => this.isFileInCurrentScope(metadata.filePath, roots));
+    return (await this.store.getAllMetadata()).some(({ metadata }) => this.isFileInCurrentScope(metadata.filePath, roots));
   }
 
-  private loadStoredEmbeddingStrategyVersion(): string | null {
+  private async loadStoredEmbeddingStrategyVersion(): Promise<string | null> {
     if (!this.database) {
       return null;
     }
 
-    if (this.hasProjectForceReembedPending()) {
+    if (await this.hasProjectForceReembedPending()) {
       return null;
     }
 
     if (this.config.scope !== "global") {
-      return this.database.getMetadata("index.embeddingStrategyVersion") ?? "1";
+      return (await this.database.getMetadata("index.embeddingStrategyVersion")) ?? "1";
     }
 
-    const projectVersion = this.database.getMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+    const projectVersion = await this.database.getMetadata(this.getProjectEmbeddingStrategyMetadataKey());
     if (projectVersion) {
       return projectVersion;
     }
 
-    const legacySharedVersion = this.database.getMetadata("index.embeddingStrategyVersion");
-    if (legacySharedVersion && this.hasScopedIndexedData()) {
+    const legacySharedVersion = await this.database.getMetadata("index.embeddingStrategyVersion");
+    if (legacySharedVersion && await this.hasScopedIndexedData()) {
       return legacySharedVersion;
     }
 
@@ -1891,7 +2062,7 @@ export class Indexer {
       return [primary];
     }
 
-    if (this.database?.getMetadata(this.getLegacyMigrationMetadataKey()) === "done") {
+    if (this.branchMigrationDone) {
       return [primary];
     }
 
@@ -1909,10 +2080,10 @@ export class Indexer {
     return primary === legacy ? [primary] : [primary, legacy];
   }
 
-  private getProjectLocalScopedOwnershipIds(roots: string[]): {
+  private async getProjectLocalScopedOwnershipIds(roots: string[]): Promise<{
     chunkIds: Set<string>;
     symbolIds: Set<string>;
-  } {
+  }> {
     const chunkIds = new Set<string>();
     const symbolIds = new Set<string>();
     if (!this.database) {
@@ -1920,11 +2091,13 @@ export class Indexer {
     }
 
     const projectRootPath = path.resolve(this.projectRoot);
+    const scopedFilePaths = await this.database.getFilePathsInRoots(roots);
+    const storeMetadata = this.store ? await this.store.getAllMetadata() : [];
     const projectLocalFilePaths = new Set<string>([
-      ...Array.from(this.fileHashCache.keys()).filter(
+      ...scopedFilePaths.filter(
         (filePath) => this.isFileInCurrentScope(filePath, roots) && isPathWithinRoot(filePath, projectRootPath)
       ),
-      ...(this.store?.getAllMetadata() ?? [])
+      ...storeMetadata
         .map(({ metadata }) => metadata.filePath)
         .filter(
           (filePath) => this.isFileInCurrentScope(filePath, roots) && isPathWithinRoot(filePath, projectRootPath)
@@ -1932,11 +2105,11 @@ export class Indexer {
     ]);
 
     for (const filePath of projectLocalFilePaths) {
-      for (const chunk of this.database.getChunksByFile(filePath)) {
+      for (const chunk of await this.database.getChunksByFile(filePath)) {
         chunkIds.add(chunk.chunkId);
       }
 
-      for (const symbol of this.database.getSymbolsByFile(filePath)) {
+      for (const symbol of await this.database.getSymbolsByFile(filePath)) {
         symbolIds.add(symbol.id);
       }
     }
@@ -1944,7 +2117,7 @@ export class Indexer {
     return { chunkIds, symbolIds };
   }
 
-  private getProjectScopedBranchCatalogCleanupKeys(projectChunkIds: string[], projectSymbolIds: string[]): string[] {
+  private async getProjectScopedBranchCatalogCleanupKeys(projectChunkIds: string[], projectSymbolIds: string[]): Promise<string[]> {
     if (this.config.scope !== "global") {
       return this.getBranchCatalogCleanupKeys();
     }
@@ -1954,7 +2127,7 @@ export class Indexer {
     const projectChunkIdSet = new Set(projectChunkIds);
     const projectSymbolIdSet = new Set(projectSymbolIds);
 
-    for (const branchKey of this.database?.getAllBranches() ?? []) {
+    for (const branchKey of await (this.database?.getAllBranches() ?? Promise.resolve([]))) {
       if (branchKey.startsWith(`${projectHash}:`)) {
         keys.add(branchKey);
         continue;
@@ -1964,8 +2137,8 @@ export class Indexer {
         continue;
       }
 
-      const referencesProjectChunks = this.database?.getBranchChunkIds(branchKey).some((chunkId) => projectChunkIdSet.has(chunkId)) ?? false;
-      const referencesProjectSymbols = this.database?.getBranchSymbolIds(branchKey).some((symbolId) => projectSymbolIdSet.has(symbolId)) ?? false;
+      const referencesProjectChunks = (await this.database?.getBranchChunkIds(branchKey) ?? []).some((chunkId) => projectChunkIdSet.has(chunkId));
+      const referencesProjectSymbols = (await this.database?.getBranchSymbolIds(branchKey) ?? []).some((symbolId) => projectSymbolIdSet.has(symbolId));
       if (referencesProjectChunks || referencesProjectSymbols) {
         keys.add(branchKey);
       }
@@ -1982,27 +2155,13 @@ export class Indexer {
     return roots.some((root) => isPathWithinRoot(filePath, root));
   }
 
-  private clearScopedFileHashCache(roots: string[]): void {
-    for (const filePath of Array.from(this.fileHashCache.keys())) {
-      if (this.isFileInCurrentScope(filePath, roots)) {
-        this.fileHashCache.delete(filePath);
-      }
-    }
-    this.saveFileHashCache();
+  private async clearScopedFileHashCache(roots: string[]): Promise<void> {
+    await this.database!.deleteFileHashesInRoots(roots);
   }
 
-  private replaceScopedFileHashCache(currentFileHashes: Map<string, string>, roots: string[]): void {
-    for (const filePath of Array.from(this.fileHashCache.keys())) {
-      if (this.isFileInCurrentScope(filePath, roots)) {
-        this.fileHashCache.delete(filePath);
-      }
-    }
-
-    for (const [filePath, hash] of currentFileHashes) {
-      this.fileHashCache.set(filePath, hash);
-    }
-
-    this.saveFileHashCache();
+  private async replaceScopedFileHashCache(currentFileHashes: Map<string, string>, roots: string[]): Promise<void> {
+    await this.database!.deleteFileHashesInRoots(roots);
+    await this.database!.setFileHashesBatch(currentFileHashes);
   }
 
   private partitionFailedBatches(roots: string[], maxChunkTokens?: number): { scoped: FailedBatch[]; retained: SerializedFailedBatch[] } {
@@ -2039,8 +2198,8 @@ export class Indexer {
     this.saveFailedBatches(retainedBatches);
   }
 
-  private hasForeignScopedFileHashData(roots: string[]): boolean {
-    return Array.from(this.fileHashCache.keys()).some((filePath) => !this.isFileInCurrentScope(filePath, roots));
+  private async hasForeignScopedFileHashData(roots: string[]): Promise<boolean> {
+    return this.database!.hasFileHashesOutsideRoots(roots);
   }
 
   private hasForeignScopedFailedBatches(roots: string[]): boolean {
@@ -2048,19 +2207,19 @@ export class Indexer {
     return retained.length > 0;
   }
 
-  private hasForeignScopedBranchData(): boolean {
+  private async hasForeignScopedBranchData(): Promise<boolean> {
     if (!this.database || this.config.scope !== "global") {
       return false;
     }
 
     const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
     const roots = this.getScopedRoots();
-    const { chunkIds: projectLocalChunkIds, symbolIds: projectLocalSymbolIds } = this.getProjectLocalScopedOwnershipIds(roots);
+    const { chunkIds: projectLocalChunkIds, symbolIds: projectLocalSymbolIds } = await this.getProjectLocalScopedOwnershipIds(roots);
 
-    return this.database.getAllBranches().some(
-      (branchKey) => {
-        const branchChunkIds = this.database!.getBranchChunkIds(branchKey);
-        const branchSymbolIds = this.database!.getBranchSymbolIds(branchKey);
+    const branchKeys = await this.database.getAllBranches();
+    return (await Promise.all(branchKeys.map(async (branchKey) => {
+        const branchChunkIds = await this.database!.getBranchChunkIds(branchKey);
+        const branchSymbolIds = await this.database!.getBranchSymbolIds(branchKey);
         const hasBranchData = branchChunkIds.length > 0 || branchSymbolIds.length > 0;
         if (!hasBranchData) {
           return false;
@@ -2078,7 +2237,7 @@ export class Indexer {
 
         return true;
       }
-    );
+    ))).some(Boolean);
   }
 
   private saveScopedFailedBatches(batches: FailedBatch[], roots: string[]): void {
@@ -2086,16 +2245,16 @@ export class Indexer {
     this.saveFailedBatches([...retained, ...batches]);
   }
 
-  private clearSharedIndexProjectData(
-    store: VectorStore,
+  private async clearSharedIndexProjectData(
+    store: IVectorStoreBackend,
     invertedIndex: InvertedIndex,
-    database: Database,
+    database: IDatabaseBackend,
     roots: string[]
-  ): { removedChunkIds: string[]; hasForeignData: boolean } {
-    const allMetadata = store.getAllMetadata();
+  ): Promise<{ removedChunkIds: string[]; hasForeignData: boolean }> {
+    const allMetadata = await store.getAllMetadata();
     const scopedEntries = allMetadata.filter(({ metadata }) => this.isFileInCurrentScope(metadata.filePath, roots));
     const filePaths = new Set<string>([
-      ...Array.from(this.fileHashCache.keys()).filter((filePath) => this.isFileInCurrentScope(filePath, roots)),
+      ...await this.database!.getFilePathsInRoots(roots),
       ...scopedEntries.map(({ metadata }) => metadata.filePath),
     ]);
 
@@ -2106,7 +2265,7 @@ export class Indexer {
 
     const removedChunkIds = new Set<string>(scopedEntries.map(({ key }) => key));
     for (const filePath of filePaths) {
-      for (const chunk of database.getChunksByFile(filePath)) {
+      for (const chunk of await database.getChunksByFile(filePath)) {
         removedChunkIds.add(chunk.chunkId);
       }
     }
@@ -2118,7 +2277,7 @@ export class Indexer {
         .map(({ key }) => key)
     );
     for (const filePath of projectLocalFilePaths) {
-      for (const chunk of database.getChunksByFile(filePath)) {
+      for (const chunk of await database.getChunksByFile(filePath)) {
         projectLocalChunkIds.add(chunk.chunkId);
       }
     }
@@ -2126,7 +2285,7 @@ export class Indexer {
     const symbolIds: string[] = [];
     const projectLocalSymbolIds = new Set<string>();
     for (const filePath of filePaths) {
-      for (const symbol of database.getSymbolsByFile(filePath)) {
+      for (const symbol of await database.getSymbolsByFile(filePath)) {
         symbolIds.push(symbol.id);
         if (projectLocalFilePaths.has(filePath)) {
           projectLocalSymbolIds.add(symbol.id);
@@ -2134,46 +2293,47 @@ export class Indexer {
       }
     }
 
-    for (const branchKey of this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
-      database.deleteBranchChunksForBranch(branchKey, removedChunkIdList);
+    for (const branchKey of await this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
+      await database.deleteBranchChunksForBranch(branchKey, removedChunkIdList);
     }
-    const sharedChunkIds = new Set(database.getReferencedChunkIds(removedChunkIdList));
+    const sharedChunkIds = new Set(await database.getReferencedChunkIds(removedChunkIdList));
     const removableChunkIds = removedChunkIdList.filter((chunkId) => !sharedChunkIds.has(chunkId));
 
     for (const chunkId of removableChunkIds) {
-      store.remove(chunkId);
+      await store.remove(chunkId);
       invertedIndex.removeChunk(chunkId);
     }
 
-    for (const branchKey of this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
-      database.deleteBranchSymbolsForBranch(branchKey, symbolIds);
+    for (const branchKey of await this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
+      await database.deleteBranchSymbolsForBranch(branchKey, symbolIds);
     }
-    const sharedSymbolIds = new Set(database.getReferencedSymbolIds(symbolIds));
+    const sharedSymbolIds = new Set(await database.getReferencedSymbolIds(symbolIds));
     const removableSymbolIds = symbolIds.filter((symbolId) => !sharedSymbolIds.has(symbolId));
 
-    database.clearCallEdgeTargetsForSymbols(removableSymbolIds);
+    await database.clearCallEdgeTargetsForSymbols(removableSymbolIds);
 
     for (const filePath of filePaths) {
-      const fileChunkIds = database.getChunksByFile(filePath).map((chunk) => chunk.chunkId);
-      const fileSymbols = database.getSymbolsByFile(filePath);
+      const fileChunks = await database.getChunksByFile(filePath);
+      const fileChunkIds = fileChunks.map((chunk) => chunk.chunkId);
+      const fileSymbols = await database.getSymbolsByFile(filePath);
 
       if (fileChunkIds.every((chunkId) => !sharedChunkIds.has(chunkId))) {
-        database.deleteChunksByFile(filePath);
+        await database.deleteChunksByFile(filePath);
       }
 
       if (fileSymbols.every((symbol) => !sharedSymbolIds.has(symbol.id))) {
-        database.deleteCallEdgesByFile(filePath);
-        database.deleteSymbolsByFile(filePath);
+        await database.deleteCallEdgesByFile(filePath);
+        await database.deleteSymbolsByFile(filePath);
       }
     }
 
-    database.gcOrphanCallEdges();
-    database.gcOrphanSymbols();
-    database.gcOrphanEmbeddings();
-    database.gcOrphanChunks();
+    await database.gcOrphanCallEdges();
+    await database.gcOrphanSymbols();
+    await database.gcOrphanEmbeddings();
+    await database.gcOrphanChunks();
 
-    store.save();
-    invertedIndex.save();
+    await store.save();
+    await this.database!.saveInvertedIndex(invertedIndex.serialize());
 
     return {
       removedChunkIds: removedChunkIdList,
@@ -2181,34 +2341,26 @@ export class Indexer {
     };
   }
 
-  private checkForInterruptedIndexing(): boolean {
-    return existsSync(this.indexingLockPath);
+  private async checkForInterruptedIndexing(): Promise<boolean> {
+    return this.database!.isLocked();
   }
 
-  private acquireIndexingLock(): void {
-    const lockData = {
-      startedAt: new Date().toISOString(),
-      pid: process.pid,
-    };
-    writeFileSync(this.indexingLockPath, JSON.stringify(lockData));
-  }
-
-  private releaseIndexingLock(): void {
-    if (existsSync(this.indexingLockPath)) {
-      unlinkSync(this.indexingLockPath);
+  private async acquireIndexingLock(): Promise<void> {
+    const acquired = await this.database!.tryAcquireLock(process.pid, new Date().toISOString());
+    if (!acquired) {
+      throw new Error("[codebase-index] Another indexing session is already in progress");
     }
+  }
+
+  private async releaseIndexingLock(): Promise<void> {
+    await this.database!.releaseLock();
   }
 
   private async recoverFromInterruptedIndexing(): Promise<void> {
     this.logger.warn("Detected interrupted indexing session, recovering...");
-
-    if (existsSync(this.fileHashCachePath)) {
-      unlinkSync(this.fileHashCachePath);
-    }
-
+    await this.database!.replaceAllFileHashes(new Map());
     await this.healthCheck();
-    this.releaseIndexingLock();
-
+    await this.releaseIndexingLock();
     this.logger.info("Recovery complete, next index will re-process all files");
   }
 
@@ -2515,7 +2667,9 @@ export class Indexer {
     return parts.join("\n");
   }
 
-  async initialize(): Promise<void> {
+  async initialize(client?: any): Promise<void> {
+    this.client = client;
+
     if (this.config.embeddingProvider === 'custom') {
       if (!this.config.customProvider) {
         throw new Error("embeddingProvider is 'custom' but customProvider config is missing.");
@@ -2561,38 +2715,87 @@ export class Indexer {
     // → initialize (store not yet set) → recovery → ...
 
     const dimensions = this.configuredProviderInfo.modelInfo.dimensions;
-    const storePath = path.join(this.indexPath, "vectors");
-    this.store = new VectorStore(storePath, dimensions);
+    const dbCfg = this.config.database;
 
-    const indexFilePath = path.join(this.indexPath, "vectors.usearch");
-    if (existsSync(indexFilePath)) {
-      this.store.load();
-    }
+    // ── Vector store ──────────────────────────────────────────────────────────
+    this.store = await createVectorStoreBackend(dbCfg, this.indexPath, dimensions);
+    await this.store.load();
 
+    // ── Inverted index ────────────────────────────────────────────────────────
     const invertedIndexPath = path.join(this.indexPath, "inverted-index.json");
     this.invertedIndex = new InvertedIndex(invertedIndexPath);
-    try {
-      this.invertedIndex.load();
-    } catch {
-      if (existsSync(invertedIndexPath)) {
-        await fsPromises.unlink(invertedIndexPath);
+
+    // ── Database ──────────────────────────────────────────────────────────────
+    const dbPath = path.join(this.indexPath, "codebase.db");
+    const dbIsNew = dbCfg.engine === "sqlite" && !existsSync(dbPath);
+
+    // Log database connection details
+    if (dbCfg.engine === "sqlite") {
+      const msg = `Initializing SQLite database at ${dbPath}`;
+      this.logger.info(msg, { path: dbPath, isNew: dbIsNew });
+      if (client) {
+        await client.app.log({
+          body: {
+            service: "codebase-index",
+            level: "info",
+            message: msg,
+            extra: { path: dbPath, isNew: dbIsNew },
+          },
+        });
       }
-      this.invertedIndex = new InvertedIndex(invertedIndexPath);
+    } else if (dbCfg.engine === "pgvector" && dbCfg.pgvector) {
+      const pgConfig = dbCfg.pgvector;
+      const connectionInfo = pgConfig.connectionString
+        ? "via connection string"
+        : `${pgConfig.user || "postgres"}@${pgConfig.host || "localhost"}:${pgConfig.port || 5432}/${pgConfig.database || "postgres"}`;
+      const msg = `Initializing pgvector database ${connectionInfo}`;
+      this.logger.info(msg, {
+        connectionInfo,
+        tablePrefix: pgConfig.tablePrefix || "ci",
+        ssl: pgConfig.ssl || "disable",
+      });
+      if (client) {
+        await client.app.log({
+          body: {
+            service: "codebase-index",
+            level: "info",
+            message: msg,
+            extra: {
+              connectionInfo,
+              tablePrefix: pgConfig.tablePrefix || "ci",
+              ssl: pgConfig.ssl || "disable",
+            },
+          },
+        });
+      }
     }
 
-    const dbPath = path.join(this.indexPath, "codebase.db");
-    let dbIsNew = !existsSync(dbPath);
     try {
-      this.database = new Database(dbPath);
+      this.database = await createDatabaseBackend(dbCfg, dbPath);
     } catch (error) {
-      if (!(await this.tryResetCorruptedIndex("initializing index database", error))) {
+      if (dbCfg.engine !== "sqlite" || !(await this.tryResetCorruptedIndex("initializing index database", error))) {
         throw error;
       }
 
-      this.store = new VectorStore(storePath, dimensions);
+      this.store = await createVectorStoreBackend(dbCfg, this.indexPath, dimensions);
       this.invertedIndex = new InvertedIndex(invertedIndexPath);
-      this.database = new Database(dbPath);
-      dbIsNew = true;
+      this.database = await createDatabaseBackend(dbCfg, dbPath);
+    }
+
+    // Hydrate the in-memory inverted index from whichever backend owns it.
+    try {
+      const invertedIndexJson = await this.database.loadInvertedIndex();
+      if (invertedIndexJson) {
+        this.invertedIndex.deserialize(invertedIndexJson);
+      }
+    } catch {
+      // Corrupted — will be rebuilt from scratch during next index run.
+    }
+
+    // Load the cached migration-done flag so getBranchCatalogKeys() stays synchronous.
+    if (this.config.scope === "global") {
+      const migVal = await this.database.getMetadata(this.getLegacyMigrationMetadataKey());
+      this.branchMigrationDone = migVal === "done";
     }
 
     if (isGitRepo(this.projectRoot)) {
@@ -2612,17 +2815,15 @@ export class Indexer {
     // are all initialized. healthCheck() calls ensureInitialized() which checks
     // these fields — if they're not set, it re-enters initialize() causing infinite
     // recursion and 70GB+ memory usage.
-    if (this.checkForInterruptedIndexing()) {
+    if (await this.checkForInterruptedIndexing()) {
       await this.recoverFromInterruptedIndexing();
     }
 
-    if (dbIsNew && this.store.count() > 0) {
-      this.migrateFromLegacyIndex();
+    if (dbIsNew && (await this.store.count()) > 0) {
+      await this.migrateFromLegacyIndex();
     }
 
-    this.loadFileHashCache();
-
-    this.indexCompatibility = await this.validateIndexCompatibility(this.configuredProviderInfo);
+  this.indexCompatibility = await this.validateIndexCompatibility(this.configuredProviderInfo);
     if (!this.indexCompatibility.compatible) {
       this.logger.warn("Index compatibility issue detected", {
         reason: this.indexCompatibility.reason,
@@ -2640,7 +2841,7 @@ export class Indexer {
   private async maybeRunAutoGc(): Promise<void> {
     if (!this.database) return;
 
-    const lastGcTimestamp = this.database.getMetadata("lastGcTimestamp");
+    const lastGcTimestamp = await this.database.getMetadata("lastGcTimestamp");
     const now = Date.now();
     const intervalMs = this.config.indexing.gcIntervalDays * 24 * 60 * 60 * 1000;
 
@@ -2669,14 +2870,14 @@ export class Indexer {
   private async maybeRunOrphanGc(): Promise<CorruptedIndexResetResult | null> {
     if (!this.database) return null;
 
-    const stats = this.database.getStats();
+    const stats = await this.database.getStats();
     if (!stats) return null;
 
     const orphanCount = stats.embeddingCount - stats.chunkCount;
     if (orphanCount > this.config.indexing.gcOrphanThreshold) {
       try {
-        this.database.gcOrphanEmbeddings();
-        this.database.gcOrphanChunks();
+        await this.database.gcOrphanEmbeddings();
+        await this.database.gcOrphanChunks();
       } catch (error) {
         if (await this.tryResetCorruptedIndex("running automatic orphan garbage collection", error)) {
           return {
@@ -2724,12 +2925,12 @@ export class Indexer {
       error: errorMessage,
     });
 
+    await this.database?.close();
     this.store = null;
     this.invertedIndex = null;
     this.database?.close();
     this.database = null;
     this.indexCompatibility = null;
-    this.fileHashCache.clear();
 
     const resetPaths = [
       path.join(this.indexPath, "codebase.db"),
@@ -2755,10 +2956,10 @@ export class Indexer {
     return true;
   }
 
-  private migrateFromLegacyIndex(): void {
+  private async migrateFromLegacyIndex(): Promise<void> {
     if (!this.store || !this.database) return;
 
-    const allMetadata = this.store.getAllMetadata();
+    const allMetadata = await this.store.getAllMetadata();
     const chunkIds: string[] = [];
     const chunkDataBatch: ChunkData[] = [];
 
@@ -2778,34 +2979,34 @@ export class Indexer {
     }
 
     if (chunkDataBatch.length > 0) {
-      this.database.upsertChunksBatch(chunkDataBatch);
+      await this.database.upsertChunksBatch(chunkDataBatch);
     }
     await this.database.addChunksToBranchBatch(this.getBranchCatalogKey(), chunkIds);
   }
 
-  private loadIndexMetadata(): IndexMetadata | null {
+  private async loadIndexMetadata(): Promise<IndexMetadata | null> {
     if (!this.database) return null;
 
-    const version = this.database.getMetadata("index.version");
+    const version = await this.database.getMetadata("index.version");
     if (!version) return null;
 
-      return {
-        indexVersion: version,
-        embeddingProvider: this.database.getMetadata("index.embeddingProvider") ?? "",
-        embeddingModel: this.database.getMetadata("index.embeddingModel") ?? "",
-        embeddingDimensions: parseInt(this.database.getMetadata("index.embeddingDimensions") ?? "0", 10),
-        embeddingStrategyVersion: this.loadStoredEmbeddingStrategyVersion() ?? EMBEDDING_STRATEGY_VERSION,
-        createdAt: this.database.getMetadata("index.createdAt") ?? "",
-        updatedAt: this.database.getMetadata("index.updatedAt") ?? "",
-      };
+    return {
+      indexVersion: version,
+      embeddingProvider: (await this.database.getMetadata("index.embeddingProvider")) ?? "",
+      embeddingModel: (await this.database.getMetadata("index.embeddingModel")) ?? "",
+      embeddingDimensions: parseInt((await this.database.getMetadata("index.embeddingDimensions")) ?? "0", 10),
+      embeddingStrategyVersion: (await this.loadStoredEmbeddingStrategyVersion()) ?? EMBEDDING_STRATEGY_VERSION,
+      createdAt: (await this.database.getMetadata("index.createdAt")) ?? "",
+      updatedAt: (await this.database.getMetadata("index.updatedAt")) ?? "",
+    };
   }
 
-  private saveIndexMetadata(provider: ConfiguredProviderInfo): void {
+  private async saveIndexMetadata(provider: ConfiguredProviderInfo): Promise<void> {
     if (!this.database) return;
 
     const now = new Date().toISOString();
-    const existingCreatedAt = this.database.getMetadata("index.createdAt");
-    const completeProjectEmbeddingStrategyReset = !this.hasProjectForceReembedPending();
+    const existingCreatedAt = await this.database.getMetadata("index.createdAt");
+    const completeProjectEmbeddingStrategyReset = !(await this.hasProjectForceReembedPending());
 
     await this.database.setMetadata("index.version", INDEX_METADATA_VERSION);
     await this.database.setMetadata("index.embeddingProvider", provider.provider);
@@ -2819,6 +3020,7 @@ export class Indexer {
       if (completeProjectEmbeddingStrategyReset) {
         await this.database.deleteMetadata(this.getProjectForceReembedMetadataKey());
       }
+      this.branchMigrationDone = true;
     } else {
       await this.database.setMetadata("index.embeddingStrategyVersion", EMBEDDING_STRATEGY_VERSION);
     }
@@ -2829,8 +3031,8 @@ export class Indexer {
     }
   }
 
-  private validateIndexCompatibility(provider: ConfiguredProviderInfo): IndexCompatibility {
-    const storedMetadata = this.loadIndexMetadata();
+  private async validateIndexCompatibility(provider: ConfiguredProviderInfo): Promise<IndexCompatibility> {
+    const storedMetadata = await this.loadIndexMetadata();
 
     if (!storedMetadata) {
       return { compatible: true };
@@ -2882,21 +3084,17 @@ export class Indexer {
 
   checkCompatibility(): IndexCompatibility {
     if (!this.indexCompatibility) {
-      if (!this.configuredProviderInfo) {
-        throw new Error('No embedding provider info, you must initialize the indexer first.');
-      }
-
-      this.indexCompatibility = await this.validateIndexCompatibility(this.configuredProviderInfo);
+      throw new Error('No embedding provider info, you must initialize the indexer first.');
     }
     return this.indexCompatibility;
   }
 
   private async ensureInitialized(): Promise<{
-    store: VectorStore;
+    store: IVectorStoreBackend;
     provider: EmbeddingProviderInterface;
     invertedIndex: InvertedIndex;
     configuredProviderInfo: ConfiguredProviderInfo;
-    database: Database;
+    database: IDatabaseBackend;
   }> {
     if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
       await this.initialize();
@@ -2930,7 +3128,7 @@ export class Indexer {
     const { store, provider, invertedIndex, database, configuredProviderInfo } = await this.ensureInitialized();
     const scopedRoots = this.config.scope === "global" ? this.getScopedRoots() : null;
     const branchCatalogKey = this.getBranchCatalogKey();
-    const forceScopedReembed = scopedRoots !== null && database.getMetadata(this.getProjectForceReembedMetadataKey()) === "true";
+    const forceScopedReembed = scopedRoots !== null && (await database.getMetadata(this.getProjectForceReembedMetadataKey())) === "true";
     const failedForcedChunkIds = new Set<string>();
 
     if (!this.indexCompatibility?.compatible) {
@@ -2940,7 +3138,12 @@ export class Indexer {
       );
     }
 
-    this.acquireIndexingLock();
+    await this.acquireIndexingLock();
+    // Clear any stale progress snapshot from a previous run
+    void database.deleteMetadata(PROGRESS_SNAPSHOT_KEY).catch(() => { /* best-effort */ });
+    this.embeddingPhaseStartTime = 0;
+    this.embeddingChunksAtStart = 0;
+    this.lastProgressPersistAt = 0;
     this.logger.recordIndexingStart();
     this.logger.info("Starting indexing", { projectRoot: this.projectRoot });
 
@@ -2959,15 +3162,13 @@ export class Indexer {
     };
     const failedBatchesForCurrentRun: FailedBatch[] = [];
 
-    onProgress?.({
+    this.updateProgress({
       phase: "scanning",
       filesProcessed: 0,
       totalFiles: 0,
       chunksProcessed: 0,
       totalChunks: 0,
-    });
-
-    this.loadFileHashCache();
+    }, onProgress);
 
     const includePatterns = [...this.config.include, ...this.config.additionalInclude];
     const { files, skipped } = await collectFiles(
@@ -2988,637 +3189,493 @@ export class Indexer {
       skippedFiles: skipped.length,
     });
 
-    const changedFiles: Array<{ path: string; content: string; hash: string }> = [];
-    const unchangedFilePaths = new Set<string>();
+    // Fetch only the hashes for files we are about to scan — avoids a full
+    // table load and skips stale records for deleted or out-of-scope files.
+    const storedHashes = await this.database!.getFileHashBatch(files.map((f) => f.path));
+
+    // Phase 1: Hash scan — classify files without reading content
+    const changedFileMeta: Array<{ path: string; hash: string }> = [];
+    const unchangedFilePaths: string[] = [];
+    const unchangedFilePathSet = new Set<string>();
     const currentFileHashes = new Map<string, string>();
+    const currentFilePathSet = new Set<string>(files.map(f => f.path));
 
     for (const f of files) {
       const currentHash = hashFile(f.path);
       currentFileHashes.set(f.path, currentHash);
-
-      if (this.fileHashCache.get(f.path) === currentHash) {
-        unchangedFilePaths.add(f.path);
+      if (storedHashes.get(f.path) === currentHash) {
+        unchangedFilePaths.push(f.path);
+        unchangedFilePathSet.add(f.path);
         this.logger.recordCacheHit();
       } else {
-        const content = await fsPromises.readFile(f.path, "utf-8");
-        changedFiles.push({ path: f.path, content, hash: currentHash });
+        changedFileMeta.push({ path: f.path, hash: currentHash });
         this.logger.recordCacheMiss();
       }
     }
 
     this.logger.cache("info", "File hash cache results", {
-      unchanged: unchangedFilePaths.size,
-      changed: changedFiles.length,
+      unchanged: unchangedFilePaths.length,
+      changed: changedFileMeta.length,
     });
 
-    onProgress?.({
+    // Phase 2: Deleted file cleanup — remove chunks for files no longer on disk
+    let removedCount = 0;
+    const allChunkFilePaths = await this.database!.getChunkFilePaths();
+    for (const fp of allChunkFilePaths) {
+      if (!currentFilePathSet.has(fp)) {
+        if (scopedRoots && !this.isFileInCurrentScope(fp, scopedRoots)) continue;
+        const oldChunks = await this.database!.getChunksByFile(fp);
+        for (const chunk of oldChunks) {
+          await store.remove(chunk.chunkId);
+          invertedIndex.removeChunk(chunk.chunkId);
+          removedCount++;
+        }
+      }
+    }
+
+    // Phase 3: Branch catalog init — clear upfront, rebuild incrementally below
+    await database.clearBranch(branchCatalogKey);
+    await database.clearBranchSymbols(branchCatalogKey);
+
+    // Phase 4: Unchanged files → branch catalog (batched, parallel DB reads)
+    const FILE_BATCH_SIZE = this.config.indexing.fileBatchSize;
+    for (let i = 0; i < unchangedFilePaths.length; i += FILE_BATCH_SIZE) {
+      const batch = unchangedFilePaths.slice(i, i + FILE_BATCH_SIZE);
+      const [chunkResults, symbolResults] = await Promise.all([
+        Promise.all(batch.map(fp => this.database!.getChunksByFile(fp))),
+        Promise.all(batch.map(fp => this.database!.getSymbolsByFile(fp))),
+      ]);
+      const batchChunkIds = chunkResults.flat().map(c => c.chunkId);
+      const batchSymbolIds = symbolResults.flat().map(s => s.id);
+      stats.existingChunks += batchChunkIds.length;
+      if (batchChunkIds.length > 0) await database.addChunksToBranchBatch(branchCatalogKey, batchChunkIds);
+      if (batchSymbolIds.length > 0) await database.addSymbolsToBranchBatch(branchCatalogKey, batchSymbolIds);
+    }
+
+    // Phase 5: Changed files — main batch loop
+    const providerRateLimits = this.getProviderRateLimits(configuredProviderInfo.provider);
+    const queue = new PQueue({
+      concurrency: providerRateLimits.concurrency,
+      interval: providerRateLimits.intervalMs,
+      intervalCap: providerRateLimits.concurrency,
+    });
+    let rateLimitBackoffMs = 0;
+
+    const embedPendingChunks = async (batchPendingChunks: PendingChunk[]): Promise<void> => {
+      if (batchPendingChunks.length === 0) return;
+
+      const allContentHashes = batchPendingChunks.map(c => c.contentHash);
+      const missingHashes = new Set(await database.getMissingEmbeddings(allContentHashes));
+      const chunksNeedingEmbedding = batchPendingChunks.filter(c => missingHashes.has(c.contentHash));
+      const chunksWithExistingEmbedding = batchPendingChunks.filter(c => !missingHashes.has(c.contentHash));
+
+      this.logger.cache("info", "Embedding cache lookup", {
+        needsEmbedding: chunksNeedingEmbedding.length,
+        fromCache: chunksWithExistingEmbedding.length,
+      });
+      this.logger.recordChunksFromCache(chunksWithExistingEmbedding.length);
+
+      for (const chunk of chunksWithExistingEmbedding) {
+        const embeddingBuffer = await database.getEmbedding(chunk.contentHash);
+        if (embeddingBuffer) {
+          const vector = bufferToFloat32Array(embeddingBuffer);
+          await store.add(chunk.id, Array.from(vector), chunk.metadata);
+          invertedIndex.removeChunk(chunk.id);
+          invertedIndex.addChunk(chunk.id, chunk.content);
+          stats.indexedChunks++;
+        }
+      }
+
+      const pendingChunksById = new Map(chunksNeedingEmbedding.map((c) => [c.id, c]));
+      const embeddingPartsByChunk = new Map<string, Array<{ vector: number[]; tokenCount: number } | undefined>>();
+      const requestBatches = createPendingEmbeddingRequestBatches(chunksNeedingEmbedding, getDynamicBatchOptions(configuredProviderInfo));
+      for (const requestBatch of requestBatches) {
+        queue.add(async () => {
+          if (rateLimitBackoffMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, rateLimitBackoffMs));
+          }
+          try {
+            const result = await pRetry(
+              async () => {
+                return provider.embedBatch(requestBatch.map((request) => request.text));
+              },
+              {
+                retries: this.config.indexing.retries,
+                minTimeout: Math.max(this.config.indexing.retryDelayMs, providerRateLimits.minRetryMs),
+                maxTimeout: providerRateLimits.maxRetryMs,
+                factor: 2,
+                shouldRetry: (error) => !((error as { error?: Error }).error instanceof CustomProviderNonRetryableError),
+                onFailedAttempt: (error) => {
+                  const message = getErrorMessage(error);
+                  if (isRateLimitError(error)) {
+                    rateLimitBackoffMs = Math.min(providerRateLimits.maxRetryMs, (rateLimitBackoffMs || providerRateLimits.minRetryMs) * 2);
+                    this.logger.embedding("warn", `Rate limited, backing off`, {
+                      attempt: error.attemptNumber,
+                      retriesLeft: error.retriesLeft,
+                      backoffMs: rateLimitBackoffMs,
+                    });
+                  } else {
+                    this.logger.embedding("error", `Embedding batch failed`, {
+                      attempt: error.attemptNumber,
+                      error: message,
+                    });
+                  }
+                },
+              }
+            );
+
+            if (rateLimitBackoffMs > 0) {
+              rateLimitBackoffMs = Math.max(0, rateLimitBackoffMs - 2000);
+            }
+
+            const touchedChunkIds = new Set<string>();
+            requestBatch.forEach((request, idx) => {
+              const vector = result.embeddings[idx];
+              if (!vector) return;
+              const parts = embeddingPartsByChunk.get(request.chunk.id) ?? [];
+              parts[request.partIndex] = { vector, tokenCount: request.tokenCount };
+              embeddingPartsByChunk.set(request.chunk.id, parts);
+              touchedChunkIds.add(request.chunk.id);
+            });
+
+            const pooledResults: Array<{ chunk: PendingChunk; vector: number[] }> = [];
+            for (const chunkId of touchedChunkIds) {
+              const chunk = pendingChunksById.get(chunkId);
+              if (!chunk) continue;
+              const parts = embeddingPartsByChunk.get(chunk.id) ?? [];
+              if (!hasAllEmbeddingParts(parts, chunk.texts.length)) continue;
+              const orderedParts = parts as Array<{ vector: number[]; tokenCount: number }>;
+              pooledResults.push({
+                chunk,
+                vector: poolEmbeddingVectors(
+                  orderedParts.map((p) => p.vector),
+                  orderedParts.map((p) => p.tokenCount),
+                ),
+              });
+              embeddingPartsByChunk.delete(chunkId);
+            }
+
+            if (pooledResults.length > 0) {
+              const items = pooledResults.map(({ chunk, vector }) => ({
+                id: chunk.id,
+                vector,
+                metadata: chunk.metadata,
+              }));
+              await store.addBatch(items);
+
+              const embeddingBatchItems = pooledResults.map(({ chunk, vector }) => ({
+                contentHash: chunk.contentHash,
+                embedding: float32ArrayToBuffer(vector),
+                chunkText: chunk.storageText,
+                model: configuredProviderInfo.modelInfo.model,
+              }));
+              await database.upsertEmbeddingsBatch(embeddingBatchItems);
+
+              for (const { chunk } of pooledResults) {
+                invertedIndex.removeChunk(chunk.id);
+                invertedIndex.addChunk(chunk.id, chunk.content);
+              }
+
+              stats.indexedChunks += pooledResults.length;
+              this.logger.recordChunksEmbedded(pooledResults.length);
+            }
+
+            stats.tokensUsed += result.totalTokensUsed;
+            this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
+            this.logger.embedding("debug", `Embedded batch`, {
+              batchSize: pooledResults.length,
+              requestCount: requestBatch.length,
+              tokens: result.totalTokensUsed,
+            });
+
+            this.updateProgress({
+              phase: "embedding",
+              filesProcessed: files.length,
+              totalFiles: files.length,
+              chunksProcessed: stats.indexedChunks,
+              totalChunks: stats.totalChunks,
+              currentFiles: [...new Set(requestBatch.map(r => r.chunk.metadata.filePath))],
+            }, onProgress);
+          } catch (error) {
+            const failedChunks = getUniquePendingChunksFromRequests(requestBatch);
+            stats.failedChunks += failedChunks.length;
+            failedBatchesForCurrentRun.push({
+              chunks: failedChunks,
+              error: getErrorMessage(error),
+              attemptCount: 1,
+              lastAttempt: new Date().toISOString(),
+            });
+            this.logger.recordEmbeddingError();
+            this.logger.embedding("error", `Failed to embed batch after retries`, {
+              batchSize: requestBatch.length,
+              error: getErrorMessage(error),
+            });
+          }
+        });
+      }
+
+      await queue.onIdle();
+    };
+
+    this.updateProgress({
       phase: "parsing",
       filesProcessed: 0,
       totalFiles: files.length,
       chunksProcessed: 0,
       totalChunks: 0,
-    });
+    }, onProgress);
 
-    const parseStartTime = performance.now();
-    const parsedFiles = parseFiles(changedFiles);
-    const parseMs = performance.now() - parseStartTime;
+    for (let batchStart = 0; batchStart < changedFileMeta.length; batchStart += FILE_BATCH_SIZE) {
+      const fileBatch = changedFileMeta.slice(batchStart, batchStart + FILE_BATCH_SIZE);
 
-    this.logger.recordFilesParsed(parsedFiles.length);
-    this.logger.recordParseDuration(parseMs);
-    this.logger.debug("Parsed changed files", { parsedCount: parsedFiles.length, parseMs: parseMs.toFixed(2) });
+      this.updateProgress({
+        phase: "parsing",
+        filesProcessed: Math.min(batchStart, files.length),
+        totalFiles: files.length,
+        chunksProcessed: stats.indexedChunks,
+        totalChunks: stats.totalChunks,
+        currentFiles: fileBatch.map(f => f.path),
+      }, onProgress);
 
-    const existingChunks = new Map<string, string>();
-    const existingChunksByFile = new Map<string, Set<string>>();
-    for (const { key, metadata } of store.getAllMetadata()) {
-      if (scopedRoots && !this.isFileInCurrentScope(metadata.filePath, scopedRoots)) {
-        continue;
-      }
-      if (forceScopedReembed && scopedRoots && this.isFileInCurrentScope(metadata.filePath, scopedRoots)) {
-        continue;
-      }
-      existingChunks.set(key, metadata.hash);
-      const fileChunks = existingChunksByFile.get(metadata.filePath) || new Set();
-      fileChunks.add(key);
-      existingChunksByFile.set(metadata.filePath, fileChunks);
-    }
+      // Read content for only this batch
+      const fileInputs = await Promise.all(
+        fileBatch.map(async ({ path: fp, hash }) => ({
+          path: fp,
+          hash,
+          content: await fsPromises.readFile(fp, "utf-8"),
+        }))
+      );
 
-    const currentChunkIds = new Set<string>();
-    const currentFilePaths = new Set<string>();
-    const pendingChunks: PendingChunk[] = [];
+      const parseStartTime = performance.now();
+      const parsedBatch = parseFiles(fileInputs);
+      const parseMs = performance.now() - parseStartTime;
 
-    for (const filePath of unchangedFilePaths) {
-      currentFilePaths.add(filePath);
-      const fileChunks = existingChunksByFile.get(filePath);
-      if (fileChunks) {
-        for (const chunkId of fileChunks) {
-          currentChunkIds.add(chunkId);
-        }
-      }
-    }
+      this.logger.recordFilesParsed(parsedBatch.length);
+      this.logger.recordParseDuration(parseMs);
+      this.logger.debug("Parsed changed files batch", { parsedCount: parsedBatch.length, parseMs: parseMs.toFixed(2) });
 
-    const chunkDataBatch: ChunkData[] = [];
+      const contentByPath = new Map(fileInputs.map(f => [f.path, f.content]));
+      const batchPendingChunks: PendingChunk[] = [];
+      const batchChunkIds: string[] = [];
+      const batchSymbolIds: string[] = [];
 
-    for (const parsed of parsedFiles) {
-      currentFilePaths.add(parsed.path);
-
-      if (parsed.chunks.length === 0) {
-        const relativePath = path.relative(this.projectRoot, parsed.path);
-        stats.parseFailures.push(relativePath);
-      }
-
-      let fileChunkCount = 0;
-      let chunksToProcess = parsed.chunks;
-
-      if (this.config.indexing.fallbackToTextOnMaxChunks && chunksToProcess.length > this.config.indexing.maxChunksPerFile) {
-        const changedFile = changedFiles.find(f => f.path === parsed.path);
-        if (changedFile) {
-          const textChunks = parseFileAsText(parsed.path, changedFile.content);
-          chunksToProcess = textChunks;
-        }
-      }
-
-      for (const chunk of chunksToProcess) {
-        if (fileChunkCount >= this.config.indexing.maxChunksPerFile) {
-          break;
+      for (const parsed of parsedBatch) {
+        if (parsed.chunks.length === 0) {
+          stats.parseFailures.push(path.relative(this.projectRoot, parsed.path));
         }
 
-        if (this.config.indexing.semanticOnly && chunk.chunkType === "other") {
-          continue;
+        let chunksToProcess = parsed.chunks;
+        if (this.config.indexing.fallbackToTextOnMaxChunks && chunksToProcess.length > this.config.indexing.maxChunksPerFile) {
+          const content = contentByPath.get(parsed.path);
+          if (content) {
+            chunksToProcess = parseFileAsText(parsed.path, content);
+          }
         }
 
-        const id = generateChunkId(parsed.path, chunk);
-        const contentHash = generateChunkHash(chunk);
-        currentChunkIds.add(id);
+        // Per-file existing chunk lookup replaces the global existingChunks Map
+        const existingFileChunks = await this.database!.getChunksByFile(parsed.path);
+        const existingChunkHashes = new Map(existingFileChunks.map(c => [c.chunkId, c.contentHash]));
+        const newChunkIdsForFile = new Set<string>();
+        const chunkDataForFile: ChunkData[] = [];
 
-        chunkDataBatch.push({
-          chunkId: id,
-          contentHash,
-          filePath: parsed.path,
-          startLine: chunk.startLine,
-          endLine: chunk.endLine,
-          nodeType: chunk.chunkType,
-          name: chunk.name,
-          language: chunk.language,
-        });
+        let fileChunkCount = 0;
+        for (const chunk of chunksToProcess) {
+          if (fileChunkCount >= this.config.indexing.maxChunksPerFile) break;
+          if (this.config.indexing.semanticOnly && chunk.chunkType === "other") continue;
 
-        if (existingChunks.get(id) === contentHash) {
+          const id = generateChunkId(parsed.path, chunk);
+          const contentHash = generateChunkHash(chunk);
+          newChunkIdsForFile.add(id);
+          batchChunkIds.push(id);
+          chunkDataForFile.push({
+            chunkId: id,
+            contentHash,
+            filePath: parsed.path,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            nodeType: chunk.chunkType,
+            name: chunk.name,
+            language: chunk.language,
+          });
+
+          if (existingChunkHashes.get(id) === contentHash) {
+            stats.existingChunks++;
+          } else {
+            const texts = createEmbeddingTexts(chunk, parsed.path, getSafeEmbeddingChunkTokenLimit(configuredProviderInfo)).map((text) => ({
+              text,
+              tokenCount: estimateTokens(text),
+            }));
+            const metadata: ChunkMetadata = {
+              filePath: parsed.path,
+              startLine: chunk.startLine,
+              endLine: chunk.endLine,
+              chunkType: chunk.chunkType,
+              name: chunk.name,
+              language: chunk.language,
+              hash: contentHash,
+            };
+            batchPendingChunks.push({ id, texts, storageText: createPendingChunkStorageText(texts), content: chunk.content, contentHash, metadata });
+          }
           fileChunkCount++;
-          continue;
         }
 
-        const texts = createEmbeddingTexts(chunk, parsed.path, getSafeEmbeddingChunkTokenLimit(configuredProviderInfo)).map((text) => ({
-          text,
-          tokenCount: estimateTokens(text),
-        }));
-        const metadata: ChunkMetadata = {
-          filePath: parsed.path,
-          startLine: chunk.startLine,
-          endLine: chunk.endLine,
-          chunkType: chunk.chunkType,
-          name: chunk.name,
-          language: chunk.language,
-          hash: contentHash,
-        };
-
-        pendingChunks.push({
-          id,
-          texts,
-          storageText: createPendingChunkStorageText(texts),
-          content: chunk.content,
-          contentHash,
-          metadata,
-        });
-        fileChunkCount++;
-      }
-    }
-
-    const retryableFailedChunks = this.collectRetryableFailedChunks(
-      currentFileHashes,
-      unchangedFilePaths,
-      getSafeEmbeddingChunkTokenLimit(configuredProviderInfo)
-    );
-    const retryableFailedAttemptCounts = new Map<string, number>();
-    const retryableChunksWithExistingData = new Set<string>();
-    if (retryableFailedChunks.length > 0) {
-      const pendingChunkIds = new Set(pendingChunks.map((chunk) => chunk.id));
-      for (const { chunk, attemptCount } of retryableFailedChunks) {
-        retryableFailedAttemptCounts.set(chunk.id, attemptCount);
-        if (existingChunks.has(chunk.id)) {
-          retryableChunksWithExistingData.add(chunk.id);
+        if (chunkDataForFile.length > 0) {
+          await this.database!.upsertChunksBatch(chunkDataForFile);
         }
-        if (!pendingChunkIds.has(chunk.id)) {
-          pendingChunks.push(chunk);
-          pendingChunkIds.add(chunk.id);
-          currentChunkIds.add(chunk.id);
+
+        // Per-file orphan removal (chunks no longer produced by re-parsing)
+        for (const [oldChunkId] of existingChunkHashes) {
+          if (!newChunkIdsForFile.has(oldChunkId)) {
+            await store.remove(oldChunkId);
+            invertedIndex.removeChunk(oldChunkId);
+            removedCount++;
+          }
         }
-      }
-    }
 
-    if (chunkDataBatch.length > 0) {
-      database.upsertChunksBatch(chunkDataBatch);
-    }
+        // Call graph extraction for this file
+        await database.deleteCallEdgesByFile(parsed.path);
+        await database.deleteSymbolsByFile(parsed.path);
+        const fileSymbols: SymbolData[] = [];
+        for (const chunk of parsed.chunks) {
+          if (!chunk.name || !CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType)) continue;
+          const symbolId = `sym_${hashContent(parsed.path + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`;
+          fileSymbols.push({
+            id: symbolId,
+            filePath: parsed.path,
+            name: chunk.name,
+            kind: chunk.chunkType,
+            startLine: chunk.startLine,
+            startCol: 0,
+            endLine: chunk.endLine,
+            endCol: 0,
+            language: chunk.language,
+          });
+          batchSymbolIds.push(symbolId);
+        }
 
+        const symbolsByName = new Map<string, SymbolData[]>();
+        for (const sym of fileSymbols) {
+          const existing = symbolsByName.get(sym.name) ?? [];
+          existing.push(sym);
+          symbolsByName.set(sym.name, existing);
+        }
 
-    // ── Call Graph Extraction ────────────────────────────────────────
-    // Extract symbols and call edges from changed files.
-    const allSymbolIds = new Set<string>();
-    const symbolsByFile = new Map<string, SymbolData[]>();
+        if (fileSymbols.length > 0) {
+          await database.upsertSymbolsBatch(fileSymbols);
+        }
 
-    // For changed files: delete old symbols/edges, extract new ones
-    for (let i = 0; i < parsedFiles.length; i++) {
-      const parsed = parsedFiles[i];
-      const changedFile = changedFiles[i];
-
-      // Clean up old call graph data for this file
-      database.deleteCallEdgesByFile(parsed.path);
-      database.deleteSymbolsByFile(parsed.path);
-
-      // Build symbols from parsed chunks
-      const fileSymbols: SymbolData[] = [];
-
-      for (const chunk of parsed.chunks) {
-        if (!chunk.name || !CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType)) continue;
-
-        const symbolId = `sym_${hashContent(parsed.path + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`;
-        const symbol: SymbolData = {
-          id: symbolId,
-          filePath: parsed.path,
-          name: chunk.name,
-          kind: chunk.chunkType,
-          startLine: chunk.startLine,
-          startCol: 0,
-          endLine: chunk.endLine,
-          endCol: 0,
-          language: chunk.language,
-        };
-        fileSymbols.push(symbol);
-        allSymbolIds.add(symbolId);
-      }
-
-      // For case-insensitive languages (e.g. Apex), the Rust call extractor
-      // already lowercases non-constructor / non-import callee names, so we
-      // must lowercase the symbol-map keys here too. Otherwise a declaration
-      // like `MyMethod` would not match a lowercased call edge target like
-      // `mymethod`, leaving same-file calls unresolved (toSymbolId = NULL).
-      const fileLanguage = parsed.chunks[0]?.language;
-      const isCaseInsensitiveLanguage =
-        !!fileLanguage && CASE_INSENSITIVE_LANGUAGES.has(fileLanguage);
-      const normalizeSymbolKey = (name: string): string =>
-        isCaseInsensitiveLanguage ? name.toLowerCase() : name;
-
-      const symbolsByName = new Map<string, SymbolData[]>();
-      for (const symbol of fileSymbols) {
-        const key = normalizeSymbolKey(symbol.name);
-        const existing = symbolsByName.get(key) ?? [];
-        existing.push(symbol);
-        symbolsByName.set(key, existing);
-      }
-
-      if (fileSymbols.length > 0) {
-        database.upsertSymbolsBatch(fileSymbols);
-        symbolsByFile.set(parsed.path, fileSymbols);
-      }
-
-      // Extract call sites from file content (only for supported languages)
-      if (!fileLanguage || !CALL_GRAPH_LANGUAGES.has(fileLanguage)) continue;
-
-      const callSites = extractCalls(changedFile.content, fileLanguage);
-      if (callSites.length === 0) continue;
-
-      // Map each call site to its enclosing symbol
-      const edges: CallEdgeData[] = [];
-      for (const site of callSites) {
-        // Find the enclosing symbol (function/method that contains this call)
-        const enclosingSymbol = fileSymbols.find(
-          (sym) => site.line >= sym.startLine && site.line <= sym.endLine
-        );
-        if (!enclosingSymbol) continue;
-
-        const edgeId = `edge_${hashContent(enclosingSymbol.id + ":" + site.calleeName + ":" + site.line + ":" + site.column).slice(0, 16)}`;
-        edges.push({
-          id: edgeId,
-          fromSymbolId: enclosingSymbol.id,
-          targetName: site.calleeName,
-          toSymbolId: undefined,
-          callType: site.callType,
-          line: site.line,
-          col: site.column,
-          isResolved: false,
-        });
-      }
-
-      if (edges.length > 0) {
-        database.upsertCallEdgesBatch(edges);
-
-        // Resolve same-file calls (with the same case-insensitivity rules
-        // used to build symbolsByName above).
-        for (const edge of edges) {
-          const candidates = symbolsByName.get(normalizeSymbolKey(edge.targetName));
-          if (candidates && candidates.length === 1) {
-            database.resolveCallEdge(edge.id, candidates[0].id);
+        const fileLanguage = parsed.chunks[0]?.language;
+        const isCaseInsensitiveLanguage = !!fileLanguage && CASE_INSENSITIVE_LANGUAGES.has(fileLanguage);
+        if (isCaseInsensitiveLanguage) {
+          // Re-key symbolsByName with lowercased keys for case-insensitive languages (e.g. Apex).
+          // The Rust call extractor already lowercases callee names for these languages,
+          // so the symbol map must use the same casing or same-file calls won't resolve.
+          symbolsByName.clear();
+          for (const sym of fileSymbols) {
+            const key = sym.name.toLowerCase();
+            const existing = symbolsByName.get(key) ?? [];
+            existing.push(sym);
+            symbolsByName.set(key, existing);
+          }
+        }
+        if (fileLanguage && CALL_GRAPH_LANGUAGES.has(fileLanguage)) {
+          const content = contentByPath.get(parsed.path);
+          if (content) {
+            const callSites = extractCalls(content, fileLanguage);
+            if (callSites.length > 0) {
+              const edges: CallEdgeData[] = [];
+              for (const site of callSites) {
+                const enclosingSymbol = fileSymbols.find(
+                  sym => site.line >= sym.startLine && site.line <= sym.endLine
+                );
+                if (!enclosingSymbol) continue;
+                const edgeId = `edge_${hashContent(enclosingSymbol.id + ":" + site.calleeName + ":" + site.line + ":" + site.column).slice(0, 16)}`;
+                edges.push({
+                  id: edgeId,
+                  fromSymbolId: enclosingSymbol.id,
+                  targetName: site.calleeName,
+                  toSymbolId: undefined,
+                  callType: site.callType,
+                  line: site.line,
+                  col: site.column,
+                  isResolved: false,
+                });
+              }
+              if (edges.length > 0) {
+                await database.upsertCallEdgesBatch(edges);
+                for (const edge of edges) {
+                  const lookupKey = isCaseInsensitiveLanguage ? edge.targetName.toLowerCase() : edge.targetName;
+                  const candidates = symbolsByName.get(lookupKey);
+                  if (candidates && candidates.length === 1) {
+                    await database.resolveCallEdge(edge.id, candidates[0].id);
+                  }
+                }
+              }
+            }
           }
         }
       }
+
+      // Incremental branch catalog update for this file batch
+      if (batchChunkIds.length > 0) await database.addChunksToBranchBatch(branchCatalogKey, batchChunkIds);
+      if (batchSymbolIds.length > 0) await database.addSymbolsToBranchBatch(branchCatalogKey, batchSymbolIds);
+      stats.totalChunks += batchPendingChunks.length;
+
+      // Embed this batch; queue.onIdle() ensures we don't accumulate unbounded pending chunks
+      await embedPendingChunks(batchPendingChunks);
+
+      this.updateProgress({
+        phase: "parsing",
+        filesProcessed: Math.min(batchStart + fileBatch.length, files.length),
+        totalFiles: files.length,
+        chunksProcessed: stats.indexedChunks,
+        totalChunks: stats.totalChunks,
+        currentFiles: fileBatch.map(f => f.path),
+      }, onProgress);
+      // fileInputs, parsedBatch, batchPendingChunks go out of scope → GC reclaims
     }
 
-    // Collect symbol IDs from unchanged files for branch association
-    for (const filePath of unchangedFilePaths) {
-      const existingSymbols = database.getSymbolsByFile(filePath);
-      for (const sym of existingSymbols) {
-        allSymbolIds.add(sym.id);
-      }
+    // Phase 6: Retryable failed chunks from previous incomplete runs
+    const retryableFailedChunks = this.collectRetryableFailedChunks(currentFileHashes, unchangedFilePathSet);
+    if (retryableFailedChunks.length > 0) {
+      stats.totalChunks += retryableFailedChunks.length;
+      await embedPendingChunks(retryableFailedChunks.map((r) => r.chunk));
     }
 
-    let removedCount = 0;
-    for (const [chunkId] of existingChunks) {
-      if (!currentChunkIds.has(chunkId)) {
-        store.remove(chunkId);
-        invertedIndex.removeChunk(chunkId);
-        removedCount++;
-      }
-    }
-
-    stats.totalChunks = pendingChunks.length;
-    stats.existingChunks = currentChunkIds.size - pendingChunks.length;
-    stats.removedChunks = removedCount;
-
-    this.logger.recordChunksProcessed(currentChunkIds.size);
+    this.logger.recordChunksProcessed(stats.totalChunks + stats.existingChunks);
     this.logger.recordChunksRemoved(removedCount);
     this.logger.info("Chunk analysis complete", {
-      pending: pendingChunks.length,
+      pending: stats.totalChunks,
       existing: stats.existingChunks,
       removed: removedCount,
     });
 
-    if (pendingChunks.length === 0 && removedCount === 0) {
-      await database.clearBranch(branchCatalogKey);
-      await database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
-      await database.clearBranchSymbols(branchCatalogKey);
-      await database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
-      if (scopedRoots) {
-        this.replaceScopedFileHashCache(currentFileHashes, scopedRoots);
-        this.clearScopedFailedBatches(scopedRoots);
-      } else {
-        this.fileHashCache = currentFileHashes;
-        this.saveFileHashCache();
-        this.saveFailedBatches([]);
-      }
-      await this.saveIndexMetadata(configuredProviderInfo);
-      this.indexCompatibility = { compatible: true };
-      stats.durationMs = Date.now() - startTime;
-      onProgress?.({
-        phase: "complete",
-        filesProcessed: files.length,
-        totalFiles: files.length,
-        chunksProcessed: 0,
-        totalChunks: 0,
-      });
-      this.releaseIndexingLock();
-      return stats;
-    }
+    // Phase 7: Finalization
+    stats.removedChunks = removedCount;
 
-    if (pendingChunks.length === 0) {
-      await database.clearBranch(branchCatalogKey);
-      await database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
-      await database.clearBranchSymbols(branchCatalogKey);
-      await database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
-      store.save();
-      invertedIndex.save();
-      if (scopedRoots) {
-        this.replaceScopedFileHashCache(currentFileHashes, scopedRoots);
-        this.clearScopedFailedBatches(scopedRoots);
-      } else {
-        this.fileHashCache = currentFileHashes;
-        this.saveFileHashCache();
-        this.saveFailedBatches([]);
-      }
-      await this.saveIndexMetadata(configuredProviderInfo);
-      this.indexCompatibility = { compatible: true };
-      stats.durationMs = Date.now() - startTime;
-      onProgress?.({
-        phase: "complete",
-        filesProcessed: files.length,
-        totalFiles: files.length,
-        chunksProcessed: 0,
-        totalChunks: 0,
-      });
-      this.releaseIndexingLock();
-      return stats;
-    }
-
-    onProgress?.({
-      phase: "embedding",
-      filesProcessed: files.length,
-      totalFiles: files.length,
-      chunksProcessed: 0,
-      totalChunks: pendingChunks.length,
-    });
-
-    const allContentHashes = pendingChunks.map((c) => c.contentHash);
-    const missingHashes = new Set(await database.getMissingEmbeddings(allContentHashes));
-    const forcedReembedChunkIds = forceScopedReembed
-      ? new Set(pendingChunks.map((chunk) => chunk.id))
-      : new Set<string>();
-
-    const chunksNeedingEmbedding = pendingChunks.filter((c) => forcedReembedChunkIds.has(c.id) || missingHashes.has(c.contentHash));
-    const chunksWithExistingEmbedding = pendingChunks.filter((c) => !forcedReembedChunkIds.has(c.id) && !missingHashes.has(c.contentHash));
-
-    this.logger.cache("info", "Embedding cache lookup", {
-      needsEmbedding: chunksNeedingEmbedding.length,
-      fromCache: chunksWithExistingEmbedding.length,
-    });
-    this.logger.recordChunksFromCache(chunksWithExistingEmbedding.length);
-
-    for (const chunk of chunksWithExistingEmbedding) {
-      const embeddingBuffer = database.getEmbedding(chunk.contentHash);
-      if (embeddingBuffer) {
-        const vector = bufferToFloat32Array(embeddingBuffer);
-        store.add(chunk.id, Array.from(vector), chunk.metadata);
-        invertedIndex.removeChunk(chunk.id);
-        invertedIndex.addChunk(chunk.id, chunk.content);
-        stats.indexedChunks++;
-      }
-    }
-
-    const providerRateLimits = this.getProviderRateLimits(configuredProviderInfo.provider);
-    const queue = new PQueue({
-      concurrency: providerRateLimits.concurrency,
-      interval: providerRateLimits.intervalMs,
-      intervalCap: providerRateLimits.concurrency
-    });
-    const pendingChunksById = new Map(chunksNeedingEmbedding.map((chunk) => [chunk.id, chunk]));
-    const embeddingPartsByChunk = new Map<string, Array<{ vector: number[]; tokenCount: number } | undefined>>();
-    const completedChunkIds = new Set<string>();
-    const failedChunkIds = new Set<string>();
-    const requestBatches = createPendingEmbeddingRequestBatches(
-      chunksNeedingEmbedding,
-      getDynamicBatchOptions(configuredProviderInfo)
-    );
-    let rateLimitBackoffMs = 0;
-
-    for (const requestBatch of requestBatches) {
-      queue.add(async () => {
-        if (rateLimitBackoffMs > 0) {
-          await new Promise(resolve => setTimeout(resolve, rateLimitBackoffMs));
-        }
-
-        try {
-          const result = await pRetry(
-            async () => {
-              const texts = requestBatch.map((request) => request.text);
-              return provider.embedBatch(texts);
-            },
-            {
-              retries: this.config.indexing.retries,
-              minTimeout: Math.max(this.config.indexing.retryDelayMs, providerRateLimits.minRetryMs),
-              maxTimeout: providerRateLimits.maxRetryMs,
-              factor: 2,
-              shouldRetry: (error) => !((error as { error?: Error }).error instanceof CustomProviderNonRetryableError),
-              onFailedAttempt: (error) => {
-                const message = getErrorMessage(error);
-                if (isRateLimitError(error)) {
-                  rateLimitBackoffMs = Math.min(providerRateLimits.maxRetryMs, (rateLimitBackoffMs || providerRateLimits.minRetryMs) * 2);
-                  this.logger.embedding("warn", `Rate limited, backing off`, {
-                    attempt: error.attemptNumber,
-                    retriesLeft: error.retriesLeft,
-                    backoffMs: rateLimitBackoffMs,
-                  });
-                } else {
-                  this.logger.embedding("error", `Embedding batch failed`, {
-                    attempt: error.attemptNumber,
-                    error: message,
-                  });
-                }
-              },
-            }
-          );
-
-          if (rateLimitBackoffMs > 0) {
-            rateLimitBackoffMs = Math.max(0, rateLimitBackoffMs - 2000);
-          }
-
-          const touchedChunkIds = new Set<string>();
-
-          requestBatch.forEach((request, idx) => {
-            if (failedChunkIds.has(request.chunk.id) || completedChunkIds.has(request.chunk.id)) {
-              return;
-            }
-
-            const vector = result.embeddings[idx];
-            if (!vector) {
-              throw new Error(`Embedding API returned too few vectors for chunk ${request.chunk.id}`);
-            }
-
-            const parts = embeddingPartsByChunk.get(request.chunk.id) ?? [];
-            parts[request.partIndex] = {
-              vector,
-              tokenCount: request.tokenCount,
-            };
-            embeddingPartsByChunk.set(request.chunk.id, parts);
-            touchedChunkIds.add(request.chunk.id);
-          });
-
-          const pooledResults: Array<{ chunk: PendingChunk; vector: number[] }> = [];
-          for (const chunkId of touchedChunkIds) {
-            if (failedChunkIds.has(chunkId) || completedChunkIds.has(chunkId)) {
-              continue;
-            }
-
-            const chunk = pendingChunksById.get(chunkId);
-            if (!chunk) {
-              continue;
-            }
-
-            const parts = embeddingPartsByChunk.get(chunk.id) ?? [];
-            if (!hasAllEmbeddingParts(parts, chunk.texts.length)) {
-              continue;
-            }
-
-            const orderedParts = parts as Array<{ vector: number[]; tokenCount: number }>;
-            pooledResults.push({
-              chunk,
-              vector: poolEmbeddingVectors(
-                orderedParts.map((part) => part.vector),
-                orderedParts.map((part) => part.tokenCount)
-              ),
-            });
-          }
-
-          if (pooledResults.length > 0) {
-            const items = pooledResults.map(({ chunk, vector }) => ({
-              id: chunk.id,
-              vector,
-              metadata: chunk.metadata,
-            }));
-
-            await store.addBatch(items);
-
-            const embeddingBatchItems = pooledResults.map(({ chunk, vector }) => ({
-              contentHash: chunk.contentHash,
-              embedding: float32ArrayToBuffer(vector),
-              chunkText: chunk.storageText,
-              model: configuredProviderInfo.modelInfo.model,
-            }));
-
-            try {
-              await database.upsertEmbeddingsBatch(embeddingBatchItems);
-            } catch (dbError) {
-              // Rollback vectors added to store if DB write fails
-              for (const { chunk } of pooledResults) {
-                store.remove(chunk.id);
-              }
-              throw dbError;
-            }
-
-            for (const { chunk } of pooledResults) {
-              invertedIndex.removeChunk(chunk.id);
-              invertedIndex.addChunk(chunk.id, chunk.content);
-              completedChunkIds.add(chunk.id);
-              embeddingPartsByChunk.delete(chunk.id);
-            }
-
-            stats.indexedChunks += pooledResults.length;
-            this.logger.recordChunksEmbedded(pooledResults.length);
-          }
-
-          stats.tokensUsed += result.totalTokensUsed;
-
-          this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
-          this.logger.embedding("debug", `Embedded batch`, {
-            batchSize: pooledResults.length,
-            requestCount: requestBatch.length,
-            tokens: result.totalTokensUsed,
-          });
-
-          onProgress?.({
-            phase: "embedding",
-            filesProcessed: files.length,
-            totalFiles: files.length,
-            chunksProcessed: stats.indexedChunks,
-            totalChunks: pendingChunks.length,
-          });
-        } catch (error) {
-          const failedChunks = getUniquePendingChunksFromRequests(requestBatch)
-            .filter((chunk) => !completedChunkIds.has(chunk.id));
-          const failureMessage = getErrorMessage(error);
-          const failureTimestamp = new Date().toISOString();
-
-          for (const chunk of failedChunks) {
-            if (!failedChunkIds.has(chunk.id)) {
-              failedChunkIds.add(chunk.id);
-              stats.failedChunks += 1;
-            }
-
-            if (forceScopedReembed) {
-              failedForcedChunkIds.add(chunk.id);
-            }
-
-            embeddingPartsByChunk.delete(chunk.id);
-
-            const existingFailedBatchIndex = failedBatchesForCurrentRun.findIndex(
-              (failedBatch) => failedBatch.chunks[0]?.id === chunk.id
-            );
-            const existingFailedBatch = existingFailedBatchIndex === -1
-              ? undefined
-              : failedBatchesForCurrentRun[existingFailedBatchIndex];
-            const failedBatch = {
-              chunks: [chunk],
-              error: failureMessage,
-              attemptCount: (existingFailedBatch?.attemptCount ?? retryableFailedAttemptCounts.get(chunk.id) ?? 0) + 1,
-              lastAttempt: failureTimestamp,
-            } satisfies FailedBatch;
-
-            if (existingFailedBatchIndex === -1) {
-              failedBatchesForCurrentRun.push(failedBatch);
-            } else {
-              failedBatchesForCurrentRun[existingFailedBatchIndex] = failedBatch;
-            }
-          }
-
-          this.logger.recordEmbeddingError();
-          this.logger.embedding("error", `Failed to embed batch after retries`, {
-            batchSize: failedChunks.length,
-            requestCount: requestBatch.length,
-            error: failureMessage,
-          });
-        }
-      });
-    }
-
-    await queue.onIdle();
     if (scopedRoots) {
       this.saveScopedFailedBatches(coalesceFailedBatches(failedBatchesForCurrentRun), scopedRoots);
     } else {
       this.saveFailedBatches(coalesceFailedBatches(failedBatchesForCurrentRun));
     }
 
-    onProgress?.({
+    this.updateProgress({
       phase: "storing",
       filesProcessed: files.length,
       totalFiles: files.length,
       chunksProcessed: stats.indexedChunks,
-      totalChunks: pendingChunks.length,
-    });
+      totalChunks: stats.totalChunks,
+    }, onProgress);
 
-    const branchChunkIds = Array.from(currentChunkIds).filter(
-      (chunkId) => {
-        const isNewlyFailed = failedChunkIds.has(chunkId) && !retryableChunksWithExistingData.has(chunkId);
-        const isForcedFailed = forceScopedReembed && failedForcedChunkIds.has(chunkId);
-        return !isNewlyFailed && !isForcedFailed;
-      }
-    );
-    await database.clearBranch(branchCatalogKey);
-    await database.addChunksToBranchBatch(branchCatalogKey, branchChunkIds);
-    await database.clearBranchSymbols(branchCatalogKey);
-    await database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
+    if (stats.indexedChunks > 0 || removedCount > 0) {
+      await store.save();
+      await this.database!.saveInvertedIndex(invertedIndex.serialize());
+    }
 
-    store.save();
-    invertedIndex.save();
     if (scopedRoots) {
-      this.replaceScopedFileHashCache(currentFileHashes, scopedRoots);
+      await this.replaceScopedFileHashCache(currentFileHashes, scopedRoots);
     } else {
-      this.fileHashCache = currentFileHashes;
-      this.saveFileHashCache();
+      await this.database!.replaceAllFileHashes(currentFileHashes);
     }
 
     // Auto-GC after indexing: check if orphan count exceeds threshold
@@ -3646,6 +3703,7 @@ export class Indexer {
 
     stats.durationMs = Date.now() - startTime;
 
+    await this.saveIndexMetadata(configuredProviderInfo);
     if (forceScopedReembed && failedForcedChunkIds.size === 0) {
       await database.deleteMetadata(this.getProjectForceReembedMetadataKey());
     }
@@ -3667,15 +3725,23 @@ export class Indexer {
       stats.failedBatchesPath = this.failedBatchesPath;
     }
 
-    onProgress?.({
+    this.updateProgress({
       phase: "complete",
       filesProcessed: files.length,
       totalFiles: files.length,
       chunksProcessed: stats.indexedChunks,
-      totalChunks: pendingChunks.length,
-    });
+      totalChunks: stats.totalChunks,
+    }, onProgress);
 
-    this.releaseIndexingLock();
+    this.currentProgress = undefined;
+    this.lastProgressSnapshot = "";
+    this.embeddingPhaseStartTime = 0;
+    this.embeddingChunksAtStart = 0;
+    this.lastProgressPersistAt = 0;
+    // Clear persisted snapshot now that indexing is done
+    void database.deleteMetadata(PROGRESS_SNAPSHOT_KEY).catch(() => { /* best-effort */ });
+
+    await this.releaseIndexingLock();
     return stats;
   }
 
@@ -3790,7 +3856,7 @@ export class Indexer {
 
     const searchStartTime = performance.now();
 
-    if (store.count() === 0) {
+    if ((await store.count()) === 0) {
       this.logger.search("debug", "Search on empty index", { query });
       return [];
     }
@@ -3820,7 +3886,7 @@ export class Indexer {
     const embeddingMs = performance.now() - embeddingStartTime;
 
     const vectorStartTime = performance.now();
-    const semanticResults = store.search(embedding, maxResults * 4);
+    const semanticResults = await store.search(embedding, maxResults * 4);
     const vectorMs = performance.now() - vectorStartTime;
 
     const keywordStartTime = performance.now();
@@ -3829,9 +3895,10 @@ export class Indexer {
 
     let branchChunkIds: Set<string> | null = null;
     if (filterByBranch && (this.config.scope === "global" || this.currentBranch !== "default")) {
-      branchChunkIds = new Set(
-        this.getBranchCatalogKeys().flatMap((branchKey) => database.getBranchChunkIds(branchKey))
-      );
+      const ids = (await Promise.all(
+        this.getBranchCatalogKeys().map((branchKey) => database.getBranchChunkIds(branchKey))
+      )).flat();
+      branchChunkIds = new Set(ids);
     }
 
     const prefilterStartTime = performance.now();
@@ -3885,7 +3952,7 @@ export class Indexer {
     });
     const fusionMs = performance.now() - fusionStartTime;
 
-    const rescued = promoteIdentifierMatches(
+    const rescued = await promoteIdentifierMatches(
       query,
       rerankedCombined,
       semanticCandidates,
@@ -3911,7 +3978,7 @@ export class Indexer {
       sourceIntent
     );
 
-    const symbolLane = buildSymbolDefinitionLane(
+    const symbolLane = await buildSymbolDefinitionLane(
       query,
       database,
       branchChunkIds,
@@ -4021,8 +4088,9 @@ export class Indexer {
     query: string,
     limit: number
   ): Promise<Array<{ id: string; score: number; metadata: ChunkMetadata }>> {
-    const { store, invertedIndex } = await this.ensureInitialized();
-    const scores = invertedIndex.search(query);
+    const { store, invertedIndex, database } = await this.ensureInitialized();
+    // pgvector: use SQL BM25 (no in-memory index loaded); SQLite: use Rust struct
+    const scores = await database.searchBm25(query, 100) ?? invertedIndex.search(query);
 
     if (scores.size === 0) {
       return [];
@@ -4031,7 +4099,7 @@ export class Indexer {
     // Only fetch metadata for chunks returned by BM25 (O(n) where n = result count)
     // instead of getAllMetadata() which fetches ALL chunks in the index
     const chunkIds = Array.from(scores.keys());
-    const metadataMap = store.getMetadataBatch(chunkIds);
+    const metadataMap = await store.getMetadataBatch(chunkIds);
 
     const results: Array<{ id: string; score: number; metadata: ChunkMetadata }> = [];
     for (const [chunkId, score] of scores) {
@@ -4048,10 +4116,28 @@ export class Indexer {
   async getStatus(): Promise<StatusResult> {
     const { store, configuredProviderInfo, database } = await this.ensureInitialized();
     const failedBatchesCount = this.getFailedBatchesCount();
+    const indexingInProgress = this.currentProgress !== undefined && this.currentProgress.phase !== "complete";
+
+    // If not actively indexing in this process, check for a persisted progress snapshot
+    // from another invocation (e.g., a watcher-triggered reindex running in parallel).
+    let persistedProgress: IndexProgress | undefined;
+    if (!indexingInProgress) {
+      const snapshotJson = await database.getMetadata(PROGRESS_SNAPSHOT_KEY);
+      if (snapshotJson) {
+        try {
+          const snapshot = JSON.parse(snapshotJson) as IndexProgress & { persistedAt?: number };
+          const ageMs = Date.now() - (snapshot.persistedAt ?? 0);
+          // Only surface if it's recent (< 30 min) and not already at "complete"
+          if (ageMs < 30 * 60 * 1000 && snapshot.phase !== "complete") {
+            persistedProgress = snapshot;
+          }
+        } catch { /* ignore malformed snapshot */ }
+      }
+    }
 
     return {
-      indexed: store.count() > 0,
-      vectorCount: store.count(),
+      indexed: await store.count() > 0,
+      vectorCount: await store.count(),
       provider: configuredProviderInfo.provider,
       model: configuredProviderInfo.modelInfo.model,
       indexPath: this.indexPath,
@@ -4060,24 +4146,38 @@ export class Indexer {
       compatibility: this.indexCompatibility,
       failedBatchesCount,
       failedBatchesPath: failedBatchesCount > 0 ? this.failedBatchesPath : undefined,
-      warning: database.getMetadata(STARTUP_WARNING_METADATA_KEY) ?? undefined,
+      warning: await database.getMetadata(STARTUP_WARNING_METADATA_KEY) ?? undefined,
+      indexingInProgress: indexingInProgress || persistedProgress !== undefined,
+      progress: this.currentProgress ?? persistedProgress,
     };
+  }
+
+  async close(): Promise<void> {
+    await this.database?.close();
+    this.database = null;
+    this.store = null;
+    this.invertedIndex = null;
+    this.provider = null;
+    this.reranker = null;
+    this.currentProgress = undefined;
+    this.lastProgressSnapshot = "";
+    this.embeddingPhaseStartTime = 0;
+    this.embeddingChunksAtStart = 0;
+    this.lastProgressPersistAt = 0;
   }
 
   async clearIndex(): Promise<void> {
     const { store, invertedIndex, database } = await this.ensureInitialized();
 
     if (this.config.scope === "global") {
-      store.load();
-      invertedIndex.load();
-      this.loadFileHashCache();
+      await store.load();
       const roots = this.getScopedRoots();
       const compatibility = this.checkCompatibility();
-      const allMetadata = store.getAllMetadata();
+      const allMetadata = await store.getAllMetadata();
       const hasForeignData =
         allMetadata.some(({ metadata }) => !this.isFileInCurrentScope(metadata.filePath, roots)) ||
-  await this.hasForeignScopedBranchData() ||
-  await this.hasForeignScopedFileHashData(roots) ||
+        await this.hasForeignScopedFileHashData(roots) ||
+        await this.hasForeignScopedBranchData() ||
         this.hasForeignScopedFailedBatches(roots);
 
       if (!compatibility.compatible && hasForeignData) {
@@ -4099,15 +4199,14 @@ export class Indexer {
       }
 
       if (!hasForeignData) {
-        store.clear();
-        store.save();
+        await store.clear();
+        await store.save();
         invertedIndex.clear();
-        invertedIndex.save();
+        await this.database!.saveInvertedIndex(invertedIndex.serialize());
 
-        this.fileHashCache.clear();
-        this.saveFileHashCache();
+        await this.database!.replaceAllFileHashes(new Map());
 
-        database.clearAllIndexedData();
+        await database.clearAllIndexedData();
         this.saveFailedBatches([]);
 
         await database.deleteMetadata("index.version");
@@ -4125,8 +4224,8 @@ export class Indexer {
         return;
       }
 
-      this.clearSharedIndexProjectData(store, invertedIndex, database, roots);
-      this.clearScopedFileHashCache(roots);
+      await this.clearSharedIndexProjectData(store, invertedIndex, database, roots);
+      await this.clearScopedFileHashCache(roots);
       this.clearScopedFailedBatches(roots);
       this.indexCompatibility = compatibility;
       return;
@@ -4140,18 +4239,17 @@ export class Indexer {
       );
     }
 
-    store.clear();
-    store.save();
+    await store.clear();
+    await store.save();
     invertedIndex.clear();
-    invertedIndex.save();
+    await this.database!.saveInvertedIndex(invertedIndex.serialize());
 
     // Clear file hash cache so all files are re-parsed
-    this.fileHashCache.clear();
-    this.saveFileHashCache();
+    await this.database!.replaceAllFileHashes(new Map());
 
     // Clear persisted index data across all branches so force rebuilds
     // cannot reuse stale chunks, symbols, or embeddings from a prior provider.
-    database.clearAllIndexedData();
+    await database.clearAllIndexedData();
     this.saveFailedBatches([]);
 
     // Clear index metadata so compatibility is re-evaluated from scratch
@@ -4175,7 +4273,7 @@ export class Indexer {
 
     this.logger.gc("info", "Starting health check");
 
-    const allMetadata = store.getAllMetadata();
+    const allMetadata = await store.getAllMetadata();
     const filePathsToChunkKeys = new Map<string, string[]>();
 
     for (const { key, metadata } of allMetadata) {
@@ -4190,20 +4288,20 @@ export class Indexer {
     for (const [filePath, chunkKeys] of filePathsToChunkKeys) {
       if (!existsSync(filePath)) {
         for (const key of chunkKeys) {
-          store.remove(key);
+          await store.remove(key);
           invertedIndex.removeChunk(key);
           removedCount++;
         }
-        database.deleteChunksByFile(filePath);
-        database.deleteCallEdgesByFile(filePath);
-        database.deleteSymbolsByFile(filePath);
+        await database.deleteChunksByFile(filePath);
+        await database.deleteCallEdgesByFile(filePath);
+        await database.deleteSymbolsByFile(filePath);
         removedFilePaths.push(filePath);
       }
     }
 
     if (removedCount > 0) {
-      store.save();
-      invertedIndex.save();
+      await store.save();
+      await this.database!.saveInvertedIndex(invertedIndex.serialize());
     }
 
     let gcOrphanEmbeddings: number;
@@ -4212,10 +4310,10 @@ export class Indexer {
     let gcOrphanCallEdges: number;
 
     try {
-      gcOrphanEmbeddings = database.gcOrphanEmbeddings();
-      gcOrphanChunks = database.gcOrphanChunks();
-      gcOrphanSymbols = database.gcOrphanSymbols();
-      gcOrphanCallEdges = database.gcOrphanCallEdges();
+      gcOrphanEmbeddings = await database.gcOrphanEmbeddings();
+      gcOrphanChunks = await database.gcOrphanChunks();
+      gcOrphanSymbols = await database.gcOrphanSymbols();
+      gcOrphanCallEdges = await database.gcOrphanCallEdges();
     } catch (error) {
       if (!(await this.tryResetCorruptedIndex("running index health check", error))) {
         throw error;
@@ -4386,7 +4484,7 @@ export class Indexer {
           } catch (dbError) {
             // Rollback vectors added to store if DB write fails
             for (const { chunk } of successfulResults) {
-              store.remove(chunk.id);
+              await store.remove(chunk.id);
             }
             throw dbError;
           }
@@ -4439,13 +4537,13 @@ export class Indexer {
     }
 
     if (succeeded > 0) {
-      store.save();
-      invertedIndex.save();
+      await store.save();
+      await this.database!.saveInvertedIndex(invertedIndex.serialize());
     }
 
-    if (roots && succeeded > 0 && persistedStillFailing.length === 0 && this.hasProjectForceReembedPending()) {
-      await database.deleteMetadata(this.getProjectForceReembedMetadataKey());
-      await this.saveIndexMetadata(configuredProviderInfo);
+    if (roots && succeeded > 0 && persistedStillFailing.length === 0 && await this.hasProjectForceReembedPending()) {
+        await database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+        await this.saveIndexMetadata(configuredProviderInfo);
       this.indexCompatibility = { compatible: true };
     }
 
@@ -4476,7 +4574,7 @@ export class Indexer {
 
   async getDatabaseStats(): Promise<{ embeddingCount: number; chunkCount: number; branchChunkCount: number; branchCount: number } | null> {
     const { database } = await this.ensureInitialized();
-    return database.getStats();
+    return await database.getStats();
   }
 
   getLogger(): Logger {
@@ -4495,7 +4593,7 @@ export class Indexer {
     }
   ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
-    
+
     const compatibility = this.checkCompatibility();
     if (!compatibility.compatible) {
       throw new Error(
@@ -4506,7 +4604,7 @@ export class Indexer {
 
     const searchStartTime = performance.now();
 
-    if (store.count() === 0) {
+    if ((await store.count()) === 0) {
       this.logger.search("debug", "Find similar on empty index");
       return [];
     }
@@ -4525,14 +4623,15 @@ export class Indexer {
     this.logger.recordEmbeddingApiCall(tokensUsed);
 
     const vectorStartTime = performance.now();
-    const semanticResults = store.search(embedding, limit * 2);
+    const semanticResults = await store.search(embedding, limit * 2);
     const vectorMs = performance.now() - vectorStartTime;
 
     let branchChunkIds: Set<string> | null = null;
     if (filterByBranch && (this.config.scope === "global" || this.currentBranch !== "default")) {
-      branchChunkIds = new Set(
-        this.getBranchCatalogKeys().flatMap((branchKey) => database.getBranchChunkIds(branchKey))
-      );
+      const ids = (await Promise.all(
+        this.getBranchCatalogKeys().map((branchKey) => database.getBranchChunkIds(branchKey))
+      )).flat();
+      branchChunkIds = new Set(ids);
     }
 
     const prefilterStartTime = performance.now();
@@ -4645,7 +4744,7 @@ export class Indexer {
     const results: CallEdgeData[] = [];
 
     for (const branchKey of this.getBranchCatalogKeys()) {
-      for (const edge of database.getCallersWithContext(targetName, branchKey)) {
+      for (const edge of await database.getCallersWithContext(targetName, branchKey)) {
         if (!seen.has(edge.id)) {
           seen.add(edge.id);
           results.push(edge);
@@ -4662,7 +4761,7 @@ export class Indexer {
     const results: CallEdgeData[] = [];
 
     for (const branchKey of this.getBranchCatalogKeys()) {
-      for (const edge of database.getCallees(symbolId, branchKey)) {
+      for (const edge of await database.getCallees(symbolId, branchKey)) {
         if (!seen.has(edge.id)) {
           seen.add(edge.id);
           results.push(edge);
@@ -4671,14 +4770,5 @@ export class Indexer {
     }
 
     return results;
-  }
-
-  async close(): Promise<void> {
-    await this.database?.close();
-    this.database = null;
-    this.store = null;
-    this.invertedIndex = null;
-    this.provider = null;
-    this.reranker = null;
   }
 }

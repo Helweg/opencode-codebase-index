@@ -26,7 +26,7 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
     }
     lines.push("");
   }
-  
+
   if (stats.indexedChunks === 0 && stats.removedChunks === 0) {
     lines.push(`${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`);
   } else if (stats.indexedChunks === 0) {
@@ -54,7 +54,7 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
       const tooLarge = stats.skippedFiles.filter(f => f.reason === "too_large");
       const excluded = stats.skippedFiles.filter(f => f.reason === "excluded");
       const gitignored = stats.skippedFiles.filter(f => f.reason === "gitignore");
-      
+
       lines.push("");
       lines.push(`Skipped files: ${stats.skippedFiles.length}`);
       if (tooLarge.length > 0) {
@@ -78,6 +78,24 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
 }
 
 export function formatStatus(status: StatusResult): string {
+  if (status.indexingInProgress && status.progress) {
+    const lines = [
+      "Indexing is currently in progress.",
+      formatProgressTitle(status.progress),
+    ];
+
+    if (status.progress.currentFiles?.length) {
+      lines.push(`Current batch:\n${status.progress.currentFiles.map(f => `  ${f}`).join("\n")}`);
+    }
+
+    if (status.progress.estimatedSecondsRemaining != null) {
+      lines.push(`Estimated time remaining: ${formatEta(status.progress.estimatedSecondsRemaining)}`);
+    }
+
+    lines.push(`Indexed chunks currently available: ${status.vectorCount.toLocaleString()}`);
+    return lines.join("\n");
+  }
+
   if (!status.indexed) {
     if (status.warning) {
       return status.warning;
@@ -136,14 +154,25 @@ export function formatStatus(status: StatusResult): string {
   return lines.join("\n");
 }
 
+function formatEta(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const min = Math.floor(seconds / 60);
+  const sec = seconds % 60;
+  return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
+}
+
 export function formatProgressTitle(progress: IndexProgress): string {
   switch (progress.phase) {
     case "scanning":
       return "Scanning files...";
     case "parsing":
-      return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files`;
-    case "embedding":
-      return `Embedding: ${progress.chunksProcessed}/${progress.totalChunks} chunks`;
+      return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files${progress.currentFiles?.length ? ` [${progress.currentFiles.join(", ")}]` : ""}`;
+    case "embedding": {
+      const etaStr = progress.estimatedSecondsRemaining != null
+        ? ` (~${formatEta(progress.estimatedSecondsRemaining)} left)`
+        : "";
+      return `Embedding: ${progress.chunksProcessed}/${progress.totalChunks} chunks${etaStr}`;
+    }
     case "storing":
       return "Storing index...";
     case "complete":
@@ -156,19 +185,19 @@ export function formatProgressTitle(progress: IndexProgress): string {
 export function calculatePercentage(progress: IndexProgress): number {
   if (progress.phase === "scanning") return 0;
   if (progress.phase === "complete") return 100;
-  
+
   if (progress.phase === "parsing") {
     if (progress.totalFiles === 0) return 5;
     return Math.round(5 + (progress.filesProcessed / progress.totalFiles) * 15);
   }
-  
+
   if (progress.phase === "embedding") {
     if (progress.totalChunks === 0) return 20;
     return Math.round(20 + (progress.chunksProcessed / progress.totalChunks) * 70);
   }
-  
+
   if (progress.phase === "storing") return 95;
-  
+
   return 0;
 }
 
@@ -196,15 +225,15 @@ export function formatHealthCheck(result: HealthCheckResult): string {
   }
 
   const lines: string[] = [];
-  
+
   if (result.removed > 0) {
     lines.push(`Removed stale entries: ${result.removed}`);
   }
-  
+
   if (result.gcOrphanEmbeddings > 0) {
     lines.push(`Garbage collected orphan embeddings: ${result.gcOrphanEmbeddings}`);
   }
-  
+
   if (result.gcOrphanChunks > 0) {
     lines.push(`Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
   }

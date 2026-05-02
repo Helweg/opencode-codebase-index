@@ -125,6 +125,9 @@ export interface IDatabaseBackend {
 
   deleteChunksByFile(filePath: string): Promise<number>;
 
+  /** All distinct file paths that have at least one chunk stored. */
+  getChunkFilePaths(): Promise<string[]>;
+
   // ── Branch catalog ───────────────────────────────────────────────
 
   addChunksToBranch(branch: string, chunkIds: string[]): Promise<void>;

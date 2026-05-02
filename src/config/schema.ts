@@ -42,6 +42,12 @@ export interface IndexingConfig {
    * instead of skipping the rest of the file. Default: true
    */
   fallbackToTextOnMaxChunks: boolean;
+  /**
+   * Number of changed files to process per batch during indexing.
+   * Lower values reduce peak memory at the cost of more DB round-trips.
+   * Default: 100
+   */
+  fileBatchSize: number;
 }
 
 export interface SearchConfig {
@@ -86,6 +92,8 @@ export interface DebugConfig {
   logGc: boolean;
   logBranch: boolean;
   metrics: boolean;
+  /** When set, indexing progress lines are appended to this file path (useful for tail -f monitoring). */
+  progressLogFile?: string;
 }
 
 // ── Database Engine ────────────────────────────────────────────────────────
@@ -218,6 +226,7 @@ function getDefaultIndexingConfig(): IndexingConfig {
     maxDepth: 5,
     maxFilesPerDirectory: 100,
     fallbackToTextOnMaxChunks: true,
+    fileBatchSize: 100,
   };
 }
 
@@ -274,6 +283,7 @@ function getDefaultDebugConfig(): DebugConfig {
     logGc: true,
     logBranch: true,
     metrics: true,
+    progressLogFile: undefined,
   };
 }
 
@@ -347,6 +357,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     maxDepth: typeof rawIndexing.maxDepth === "number" ? (rawIndexing.maxDepth < -1 ? -1 : rawIndexing.maxDepth) : defaultIndexing.maxDepth,
     maxFilesPerDirectory: typeof rawIndexing.maxFilesPerDirectory === "number" ? Math.max(1, rawIndexing.maxFilesPerDirectory) : defaultIndexing.maxFilesPerDirectory,
     fallbackToTextOnMaxChunks: typeof rawIndexing.fallbackToTextOnMaxChunks === "boolean" ? rawIndexing.fallbackToTextOnMaxChunks : defaultIndexing.fallbackToTextOnMaxChunks,
+    fileBatchSize: typeof rawIndexing.fileBatchSize === "number" ? Math.max(1, rawIndexing.fileBatchSize) : defaultIndexing.fileBatchSize,
   };
 
   const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;
@@ -372,6 +383,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     logGc: typeof rawDebug.logGc === "boolean" ? rawDebug.logGc : defaultDebug.logGc,
     logBranch: typeof rawDebug.logBranch === "boolean" ? rawDebug.logBranch : defaultDebug.logBranch,
     metrics: typeof rawDebug.metrics === "boolean" ? rawDebug.metrics : defaultDebug.metrics,
+    progressLogFile: typeof rawDebug.progressLogFile === "string" && rawDebug.progressLogFile.trim().length > 0
+      ? rawDebug.progressLogFile.trim()
+      : undefined,
   };
 
   const rawKnowledgeBases = input.knowledgeBases;

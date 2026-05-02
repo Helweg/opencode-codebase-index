@@ -643,7 +643,8 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "logCache": true,                         // Log cache hits/misses
     "logGc": true,                            // Log garbage collection
     "logBranch": true,                        // Log branch detection
-    "metrics": false                          // Enable metrics collection
+    "metrics": false,                         // Enable metrics collection
+    "progressLogFile": "/tmp/index-progress.log" // Optional: append live progress to this file
   }
 }
 ```
@@ -712,6 +713,37 @@ String values in `codebase-index.json` can reference environment variables with 
 | `logGc` | `true` | Log garbage collection operations |
 | `logBranch` | `true` | Log branch detection and switches |
 | `metrics` | `false` | Enable metrics collection (indexing stats, search timing, cache performance) |
+| `progressLogFile` | — | Path to a file where live indexing progress lines are appended. Each line is timestamped. Useful for monitoring long indexing runs with `tail -f`. Relative paths are resolved from the project root. Does not require `debug.enabled`. |
+
+**Live Progress Monitoring**:
+
+Set `debug.progressLogFile` to any writable path to get a live feed of indexing progress:
+
+```json
+{
+  "debug": {
+    "progressLogFile": "/tmp/index-progress.log"
+  }
+}
+```
+
+Then in a terminal:
+
+```bash
+tail -f /tmp/index-progress.log
+```
+
+Example output:
+
+```text
+[2026-05-02T14:17:00.123Z] Scanning files...
+[2026-05-02T14:17:00.456Z] Parsing: 10/47 files (src/indexer/index.ts)
+[2026-05-02T14:17:01.234Z] Embedding: 50/300 chunks (~2m 15s left)
+[2026-05-02T14:17:04.567Z] Embedding: 150/300 chunks (~1m 5s left)
+[2026-05-02T14:17:09.000Z] Indexing complete
+```
+
+This works for both the OpenCode plugin and MCP server paths. Each indexing run appends to the file (existing content is preserved). The file is created automatically if it doesn't exist.
 
 **Debug Logging Details**:
 
@@ -855,7 +887,7 @@ Methodology for the snapshot below:
 - Dataset: auto-generated cross-repo golden sets for `axios` + `express`
 - Repeats: **20** per mode
 - Aggregation: **median** metric per tool (then averaged across repos)
-- Reindex behavior: when enabled, index reset applies on repeat #1 only; subsequent repeats measure warm-index query behavior
+- Re-index behavior: when enabled, index reset applies on repeat #1 only; subsequent repeats measure warm-index query behavior
 - Sampling note: repository parsing can be capped; benchmark reports include truncation metadata
 - ast-grep scope note: sg metrics are computed on its compatible query subset (`definition`, `keyword-heavy`) with scoped denominators shown in run reports
 

@@ -20,6 +20,7 @@ import { existsSync, writeFileSync, readFileSync, mkdirSync, statSync } from "fs
 import * as path from "path";
 import { loadMergedConfig, loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
 import { resolveWritableProjectConfigPath } from "../config/paths.js";
+import { writeProgressLog } from "../utils/progress-log.js";
 import { resolveWorktreeMainRepoRoot } from "../git/index.js";
 
 const z = tool.schema;
@@ -44,6 +45,10 @@ export function refreshIndexerFromConfig(): void {
   sharedIndexer = new Indexer(sharedProjectRoot, parseConfig(loadRuntimeConfig()));
 }
 
+function normalizeFsPath(targetPath: string): string {
+  return path.normalize(targetPath).replace(/\\/g, "/");
+}
+
 function shouldForceLocalizeProjectIndex(): boolean {
   const currentConfig = parseConfig(loadRuntimeConfig());
   if (currentConfig.scope !== "project") {
@@ -57,7 +62,7 @@ function shouldForceLocalizeProjectIndex(): boolean {
   }
 
   const inheritedIndexPath = path.join(mainRepoRoot, ".opencode", "index");
-  return !existsSync(localIndexPath) && existsSync(inheritedIndexPath);
+  return !existsSync(normalizeFsPath(localIndexPath)) && existsSync(normalizeFsPath(inheritedIndexPath));
 }
 
 function getIndexer(): Indexer {
@@ -217,9 +222,16 @@ export const index_codebase: ToolDefinition = tool({
       await indexer.clearIndex();
     }
 
+    const rawProgressLogFile = parseConfig(loadRuntimeConfig()).debug.progressLogFile;
+    const progressLogFile = rawProgressLogFile
+      ? path.isAbsolute(rawProgressLogFile)
+        ? rawProgressLogFile
+        : path.resolve(sharedProjectRoot, rawProgressLogFile)
+      : undefined;
     const stats = await indexer.index((progress) => {
+      const title = formatProgressTitle(progress);
       context.metadata({
-        title: formatProgressTitle(progress),
+        title,
         metadata: {
           phase: progress.phase,
           filesProcessed: progress.filesProcessed,
@@ -227,8 +239,13 @@ export const index_codebase: ToolDefinition = tool({
           chunksProcessed: progress.chunksProcessed,
           totalChunks: progress.totalChunks,
           percentage: calculatePercentage(progress),
+          estimatedSecondsRemaining: progress.estimatedSecondsRemaining,
+          currentFiles: progress.currentFiles,
         },
       });
+      if (progressLogFile) {
+        writeProgressLog(progressLogFile, title);
+      }
     });
     return formatIndexStats(stats, args.verbose ?? false);
   },
