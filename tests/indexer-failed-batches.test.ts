@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseConfig } from "../src/config/schema.js";
 import { Indexer } from "../src/indexer/index.js";
-import { VectorStore } from "../src/native/index.js";
+import { Database, VectorStore } from "../src/native/index.js";
 import { formatStatus } from "../src/tools/utils.js";
 
 describe("indexer failed batch recovery", () => {
@@ -1132,4 +1132,171 @@ describe("indexer failed batch recovery", () => {
 
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
+
+  it("preserves previously indexed chunk in branch catalog when stale failed-batch retry fails", async () => {
+    const indexer = createIndexer();
+
+    // Step 1: Initial successful index
+    const initialStats = await indexer.index();
+    expect(initialStats.failedChunks).toBe(0);
+    expect(initialStats.indexedChunks).toBeGreaterThan(0);
+
+    // Step 2: Capture the actual indexed chunk id from the database
+    const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
+    const dbBefore = new Database(dbPath);
+    const branches = dbBefore.getAllBranches();
+    const branchKey = branches.find((b) => b.includes("default")) || branches[0];
+    expect(branchKey).toBeDefined();
+
+    const branchChunksBefore = dbBefore.getBranchChunkIds(branchKey!);
+    expect(branchChunksBefore.length).toBeGreaterThan(0);
+    const existingChunkId = branchChunksBefore[0];
+    expect(existingChunkId).toBeDefined();
+
+    // Step 3: Manually write a stale failed-batch entry for that same unchanged chunk
+    const failedBatchesPath = path.join(tempDir, ".opencode", "index", "failed-batches.json");
+    fs.writeFileSync(
+      failedBatchesPath,
+      JSON.stringify([
+        {
+          chunks: [
+            {
+              id: existingChunkId,
+              text: "export function alpha() { return 'alpha'; }",
+              content: "export function alpha() { return 'alpha'; }",
+              contentHash: "stale-hash",
+              metadata: {
+                filePath: sourceFile,
+                startLine: 1,
+                endLine: 3,
+                language: "typescript",
+                chunkType: "function",
+                hash: "stale-hash",
+                name: "alpha",
+              },
+            },
+          ],
+          error: "stale previous failure",
+          attemptCount: 1,
+          lastAttempt: new Date().toISOString(),
+        },
+      ], null, 2),
+      "utf-8"
+    );
+
+    // Step 4: Make the later index() rerun fail embedding for that retryable chunk
+    failEmbeddings = true;
+    const retryStats = await indexer.index();
+
+    // Step 5: Assert the failed batch persists AND the branch catalog still contains that chunk id
+    expect(retryStats.failedChunks).toBeGreaterThan(0);
+
+    const failedBatchesAfter = JSON.parse(fs.readFileSync(failedBatchesPath, "utf-8")) as Array<{
+      chunks: Array<{ id: string }>;
+      error: string;
+    }>;
+    expect(failedBatchesAfter.length).toBeGreaterThan(0);
+    expect(failedBatchesAfter.some((batch) => batch.chunks.some((c) => c.id === existingChunkId))).toBe(true);
+
+    const dbAfter = new Database(dbPath);
+    const branchChunksAfter = dbAfter.getBranchChunkIds(branchKey!);
+    expect(branchChunksAfter).toContain(existingChunkId);
+  });
+
+  it("rolls back vectors and excludes failed chunks from branch when database upsert fails during index()", async () => {
+    const originalUpsert = Database.prototype.upsertEmbeddingsBatch;
+    let callCount = 0;
+
+    vi.spyOn(Database.prototype, "upsertEmbeddingsBatch").mockImplementation(
+      function (
+        this: Database,
+        items: Array<{ contentHash: string; embedding: Buffer; chunkText: string; model: string }>
+      ) {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("database write failed");
+        }
+        return originalUpsert.call(this, items);
+      }
+    );
+
+    const indexer = createIndexer();
+    const stats = await indexer.index();
+
+    expect(stats.failedChunks).toBeGreaterThan(0);
+    expect(stats.indexedChunks).toBe(0);
+
+    const status = await indexer.getStatus();
+    expect(status.indexed).toBe(false);
+    expect(status.failedBatchesCount).toBeGreaterThan(0);
+
+    const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
+    const dbAfter = new Database(dbPath);
+    const branches = dbAfter.getAllBranches();
+    const branchKey = branches.find((b) => b.includes("default")) || branches[0];
+    if (branchKey) {
+      const branchChunks = dbAfter.getBranchChunkIds(branchKey);
+      expect(branchChunks.length).toBe(0);
+    }
+
+    const failedBatchesPath = path.join(tempDir, ".opencode", "index", "failed-batches.json");
+    if (fs.existsSync(failedBatchesPath)) {
+      const failedBatches = JSON.parse(fs.readFileSync(failedBatchesPath, "utf-8")) as Array<{
+        error: string;
+      }>;
+      expect(failedBatches.length).toBeGreaterThan(0);
+      expect(failedBatches[0]?.error).toContain("database write failed");
+    }
+  });
+
+  it("rolls back vectors and excludes failed chunks from branch when database upsert fails during retryFailedBatches()", async () => {
+    const indexer = createIndexer();
+
+    failEmbeddings = true;
+    await indexer.index();
+
+    failEmbeddings = false;
+
+    const originalUpsert = Database.prototype.upsertEmbeddingsBatch;
+    let callCount = 0;
+
+    vi.spyOn(Database.prototype, "upsertEmbeddingsBatch").mockImplementation(
+      function (
+        this: Database,
+        items: Array<{ contentHash: string; embedding: Buffer; chunkText: string; model: string }>
+      ) {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("database write failed during retry");
+        }
+        return originalUpsert.call(this, items);
+      }
+    );
+
+    const retry = await indexer.retryFailedBatches();
+
+    expect(retry.succeeded).toBe(0);
+    expect(retry.failed).toBeGreaterThan(0);
+
+    const status = await indexer.getStatus();
+    expect(status.failedBatchesCount).toBeGreaterThan(0);
+
+    const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
+    const dbAfter = new Database(dbPath);
+    const branches = dbAfter.getAllBranches();
+    const branchKey = branches.find((b) => b.includes("default")) || branches[0];
+    if (branchKey) {
+      const branchChunks = dbAfter.getBranchChunkIds(branchKey);
+      expect(branchChunks.length).toBe(0);
+    }
+
+     const failedBatchesPath = path.join(tempDir, ".opencode", "index", "failed-batches.json");
+     if (fs.existsSync(failedBatchesPath)) {
+       const failedBatches = JSON.parse(fs.readFileSync(failedBatchesPath, "utf-8")) as Array<{
+         error: string;
+       }>;
+       expect(failedBatches.length).toBeGreaterThan(0);
+       expect(failedBatches[0]?.error).toContain("database write failed during retry");
+     }
+   });
 });

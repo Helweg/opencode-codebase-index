@@ -3076,10 +3076,14 @@ export class Indexer {
       getSafeEmbeddingChunkTokenLimit(configuredProviderInfo)
     );
     const retryableFailedAttemptCounts = new Map<string, number>();
+    const retryableChunksWithExistingData = new Set<string>();
     if (retryableFailedChunks.length > 0) {
       const pendingChunkIds = new Set(pendingChunks.map((chunk) => chunk.id));
       for (const { chunk, attemptCount } of retryableFailedChunks) {
         retryableFailedAttemptCounts.set(chunk.id, attemptCount);
+        if (existingChunks.has(chunk.id)) {
+          retryableChunksWithExistingData.add(chunk.id);
+        }
         if (!pendingChunkIds.has(chunk.id)) {
           pendingChunks.push(chunk);
           pendingChunkIds.add(chunk.id);
@@ -3421,7 +3425,16 @@ export class Indexer {
               chunkText: chunk.storageText,
               model: configuredProviderInfo.modelInfo.model,
             }));
-            database.upsertEmbeddingsBatch(embeddingBatchItems);
+
+            try {
+              database.upsertEmbeddingsBatch(embeddingBatchItems);
+            } catch (dbError) {
+              // Rollback vectors added to store if DB write fails
+              for (const { chunk } of pooledResults) {
+                store.remove(chunk.id);
+              }
+              throw dbError;
+            }
 
             for (const { chunk } of pooledResults) {
               invertedIndex.removeChunk(chunk.id);
@@ -3513,9 +3526,13 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
-    const branchChunkIds = forceScopedReembed
-      ? Array.from(currentChunkIds).filter((chunkId) => !failedForcedChunkIds.has(chunkId))
-      : Array.from(currentChunkIds);
+    const branchChunkIds = Array.from(currentChunkIds).filter(
+      (chunkId) => {
+        const isNewlyFailed = failedChunkIds.has(chunkId) && !retryableChunksWithExistingData.has(chunkId);
+        const isForcedFailed = forceScopedReembed && failedForcedChunkIds.has(chunkId);
+        return !isNewlyFailed && !isForcedFailed;
+      }
+    );
     database.clearBranch(branchCatalogKey);
     database.addChunksToBranchBatch(branchCatalogKey, branchChunkIds);
     database.clearBranchSymbols(branchCatalogKey);
@@ -4279,14 +4296,22 @@ export class Indexer {
         }
 
         if (successfulResults.length > 0) {
-          database.upsertEmbeddingsBatch(
-            successfulResults.map(({ chunk, vector }) => ({
-              contentHash: chunk.contentHash,
-              embedding: float32ArrayToBuffer(vector),
-              chunkText: chunk.storageText,
-              model: configuredProviderInfo.modelInfo.model,
-            }))
-          );
+          try {
+            database.upsertEmbeddingsBatch(
+              successfulResults.map(({ chunk, vector }) => ({
+                contentHash: chunk.contentHash,
+                embedding: float32ArrayToBuffer(vector),
+                chunkText: chunk.storageText,
+                model: configuredProviderInfo.modelInfo.model,
+              }))
+            );
+          } catch (dbError) {
+            // Rollback vectors added to store if DB write fails
+            for (const { chunk } of successfulResults) {
+              store.remove(chunk.id);
+            }
+            throw dbError;
+          }
         }
 
         for (const { chunk } of successfulResults) {
