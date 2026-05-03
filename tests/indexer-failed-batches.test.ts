@@ -13,11 +13,12 @@ describe("indexer failed batch recovery", () => {
   let sourceFile: string;
   let fetchSpy: ReturnType<typeof vi.spyOn>;
   let failEmbeddings = false;
+  let _indexers: Indexer[] = [];
 
   beforeEach(() => {
     failEmbeddings = false;
     fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -61,7 +62,9 @@ describe("indexer failed batch recovery", () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(_indexers.map((i) => i.close()));
+    _indexers = [];
     fetchSpy.mockRestore();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -81,7 +84,7 @@ describe("indexer failed batch recovery", () => {
       },
     });
 
-    return new Indexer(tempDir, config);
+    return _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
   }
 
   it("retries saved failed batches on a later successful rerun without force", async () => {

@@ -20,7 +20,7 @@ describe("indexer clearIndex force rebuild", () => {
   beforeEach(() => {
     embeddingDimensions = 8;
     fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -64,7 +64,17 @@ describe("indexer clearIndex force rebuild", () => {
     );
   });
 
-  afterEach(() => {
+  let _indexers: Indexer[] = [];
+  let _dbs: Database[] = [];
+
+  function trackIndexer(i: Indexer): Indexer { _indexers.push(i); return i; }
+  function trackDb(d: Database): Database { _dbs.push(d); return d; }
+
+  afterEach(async () => {
+    await Promise.all(_indexers.map((i) => i.close()));
+    _dbs.forEach((d) => d.close());
+    _indexers = [];
+    _dbs = [];
     fetchSpy.mockRestore();
     vi.unstubAllEnvs();
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -87,7 +97,7 @@ describe("indexer clearIndex force rebuild", () => {
       },
     });
 
-    return new Indexer(projectRoot, config);
+    return trackIndexer(new Indexer(projectRoot, config));
   }
 
   it("clears persisted embeddings before a force rebuild with new dimensions", async () => {
@@ -98,14 +108,14 @@ describe("indexer clearIndex force rebuild", () => {
     expect(originalStats.indexedChunks).toBeGreaterThan(0);
 
     const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
-    const seededDb = new Database(dbPath);
+    const seededDb = trackDb(new Database(dbPath));
     expect(seededDb.getStats().embeddingCount).toBeGreaterThan(0);
 
     embeddingDimensions = 4;
     const rebuiltIndexer = createIndexer(tempDir, 4);
     await rebuiltIndexer.clearIndex();
 
-    const clearedDb = new Database(dbPath);
+    const clearedDb = trackDb(new Database(dbPath));
     expect(clearedDb.getStats().embeddingCount).toBe(0);
     expect(clearedDb.getStats().chunkCount).toBe(0);
     expect(clearedDb.getStats().branchChunkCount).toBe(0);
@@ -114,7 +124,7 @@ describe("indexer clearIndex force rebuild", () => {
     expect(rebuiltStats.failedChunks).toBe(0);
     expect(rebuiltStats.indexedChunks).toBeGreaterThan(0);
 
-    const rebuiltDb = new Database(dbPath);
+    const rebuiltDb = trackDb(new Database(dbPath));
     const rebuiltBranch = rebuiltDb.getAllBranches()[0];
     expect(rebuiltBranch).toBeTruthy();
     const rebuiltChunkId = rebuiltDb.getBranchChunkIds(rebuiltBranch!)[0];
@@ -167,7 +177,7 @@ describe("indexer clearIndex force rebuild", () => {
     embeddingDimensions = 8;
     await createIndexer(mainRepoDir, 8).index();
 
-    const inheritedIndexer = new Indexer(worktreeDir, parseConfig(loadMergedConfig(worktreeDir)));
+    const inheritedIndexer = trackIndexer(new Indexer(worktreeDir, parseConfig(loadMergedConfig(worktreeDir))));
     await expect(inheritedIndexer.clearIndex()).rejects.toThrow(
       "Project-scoped force rebuild is unsafe while using an inherited worktree index"
     );
@@ -175,6 +185,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("clears only the current project from a shared global index when compatibility is unchanged", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -195,7 +206,7 @@ describe("indexer clearIndex force rebuild", () => {
     await indexerA.clearIndex();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     expect(db.getChunksByFile(projectAFile)).toHaveLength(0);
     expect(db.getChunksByFile(projectBFile).length).toBeGreaterThan(0);
 
@@ -213,6 +224,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("rejects an incompatible global force reset when the shared index contains other projects", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -236,13 +248,14 @@ describe("indexer clearIndex force rebuild", () => {
     );
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     expect(db.getChunksByFile(projectAFile).length).toBeGreaterThan(0);
     expect(db.getChunksByFile(projectBFile).length).toBeGreaterThan(0);
   });
 
   it("allows an incompatible global force reset when the current project is the only indexed tenant", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectAFile = path.join(projectA, "src", "a.ts");
@@ -258,7 +271,7 @@ describe("indexer clearIndex force rebuild", () => {
     await rebuiltIndexer.clearIndex();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     expect(db.getStats().embeddingCount).toBe(0);
     expect(db.getStats().chunkCount).toBe(0);
 
@@ -273,7 +286,7 @@ describe("indexer clearIndex force rebuild", () => {
     const stats = await indexer.index();
     expect(stats.indexedChunks).toBeGreaterThan(0);
 
-    const database = (indexer as unknown as { database: Database }).database;
+    const database = (indexer as unknown as { database: Database }).database!;
     vi.spyOn(database, "gcOrphanEmbeddings").mockReturnValue(0);
     vi.spyOn(database, "gcOrphanChunks").mockImplementation(() => {
       throw new Error("SQLite error: database disk image is malformed");
@@ -290,6 +303,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("refuses to auto-reset a corrupted shared global sqlite index", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectAFile = path.join(projectA, "src", "a.ts");
@@ -310,7 +324,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("surfaces rebuild guidance when automatic orphan GC resets a corrupted local index", async () => {
     embeddingDimensions = 8;
-    const indexer = new Indexer(tempDir, parseConfig({
+    const indexer = trackIndexer(new Indexer(tempDir, parseConfig({
       embeddingProvider: "custom",
       customProvider: {
         baseUrl: "http://localhost:11434/v1",
@@ -324,7 +338,7 @@ describe("indexer clearIndex force rebuild", () => {
         autoGc: true,
         gcOrphanThreshold: 0,
       },
-    }));
+    })));
 
     const initialStats = await indexer.index();
     expect(initialStats.indexedChunks).toBeGreaterThan(0);
@@ -368,6 +382,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("preserves shared knowledge-base rows still referenced by another global project", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -383,7 +398,7 @@ describe("indexer clearIndex force rebuild", () => {
     fs.writeFileSync(projectBFile, "export function beta() { return 'b'; }\n", "utf-8");
     fs.writeFileSync(kbFile, "export function sharedDoc() { return 'shared'; }\n", "utf-8");
 
-    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+    const createKbIndexer = (projectRoot: string) => trackIndexer(new Indexer(projectRoot, parseConfig({
       embeddingProvider: "custom",
       customProvider: {
         baseUrl: "http://localhost:11434/v1",
@@ -397,14 +412,14 @@ describe("indexer clearIndex force rebuild", () => {
         retries: 0,
         retryDelayMs: 1,
       },
-    }));
+    })));
 
     await createKbIndexer(projectA).index();
     await createKbIndexer(projectB).index();
     await createKbIndexer(projectA).clearIndex();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     expect(db.getChunksByFile(projectAFile)).toHaveLength(0);
     expect(db.getChunksByFile(projectBFile).length).toBeGreaterThan(0);
     expect(db.getChunksByFile(kbFile).length).toBeGreaterThan(0);
@@ -415,6 +430,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("keeps legacy global branch catalogs readable across repos until each project is reindexed", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -429,7 +445,7 @@ describe("indexer clearIndex force rebuild", () => {
     await createIndexer(projectB, 8, "global").index();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     const projectBChunk = db.getChunksByFile(projectBFile)[0];
     const projectAKey = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
     const projectBKey = `${hashContent(path.resolve(projectB)).slice(0, 16)}:default`;
@@ -445,6 +461,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("stops reading legacy global branch rows for a repo after that repo is reindexed", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -459,7 +476,7 @@ describe("indexer clearIndex force rebuild", () => {
     await createIndexer(projectB, 8, "global").index();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     const projectAChunk = db.getChunksByFile(projectAFile)[0];
     const projectBChunk = db.getChunksByFile(projectBFile)[0];
     const projectAKey = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
@@ -485,6 +502,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("clears both legacy and namespaced branch rows for the current repo during global force reset", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectAFile = path.join(projectA, "src", "a.ts");
@@ -495,7 +513,7 @@ describe("indexer clearIndex force rebuild", () => {
     await indexerA.index();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     const projectAChunk = db.getChunksByFile(projectAFile)[0];
     const namespacedBranch = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
 
@@ -515,6 +533,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("preserves foreign failed-batch and file-hash state during global clear when no vectors exist yet", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -576,6 +595,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("clears current-repo branch ownership for DB-only chunks left by failed embeddings", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -591,7 +611,7 @@ describe("indexer clearIndex force rebuild", () => {
     fs.writeFileSync(projectBFile, "export function beta() { return sharedDoc(); }\n", "utf-8");
     fs.writeFileSync(sharedFile, "export function sharedDoc() { return 'shared'; }\n", "utf-8");
 
-    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+    const createKbIndexer = (projectRoot: string) => trackIndexer(new Indexer(projectRoot, parseConfig({
       embeddingProvider: "custom",
       customProvider: {
         baseUrl: "http://localhost:11434/v1",
@@ -605,13 +625,13 @@ describe("indexer clearIndex force rebuild", () => {
         retries: 0,
         retryDelayMs: 1,
       },
-    }));
+    })));
 
     await createKbIndexer(projectA).index();
     await createKbIndexer(projectB).index();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     const projectABranch = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
     const projectBBranch = `${hashContent(path.resolve(projectB)).slice(0, 16)}:default`;
     const sharedChunk = db.getChunksByFile(sharedFile)[0];
@@ -641,6 +661,7 @@ describe("indexer clearIndex force rebuild", () => {
 
   it("preserves resolved call edges for shared symbols kept by another global project", async () => {
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -656,7 +677,7 @@ describe("indexer clearIndex force rebuild", () => {
     fs.writeFileSync(projectBFile, "export function beta() { return sharedHelper(); }\n", "utf-8");
     fs.writeFileSync(sharedFile, "export const shared = 'shared';\n", "utf-8");
 
-    const createKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+    const createKbIndexer = (projectRoot: string) => trackIndexer(new Indexer(projectRoot, parseConfig({
       embeddingProvider: "custom",
       customProvider: {
         baseUrl: "http://localhost:11434/v1",
@@ -670,13 +691,13 @@ describe("indexer clearIndex force rebuild", () => {
         retries: 0,
         retryDelayMs: 1,
       },
-    }));
+    })));
 
     await createKbIndexer(projectA).index();
     await createKbIndexer(projectB).index();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     const projectABranch = `${hashContent(path.resolve(projectA)).slice(0, 16)}:default`;
     const projectBBranch = `${hashContent(path.resolve(projectB)).slice(0, 16)}:default`;
 

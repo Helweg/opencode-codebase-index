@@ -12,7 +12,7 @@ describe("eval runner", () => {
 
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -545,7 +545,7 @@ describe("eval runner", () => {
       knowledgeBases?: string[];
     };
 
-    expect(localEvalConfig.knowledgeBases).toEqual([path.join("..", "main-repo", "external-kb")]);
+    expect(localEvalConfig.knowledgeBases).toEqual(["../main-repo/external-kb"]);
   });
 
   it("rematerializes the local eval config when repeated reindex runs use different explicit config paths", async () => {
@@ -661,7 +661,7 @@ describe("eval runner", () => {
 
     expect(secondRun.perQuery).toHaveLength(1);
     expect(secondRun.perQuery[0]?.hitAt10).toBe(true);
-    expect(secondRun.perQuery[0]?.results.some((result) => result.filePath.endsWith("kb-two/guide.ts"))).toBe(true);
+    expect(secondRun.perQuery[0]?.results.some((result) => result.filePath.endsWith(path.join("kb-two", "guide.ts")))).toBe(true);
 
     const localEvalConfig = JSON.parse(
       readFileSync(path.join(worktreeDir, ".opencode", "codebase-index.json"), "utf-8")
@@ -669,7 +669,7 @@ describe("eval runner", () => {
       knowledgeBases?: string[];
     };
 
-    expect(localEvalConfig.knowledgeBases).toEqual([path.join("..", "main-repo", "kb-two")]);
+    expect(localEvalConfig.knowledgeBases).toEqual(["../main-repo/kb-two"]);
   });
 
   it("compares against baseline and writes compare artifact", async () => {

@@ -339,6 +339,7 @@ describe("retrieval benchmark", () => {
       );
     });
 
+    let indexer: Indexer | undefined;
     try {
       mkdirSync(path.join(tempDir, "src", "indexer"), { recursive: true });
       mkdirSync(path.join(tempDir, "tests", "fixtures"), { recursive: true });
@@ -372,7 +373,7 @@ describe("retrieval benchmark", () => {
         },
       });
 
-      const indexer = new Indexer(tempDir, config);
+      indexer = new Indexer(tempDir, config);
       await indexer.index();
 
       const samples: number[] = [];
@@ -384,12 +385,13 @@ describe("retrieval benchmark", () => {
         });
         const elapsed = performance.now() - start;
         samples.push(elapsed);
-        expect(results[0]?.filePath).toContain("/src/indexer/index.ts");
+        expect(results[0]?.filePath).toContain(path.join("src", "indexer", "index.ts"));
       }
 
       const laneP95 = percentile(samples, 95);
       expect(laneP95).toBeLessThanOrEqual(50);
     } finally {
+      await indexer?.close();
       fetchSpy.mockRestore();
       rmSync(tempDir, { recursive: true, force: true });
     }

@@ -9,12 +9,22 @@ const fixturesDir = path.join(__dirname, "fixtures", "call-graph");
 
 describe("call-graph", () => {
   let tempDir: string;
+  let _dbs: Database[] = [];
+
+  function openDb(): Database {
+    const d = new Database(path.join(tempDir, "test.db"));
+    _dbs.push(d);
+    return d;
+  }
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "call-graph-test-"));
+    _dbs = [];
   });
 
   afterEach(() => {
+    _dbs.forEach((d) => d.close());
+    _dbs = [];
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -211,7 +221,7 @@ describe("call-graph", () => {
 
   describe("call graph storage", () => {
     it("should store symbols in database", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
       const symbols: SymbolData[] = [
         {
           id: "sym_001",
@@ -255,7 +265,7 @@ describe("call-graph", () => {
     });
 
     it("should store call edges", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -304,7 +314,7 @@ describe("call-graph", () => {
     });
 
     it("should store branch relationships", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -345,7 +355,7 @@ describe("call-graph", () => {
 
   describe("call resolution", () => {
     it("should resolve same-file calls", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -398,7 +408,7 @@ describe("call-graph", () => {
     });
 
     it("should leave cross-file calls unresolved", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -437,7 +447,7 @@ describe("call-graph", () => {
     });
 
     it("should handle multiple targets with same name", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -500,7 +510,7 @@ describe("call-graph", () => {
     });
 
     it("should keep ambiguous same-file target unresolved", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -562,7 +572,7 @@ describe("call-graph", () => {
 
   describe("branch awareness", () => {
     it("should filter symbols by current branch", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -627,7 +637,7 @@ describe("call-graph", () => {
     });
 
     it("should filter call edges by branch", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
 
       const symbols: SymbolData[] = [
         {
@@ -694,7 +704,7 @@ describe("call-graph", () => {
 
   describe("integration", () => {
     it("should build complete call graph for simple project", () => {
-      const db = new Database(path.join(tempDir, "test.db"));
+      const db = openDb();
       const content = fs.readFileSync(path.join(fixturesDir, "same-file-refs.ts"), "utf-8");
       const filePath = path.join(fixturesDir, "same-file-refs.ts");
 

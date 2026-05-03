@@ -10,10 +10,11 @@ import { Indexer } from "../src/indexer/index.js";
 describe("search integration", () => {
   let tempDir: string;
   let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let _indexers: Indexer[] = [];
 
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -70,7 +71,9 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(_indexers.map((i) => i.close()));
+    _indexers = [];
     fetchSpy.mockRestore();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -95,7 +98,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       },
     });
 
-    const indexer = new Indexer(tempDir, config);
+    const indexer = _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
     const stats = await indexer.index();
     expect(stats.totalFiles).toBeGreaterThan(0);
 
@@ -105,9 +108,9 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
     });
 
     const topPaths = results.slice(0, 3).map((r) => r.filePath);
-    expect(topPaths[0]).toContain("/app/indexer/index.ts");
-    expect(topPaths).not.toContain("/tests/fixtures/call-graph/same-file-refs.ts");
-    expect(topPaths).not.toContain("/benchmarks/run.ts");
+    expect(topPaths[0]).toContain(path.join("app", "indexer", "index.ts"));
+    expect(topPaths).not.toContain(path.join("tests", "fixtures", "call-graph", "same-file-refs.ts"));
+    expect(topPaths).not.toContain(path.join("benchmarks", "run.ts"));
   });
 
   it("prefers documentation paths for doc-intent phrasing with 'where is'", async () => {
@@ -130,7 +133,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       },
     });
 
-    const indexer = new Indexer(tempDir, config);
+    const indexer = _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
     await indexer.index();
 
     const results = await indexer.search("rankHybridResults documentation guide", 5, {
@@ -138,7 +141,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       filterByBranch: false,
     });
 
-    expect(results[0]?.filePath).toContain("/README.md");
+    expect(results[0]?.filePath).toContain("README.md");
   });
 
   it("returns implementation definitions with definitionIntent option even for ambiguous queries", async () => {
@@ -161,7 +164,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       },
     });
 
-    const indexer = new Indexer(tempDir, config);
+    const indexer = _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
     await indexer.index();
 
     const results = await indexer.search("rankHybridResults", 5, {
@@ -172,7 +175,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
 
     expect(results.length).toBeGreaterThan(0);
     const topPaths = results.slice(0, 3).map((r) => r.filePath);
-    expect(topPaths[0]).toContain("/app/indexer/index.ts");
+    expect(topPaths[0]).toContain(path.join("app", "indexer", "index.ts"));
   });
 
   it("forces definition lanes for doc-leaning queries when definitionIntent is true", async () => {
@@ -195,14 +198,14 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       },
     });
 
-    const indexer = new Indexer(tempDir, config);
+    const indexer = _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
     await indexer.index();
 
     const withoutOverride = await indexer.search("where is rankHybridResults documentation", 5, {
       metadataOnly: true,
       filterByBranch: false,
     });
-    expect(withoutOverride[0]?.filePath).toContain("/README.md");
+    expect(withoutOverride[0]?.filePath).toContain("README.md");
 
     const withOverride = await indexer.search("where is rankHybridResults documentation", 5, {
       metadataOnly: true,
@@ -211,12 +214,12 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
     });
 
     expect(withOverride.length).toBeGreaterThan(0);
-    expect(withOverride[0]?.filePath).toContain("/app/indexer/index.ts");
-    expect(withOverride[0]?.filePath).not.toContain("/README.md");
+    expect(withOverride[0]?.filePath).toContain(path.join("app", "indexer", "index.ts"));
+    expect(withOverride[0]?.filePath).not.toContain("README.md");
   });
 
   it("keeps implementation results ahead of docs even when external reranker prefers docs for implementation intent", async () => {
-    fetchSpy.mockImplementation(async (url, init) => {
+    fetchSpy.mockImplementation(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       if (String(url).includes("/rerank")) {
         return new Response(JSON.stringify({
           results: [
@@ -269,7 +272,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       },
     });
 
-    const indexer = new Indexer(tempDir, config);
+    const indexer = _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
     await indexer.index();
 
     const results = await indexer.search("where is rankHybridResults implementation", 5, {
@@ -277,12 +280,12 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       filterByBranch: false,
     });
 
-    expect(results[0]?.filePath).toContain("/app/indexer/index.ts");
-    expect(results[0]?.filePath).not.toContain("/README.md");
+    expect(results[0]?.filePath).toContain(path.join("app", "indexer", "index.ts"));
+    expect(results[0]?.filePath).not.toContain("README.md");
   });
 
   it("keeps documentation results ahead of code when external reranker prefers code for doc intent", async () => {
-    fetchSpy.mockImplementation(async (url, init) => {
+    fetchSpy.mockImplementation(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       if (String(url).includes("/rerank")) {
         return new Response(JSON.stringify({
           results: [
@@ -335,7 +338,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       },
     });
 
-    const indexer = new Indexer(tempDir, config);
+    const indexer = _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
     await indexer.index();
 
     const results = await indexer.search("rankHybridResults documentation guide", 5, {
@@ -343,7 +346,7 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
       filterByBranch: false,
     });
 
-    expect(results[0]?.filePath).toContain("/README.md");
-    expect(results[0]?.filePath).not.toContain("/app/indexer/index.ts");
+    expect(results[0]?.filePath).toContain("README.md");
+    expect(results[0]?.filePath).not.toContain(path.join("app", "indexer", "index.ts"));
   });
 });

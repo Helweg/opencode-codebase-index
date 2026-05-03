@@ -80,6 +80,7 @@ describe("Auto-GC", () => {
     });
 
     afterEach(() => {
+      db.close();
       fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
@@ -195,6 +196,7 @@ describe("Auto-GC", () => {
     });
 
     afterEach(() => {
+      db.close();
       fs.rmSync(tempDir, { recursive: true, force: true });
     });
 

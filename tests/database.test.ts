@@ -14,6 +14,7 @@ describe("Database", () => {
   });
 
   afterEach(() => {
+    db.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -30,7 +31,7 @@ describe("Database", () => {
 
       const retrieved = db.getEmbedding("hash123");
       expect(retrieved).not.toBeNull();
-      
+
       const floats = new Float32Array(retrieved!.buffer, retrieved!.byteOffset, retrieved!.byteLength / 4);
       expect(floats[0]).toBeCloseTo(1.0);
       expect(floats[1]).toBeCloseTo(2.0);
@@ -46,7 +47,7 @@ describe("Database", () => {
       db.upsertEmbedding("exists", embedding, "text", "model");
 
       const missing = db.getMissingEmbeddings(["exists", "missing1", "missing2"]);
-      
+
       expect(missing).toContain("missing1");
       expect(missing).toContain("missing2");
       expect(missing).not.toContain("exists");
@@ -69,7 +70,7 @@ describe("Database", () => {
       db.upsertChunk(testChunk);
 
       const retrieved = db.getChunk("chunk_abc123");
-      
+
       expect(retrieved).not.toBeNull();
       expect(retrieved!.chunkId).toBe("chunk_abc123");
       expect(retrieved!.contentHash).toBe("hash456");
@@ -95,7 +96,7 @@ describe("Database", () => {
       });
 
       const chunks = db.getChunksByFile("/path/to/file.ts");
-      
+
       expect(chunks.length).toBe(2);
     });
 
@@ -107,7 +108,7 @@ describe("Database", () => {
       });
 
       const deleted = db.deleteChunksByFile("/path/to/file.ts");
-      
+
       expect(deleted).toBe(2);
       expect(db.getChunk("chunk_abc123")).toBeNull();
     });
@@ -129,7 +130,7 @@ describe("Database", () => {
       db.addChunksToBranch("main", ["chunk_abc123"]);
 
       const chunkIds = db.getBranchChunkIds("main");
-      
+
       expect(chunkIds).toContain("chunk_abc123");
     });
 
@@ -145,9 +146,9 @@ describe("Database", () => {
     it("should clear branch", () => {
       db.upsertChunk(testChunk);
       db.addChunksToBranch("main", ["chunk_abc123"]);
-      
+
       const cleared = db.clearBranch("main");
-      
+
       expect(cleared).toBe(1);
       expect(db.getBranchChunkIds("main").length).toBe(0);
     });
@@ -158,7 +159,7 @@ describe("Database", () => {
       db.addChunksToBranch("feature", ["chunk_abc123"]);
 
       const branches = db.getAllBranches();
-      
+
       expect(branches).toContain("main");
       expect(branches).toContain("feature");
     });
@@ -172,7 +173,7 @@ describe("Database", () => {
       db.addChunksToBranch("feature", ["chunk_abc123", "chunk_feature_only"]);
 
       const delta = db.getBranchDelta("feature", "main");
-      
+
       expect(delta.added).toContain("chunk_feature_only");
       expect(delta.removed).toContain("chunk_main_only");
       expect(delta.added).not.toContain("chunk_abc123");
@@ -183,7 +184,7 @@ describe("Database", () => {
   describe("metadata", () => {
     it("should set and get metadata", () => {
       db.setMetadata("version", "1.0.0");
-      
+
       expect(db.getMetadata("version")).toBe("1.0.0");
     });
 
@@ -193,9 +194,9 @@ describe("Database", () => {
 
     it("should delete metadata", () => {
       db.setMetadata("key", "value");
-      
+
       const deleted = db.deleteMetadata("key");
-      
+
       expect(deleted).toBe(true);
       expect(db.getMetadata("key")).toBeNull();
     });
@@ -203,7 +204,7 @@ describe("Database", () => {
     it("should update existing metadata", () => {
       db.setMetadata("key", "value1");
       db.setMetadata("key", "value2");
-      
+
       expect(db.getMetadata("key")).toBe("value2");
     });
   });
@@ -224,16 +225,18 @@ describe("Database", () => {
     });
 
     it("should persist index metadata across database reopening", () => {
-      const dbPath = path.join(tempDir, "persist-test.db");
-      const db1 = new Database(dbPath);
-      
-      db1.setMetadata("index.embeddingProvider", "ollama");
-      db1.setMetadata("index.embeddingDimensions", "768");
-      
-      const db2 = new Database(dbPath);
-      
-      expect(db2.getMetadata("index.embeddingProvider")).toBe("ollama");
-      expect(db2.getMetadata("index.embeddingDimensions")).toBe("768");
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "db-test-persist-"));
+      try {
+        const dbPath = path.join(tempDir, "persist-test.db");
+        const db1 = new Database(dbPath);
+        db1.setMetadata("index.embeddingProvider", "ollama");
+        db1.setMetadata("index.embeddingDimensions", "768");
+        const db2 = new Database(dbPath);
+        expect(db2.getMetadata("index.embeddingProvider")).toBe("ollama");
+        expect(db2.getMetadata("index.embeddingDimensions")).toBe("768");
+      } finally {
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
     });
 
     it("should update index metadata on reindex", () => {
@@ -254,7 +257,7 @@ describe("Database", () => {
       db.upsertEmbedding("orphan_hash", embedding, "text", "model");
 
       const gcCount = db.gcOrphanEmbeddings();
-      
+
       expect(gcCount).toBe(1);
       expect(db.embeddingExists("orphan_hash")).toBe(false);
     });
@@ -272,7 +275,7 @@ describe("Database", () => {
       });
 
       const gcCount = db.gcOrphanEmbeddings();
-      
+
       expect(gcCount).toBe(0);
       expect(db.embeddingExists("referenced_hash")).toBe(true);
     });
@@ -288,7 +291,7 @@ describe("Database", () => {
       });
 
       const gcCount = db.gcOrphanChunks();
-      
+
       expect(gcCount).toBe(1);
       expect(db.getChunk("orphan_chunk")).toBeNull();
     });
@@ -305,7 +308,7 @@ describe("Database", () => {
       db.addChunksToBranch("main", ["referenced_chunk"]);
 
       const gcCount = db.gcOrphanChunks();
-      
+
       expect(gcCount).toBe(0);
       expect(db.getChunk("referenced_chunk")).not.toBeNull();
     });
@@ -326,7 +329,7 @@ describe("Database", () => {
       db.addChunksToBranch("main", ["chunk1"]);
 
       const stats = db.getStats();
-      
+
       expect(stats.embeddingCount).toBe(1);
       expect(stats.chunkCount).toBe(1);
       expect(stats.branchChunkCount).toBe(1);
