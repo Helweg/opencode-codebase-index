@@ -458,6 +458,23 @@ function poolEmbeddingVectors(vectors: number[][], weights: number[]): number[] 
   return pooled.map((value) => value / totalWeight);
 }
 
+function hasAllEmbeddingParts(
+  parts: Array<{ vector: number[]; tokenCount: number } | undefined>,
+  expectedPartCount: number
+): boolean {
+  if (parts.length !== expectedPartCount) {
+    return false;
+  }
+
+  for (let index = 0; index < expectedPartCount; index++) {
+    if (parts[index] === undefined) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function isPathWithinRoot(filePath: string, rootPath: string): boolean {
   const normalizedFilePath = path.resolve(filePath);
   const normalizedRoot = path.resolve(rootPath);
@@ -3375,7 +3392,7 @@ export class Indexer {
             }
 
             const parts = embeddingPartsByChunk.get(chunk.id) ?? [];
-            if (parts.length !== chunk.texts.length || parts.some((part) => !part)) {
+            if (!hasAllEmbeddingParts(parts, chunk.texts.length)) {
               continue;
             }
 
@@ -4212,7 +4229,7 @@ export class Indexer {
               }
 
               const parts = embeddingPartsByChunk.get(chunk.id) ?? [];
-              if (parts.length !== chunk.texts.length || parts.some((part) => !part)) {
+              if (!hasAllEmbeddingParts(parts, chunk.texts.length)) {
                 continue;
               }
 

@@ -481,6 +481,54 @@ describe("indexer failed batch recovery", () => {
     expect(status.failedBatchesCount).toBe(0);
   });
 
+  it("waits for all split parts before pooling when custom-provider calls complete out of order", async () => {
+    let callCount = 0;
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+      const texts = Array.isArray(body.input) ? body.input : [];
+      const currentCall = callCount++;
+
+      if (currentCall === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+
+      const data = texts.map((text, textIndex) => {
+        const seed = (text.length + textIndex + currentCall) % 31;
+        return {
+          embedding: Array.from({ length: 8 }, (_, idx) => seed + idx / 100),
+        };
+      });
+
+      return new Response(
+        JSON.stringify({
+          data,
+          usage: { total_tokens: Math.max(1, texts.length * 8) },
+        }),
+        { status: 200 }
+      );
+    });
+
+    fs.writeFileSync(
+      sourceFile,
+      [
+        "export function outOfOrderSplitChunk() {",
+        `  const blob = ${JSON.stringify("out-of-order ".repeat(1500))};`,
+        "  return blob.length;",
+        "}",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const indexer = createLimitedBatchIndexer(1);
+    const stats = await indexer.index();
+
+    expect(stats.failedChunks).toBe(0);
+    expect(stats.indexedChunks).toBe(1);
+
+    const status = await indexer.getStatus();
+    expect(status.failedBatchesCount).toBe(0);
+  });
+
   it("retries split custom-provider failed batches across multiple embedBatch calls", async () => {
     let firstChunkAttempt = true;
     const requestSizes: number[] = [];
@@ -534,6 +582,66 @@ describe("indexer failed batch recovery", () => {
     expect(retry.succeeded).toBe(1);
     expect(requestSizes.length).toBeGreaterThan(1);
     expect(requestSizes.every((size) => size <= 1)).toBe(true);
+
+    const status = await indexer.getStatus();
+    expect(status.failedBatchesCount).toBe(0);
+  });
+
+  it("waits for all split retry parts before pooling when retry calls complete out of order", async () => {
+    let firstChunkAttempt = true;
+    let callCount = 0;
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+      const texts = Array.isArray(body.input) ? body.input : [];
+      const currentCall = callCount++;
+
+      if (firstChunkAttempt && texts.some((text) => text.includes("Part 1/"))) {
+        firstChunkAttempt = false;
+        return new Response(JSON.stringify({ error: "transient batch failure" }), { status: 500 });
+      }
+
+      if (currentCall % 2 === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+
+      const data = texts.map((text, textIndex) => {
+        const seed = (text.length + textIndex + currentCall) % 41;
+        return {
+          embedding: Array.from({ length: 8 }, (_, idx) => seed + idx / 100),
+        };
+      });
+
+      return new Response(
+        JSON.stringify({
+          data,
+          usage: { total_tokens: Math.max(1, texts.length * 8) },
+        }),
+        { status: 200 }
+      );
+    });
+
+    fs.writeFileSync(
+      sourceFile,
+      [
+        "export function outOfOrderRetrySplitChunk() {",
+        `  const blob = ${JSON.stringify("retry-out-of-order ".repeat(1400))};`,
+        "  return blob.length;",
+        "}",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const indexer = createLimitedBatchIndexer(1);
+    const failedStats = await indexer.index();
+
+    expect(failedStats.failedChunks).toBe(1);
+    expect(failedStats.indexedChunks).toBe(0);
+
+    const retry = await indexer.retryFailedBatches();
+
+    expect(retry.failed).toBe(0);
+    expect(retry.remaining).toBe(0);
+    expect(retry.succeeded).toBe(1);
 
     const status = await indexer.getStatus();
     expect(status.failedBatchesCount).toBe(0);
