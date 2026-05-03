@@ -310,6 +310,20 @@ impl InvertedIndex {
     pub fn document_count(&self) -> u32 {
         self.inner.document_count() as u32
     }
+
+    #[napi]
+    pub fn serialize(&self) -> Result<String> {
+        self.inner
+            .serialize()
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn deserialize(&mut self, json: String) -> Result<()> {
+        self.inner
+            .deserialize(&json)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
 }
 
 #[napi]
@@ -362,6 +376,19 @@ impl Database {
         Ok(Self {
             conn: std::sync::Mutex::new(conn),
         })
+    }
+
+    #[napi]
+    pub fn close(&self) -> Result<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let replacement = rusqlite::Connection::open_in_memory()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let old = std::mem::replace(&mut *conn, replacement);
+        drop(old);
+        Ok(())
     }
 
     #[napi]

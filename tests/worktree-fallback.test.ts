@@ -105,11 +105,15 @@ describe("worktree fallback (issue #60)", () => {
   it("resolves the project index path to the main repo when the worktree has no local index", async () => {
     const config = parseConfig(loadMergedConfig(worktreeDir));
     const indexer = new Indexer(worktreeDir, config);
-    const status = await indexer.getStatus();
+    try {
+      const status = await indexer.getStatus();
 
-    expect(resolveProjectIndexPath(worktreeDir, "project")).toBe(path.join(mainRepoDir, ".opencode", "index"));
-    expect(status.indexPath).toBe(path.join(mainRepoDir, ".opencode", "index"));
-    expect(status.currentBranch).toBe("feature/x/y");
+      expect(resolveProjectIndexPath(worktreeDir, "project")).toBe(path.join(mainRepoDir, ".opencode", "index"));
+      expect(status.indexPath).toBe(path.join(mainRepoDir, ".opencode", "index"));
+      expect(status.currentBranch).toBe("feature/x/y");
+    } finally {
+      await indexer.close();
+    }
   });
 
   it("keeps explicit worktree-local config and index when they exist", () => {

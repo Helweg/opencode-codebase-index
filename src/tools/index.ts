@@ -87,13 +87,15 @@ function serializeConfigPathValue(value: string, baseDir: string): string {
     return trimmed;
   }
 
+  const normalizeRelativePath = (candidate: string): string => candidate.replace(/\\/g, "/");
+
   if (!path.isAbsolute(trimmed)) {
-    return path.normalize(trimmed);
+    return normalizeRelativePath(path.normalize(trimmed));
   }
 
   const relativePath = path.relative(baseDir, trimmed);
   if (!relativePath || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))) {
-    return path.normalize(relativePath || ".");
+    return normalizeRelativePath(path.normalize(relativePath || "."));
   }
 
   return path.normalize(trimmed);

@@ -8,7 +8,7 @@ vi.mock("fs", async () => {
   const actual = await vi.importActual<typeof import("fs")>("fs");
   return {
     ...actual,
-    existsSync: vi.fn((targetPath: string) => targetPath.includes("/main-repo/.opencode/index")),
+    existsSync: vi.fn((targetPath: string) => targetPath.replace(/\\/g, "/").includes("/main-repo/.opencode/index")),
   };
 });
 

@@ -14,6 +14,10 @@ function loadJsonFile(filePath: string): unknown {
   return null;
 }
 
+function normalizeRelativeConfigPath(candidate: string): string {
+  return candidate.replace(/\\/g, "/");
+}
+
 export function rebasePathEntries(
   values: unknown,
   fromDir: string,
@@ -31,7 +35,7 @@ export function rebasePathEntries(
         return trimmed;
       }
 
-      return path.normalize(path.relative(toDir, path.resolve(fromDir, trimmed)));
+      return normalizeRelativeConfigPath(path.normalize(path.relative(toDir, path.resolve(fromDir, trimmed))));
     })
     .filter(Boolean);
 }
@@ -60,7 +64,7 @@ export function resolveInheritedKnowledgeBaseEntries(
 
       if (path.isAbsolute(trimmed)) {
         if (isWithinRoot(sourceRoot, trimmed)) {
-          return path.normalize(path.relative(sourceRoot, trimmed) || ".");
+          return normalizeRelativeConfigPath(path.normalize(path.relative(sourceRoot, trimmed) || "."));
         }
 
         return path.normalize(trimmed);
@@ -68,10 +72,10 @@ export function resolveInheritedKnowledgeBaseEntries(
 
       const resolvedFromSource = path.resolve(sourceRoot, trimmed);
       if (isWithinRoot(sourceRoot, resolvedFromSource)) {
-        return path.normalize(trimmed);
+        return normalizeRelativeConfigPath(path.normalize(trimmed));
       }
 
-      return path.normalize(path.relative(targetRoot, resolvedFromSource));
+      return normalizeRelativeConfigPath(path.normalize(path.relative(targetRoot, resolvedFromSource)));
     })
     .filter(Boolean);
 }

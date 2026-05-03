@@ -2197,6 +2197,7 @@ export class Indexer {
 
     this.store = null;
     this.invertedIndex = null;
+    this.database?.close();
     this.database = null;
     this.indexCompatibility = null;
     this.fileHashCache.clear();
@@ -3821,5 +3822,14 @@ export class Indexer {
     }
 
     return results;
+  }
+
+  async close(): Promise<void> {
+    await this.database?.close();
+    this.database = null;
+    this.store = null;
+    this.invertedIndex = null;
+    this.provider = null;
+    this.reranker = null;
   }
 }

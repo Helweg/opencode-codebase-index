@@ -76,6 +76,37 @@ impl InvertedIndexInner {
         Ok(())
     }
 
+    pub fn serialize(&self) -> Result<String> {
+        let mut data = InvertedIndexData {
+            term_to_chunks: HashMap::new(),
+            chunk_tokens: self.chunk_tokens.clone(),
+            avg_doc_length: self.get_avg_doc_length(),
+        };
+        for (term, chunk_ids) in &self.term_to_chunks {
+            data.term_to_chunks
+                .insert(term.clone(), chunk_ids.iter().cloned().collect());
+        }
+        Ok(serde_json::to_string(&data)?)
+    }
+
+    pub fn deserialize(&mut self, json: &str) -> Result<()> {
+        let data: InvertedIndexData = serde_json::from_str(json)?;
+        self.term_to_chunks.clear();
+        for (term, chunk_ids) in data.term_to_chunks {
+            self.term_to_chunks
+                .insert(term, chunk_ids.into_iter().collect());
+        }
+        self.chunk_tokens.clear();
+        self.total_token_count = 0;
+        for (chunk_id, tokens) in data.chunk_tokens {
+            for count in tokens.values() {
+                self.total_token_count += *count as u64;
+            }
+            self.chunk_tokens.insert(chunk_id, tokens);
+        }
+        Ok(())
+    }
+
     pub fn add_chunk(&mut self, chunk_id: &str, content: &str) {
         let tokens = self.tokenize(content);
         let mut term_freq: HashMap<String, u32> = HashMap::new();

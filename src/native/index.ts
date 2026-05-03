@@ -46,9 +46,10 @@ function getNativeBinding() {
   // The native module is in the 'native' folder at package root
   // From dist/index.js, we go up one level to package root, then into native/
   // From src/native/index.ts (dev/test), we go up two levels to package root
-  const isDevMode = currentDir.includes('/src/native');
-  const packageRoot = isDevMode 
-    ? path.resolve(currentDir, '../..') 
+  const normalizedDir = currentDir.replace(/\\/g, '/');
+  const isDevMode = normalizedDir.includes('/src/native') || currentDir.includes(path.join('src', 'native'));
+  const packageRoot = isDevMode
+    ? path.resolve(currentDir, '../..')
     : path.resolve(currentDir, '..');
   const nativePath = path.join(packageRoot, 'native', bindingName);
   
@@ -71,9 +72,12 @@ function createMockNativeBinding() {
     },
     InvertedIndex: class {
       constructor() { throw error; }
+      serialize() { throw error; }
+      deserialize() { throw error; }
     },
     Database: class {
       constructor() { throw error; }
+      close() { throw error; }
     },
   };
 }
@@ -559,6 +563,14 @@ export class InvertedIndex {
     this.inner.save();
   }
 
+  serialize(): string {
+    return this.inner.serialize();
+  }
+
+  deserialize(json: string): void {
+    this.inner.deserialize(json);
+  }
+
   addChunk(chunkId: string, content: string): void {
     this.inner.addChunk(chunkId, content);
   }
@@ -619,6 +631,10 @@ export class Database {
 
   constructor(dbPath: string) {
     this.inner = new native.Database(dbPath);
+  }
+
+  close(): void {
+    this.inner.close();
   }
 
   embeddingExists(contentHash: string): boolean {

@@ -209,6 +209,7 @@ export async function runEvaluation(options: EvalRunOptions): Promise<EvalRunRes
 
   const indexer = new Indexer(options.projectRoot, effectiveConfig);
 
+  try {
   await indexer.index();
 
   const perQuery: PerQueryEvalResult[] = [];
@@ -310,6 +311,9 @@ export async function runEvaluation(options: EvalRunOptions): Promise<EvalRunRes
   writeText(path.join(outputDir, "summary.md"), markdown);
 
   return { outputDir, summary, perQuery, comparison, gate };
+  } finally {
+    await indexer.close();
+  }
 }
 
 export async function runSweep(
