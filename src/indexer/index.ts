@@ -189,6 +189,8 @@ export interface IndexProgress {
   chunksProcessed: number;
   totalChunks: number;
   currentFiles?: string[];
+  /** True on the progress update emitted before a batch starts; false/absent on the one emitted after it completes. */
+  batchStarting?: boolean;
   /** Estimated seconds until embedding completes. Only present during the embedding phase. */
   estimatedSecondsRemaining?: number;
 }
@@ -3471,6 +3473,7 @@ export class Indexer {
         chunksProcessed: stats.indexedChunks,
         totalChunks: stats.totalChunks,
         currentFiles: fileBatch.map(f => f.path),
+        batchStarting: true,
       }, onProgress);
 
       // Read content for only this batch
