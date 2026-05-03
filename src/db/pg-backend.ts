@@ -559,22 +559,12 @@ export class PgDatabaseBackend implements IDatabaseBackend {
           ON ${this.t("chunks")} (lower(name))
       `);
       await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.t("chunks_source_idx")}
-          ON ${this.t("chunks")} (source_id)
-      `);
-
-      await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.t("branch_chunks")} (
           source_id TEXT NOT NULL DEFAULT '',
           branch    TEXT NOT NULL,
           chunk_id  TEXT NOT NULL,
           PRIMARY KEY (source_id, branch, chunk_id)
         )
-      `);
-
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.t("branch_chunks_branch_idx")}
-          ON ${this.t("branch_chunks")} (source_id, branch)
       `);
 
       await client.query(`
@@ -599,10 +589,6 @@ export class PgDatabaseBackend implements IDatabaseBackend {
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.t("symbols_name_idx")}
           ON ${this.t("symbols")} (name)
-      `);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.t("symbols_source_idx")}
-          ON ${this.t("symbols")} (source_id)
       `);
 
       await client.query(`
@@ -631,10 +617,6 @@ export class PgDatabaseBackend implements IDatabaseBackend {
         CREATE INDEX IF NOT EXISTS ${this.t("call_edges_target_idx")}
           ON ${this.t("call_edges")} (target_name)
       `);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.t("call_edges_source_idx")}
-          ON ${this.t("call_edges")} (source_id)
-      `);
 
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.t("branch_symbols")} (
@@ -643,11 +625,6 @@ export class PgDatabaseBackend implements IDatabaseBackend {
           symbol_id TEXT NOT NULL,
           PRIMARY KEY (source_id, branch, symbol_id)
         )
-      `);
-
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.t("branch_symbols_branch_idx")}
-          ON ${this.t("branch_symbols")} (source_id, branch)
       `);
 
       await client.query(`
@@ -728,6 +705,34 @@ export class PgDatabaseBackend implements IDatabaseBackend {
         await client.query(`ALTER TABLE ${this.t("file_hashes")} DROP CONSTRAINT IF EXISTS ${this.t("file_hashes_pkey")}`);
         await client.query(`ALTER TABLE ${this.t("file_hashes")} ADD PRIMARY KEY (source_id, file_path)`);
       }
+
+      // ── Indexes on source_id (must come after ADD COLUMN migrations) ─
+      // These are deferred so that CREATE INDEX doesn't fire before the
+      // column exists on databases that pre-date source_id support.
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS ${this.t("chunks_source_idx")}
+          ON ${this.t("chunks")} (source_id)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS ${this.t("symbols_source_idx")}
+          ON ${this.t("symbols")} (source_id)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS ${this.t("call_edges_source_idx")}
+          ON ${this.t("call_edges")} (source_id)
+      `);
+      // Drop and recreate composite branch indexes: old definition was (branch)
+      // only; new definition is (source_id, branch) to support source filtering.
+      await client.query(`DROP INDEX IF EXISTS ${this.t("branch_chunks_branch_idx")}`);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS ${this.t("branch_chunks_branch_idx")}
+          ON ${this.t("branch_chunks")} (source_id, branch)
+      `);
+      await client.query(`DROP INDEX IF EXISTS ${this.t("branch_symbols_branch_idx")}`);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS ${this.t("branch_symbols_branch_idx")}
+          ON ${this.t("branch_symbols")} (source_id, branch)
+      `);
     });
   }
 
