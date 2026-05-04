@@ -36,8 +36,14 @@ import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
 
-const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php"]);
-const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex"]);
+// Languages whose identifiers are case-insensitive at the language level.
+// The Rust call_extractor lowercases callee names for these languages (except
+// constructors and imports), so same-file resolution in this file must use
+// the same normalization when looking up symbols by name. Keep this set in
+// sync with the matching branch in native/src/call_extractor.rs.
+export const CASE_INSENSITIVE_LANGUAGES = new Set(["apex"]);
+export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "function_declaration",
   "function",
   "arrow_function",
@@ -59,6 +65,7 @@ const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "trait_item",
   "mod_item",
   "trait_declaration",
+  "trigger_declaration",
 ]);
 
 function float32ArrayToBuffer(arr: number[]): Buffer {
@@ -3187,11 +3194,23 @@ export class Indexer {
         allSymbolIds.add(symbolId);
       }
 
+      // For case-insensitive languages (e.g. Apex), the Rust call extractor
+      // already lowercases non-constructor / non-import callee names, so we
+      // must lowercase the symbol-map keys here too. Otherwise a declaration
+      // like `MyMethod` would not match a lowercased call edge target like
+      // `mymethod`, leaving same-file calls unresolved (toSymbolId = NULL).
+      const fileLanguage = parsed.chunks[0]?.language;
+      const isCaseInsensitiveLanguage =
+        !!fileLanguage && CASE_INSENSITIVE_LANGUAGES.has(fileLanguage);
+      const normalizeSymbolKey = (name: string): string =>
+        isCaseInsensitiveLanguage ? name.toLowerCase() : name;
+
       const symbolsByName = new Map<string, SymbolData[]>();
       for (const symbol of fileSymbols) {
-        const existing = symbolsByName.get(symbol.name) ?? [];
+        const key = normalizeSymbolKey(symbol.name);
+        const existing = symbolsByName.get(key) ?? [];
         existing.push(symbol);
-        symbolsByName.set(symbol.name, existing);
+        symbolsByName.set(key, existing);
       }
 
       if (fileSymbols.length > 0) {
@@ -3200,7 +3219,6 @@ export class Indexer {
       }
 
       // Extract call sites from file content (only for supported languages)
-      const fileLanguage = parsed.chunks[0]?.language;
       if (!fileLanguage || !CALL_GRAPH_LANGUAGES.has(fileLanguage)) continue;
 
       const callSites = extractCalls(changedFile.content, fileLanguage);
@@ -3231,9 +3249,10 @@ export class Indexer {
       if (edges.length > 0) {
         database.upsertCallEdgesBatch(edges);
 
-        // Resolve same-file calls
+        // Resolve same-file calls (with the same case-insensitivity rules
+        // used to build symbolsByName above).
         for (const edge of edges) {
-          const candidates = symbolsByName.get(edge.targetName);
+          const candidates = symbolsByName.get(normalizeSymbolKey(edge.targetName));
           if (candidates && candidates.length === 1) {
             database.resolveCallEdge(edge.id, candidates[0].id);
           }
