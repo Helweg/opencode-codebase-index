@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseConfig } from "../src/config/schema.js";
 import { Indexer } from "../src/indexer/index.js";
-import { Database, VectorStore } from "../src/native/index.js";
+import { Database, VectorStore, hashContent } from "../src/native/index.js";
 import { formatStatus } from "../src/tools/utils.js";
 
 describe("indexer failed batch recovery", () => {
@@ -81,6 +81,7 @@ describe("indexer failed batch recovery", () => {
 
   afterEach(() => {
     fetchSpy.mockRestore();
+    vi.unstubAllEnvs();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -1129,6 +1130,174 @@ describe("indexer failed batch recovery", () => {
     expect(foreignChunk).toBeDefined();
     expect(typeof foreignChunk?.text).toBe("string");
     expect(foreignChunk?.texts).toBeUndefined();
+
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("does not retry custom-provider non-retryable errors during retryFailedBatches()", async () => {
+    let embedCallCount = 0;
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+      if (Array.isArray(body.input)) {
+        embedCallCount += 1;
+      }
+
+      return new Response(JSON.stringify({ error: "invalid api key" }), { status: 401 });
+    });
+
+    const failedBatchesPath = path.join(tempDir, ".opencode", "index", "failed-batches.json");
+    fs.mkdirSync(path.dirname(failedBatchesPath), { recursive: true });
+    fs.writeFileSync(
+      failedBatchesPath,
+      JSON.stringify([
+        {
+          chunks: [
+            {
+              id: "non-retryable-custom-provider-chunk",
+              text: "export function alpha() { return 'alpha'; }",
+              content: "export function alpha() { return 'alpha'; }",
+              contentHash: "non-retryable-custom-provider-hash",
+              metadata: {
+                filePath: sourceFile,
+                startLine: 1,
+                endLine: 1,
+                language: "typescript",
+                chunkType: "function",
+                hash: "non-retryable-custom-provider-hash",
+                name: "alpha",
+              },
+            },
+          ],
+          error: "previous custom provider failure",
+          attemptCount: 1,
+          lastAttempt: new Date().toISOString(),
+        },
+      ], null, 2),
+      "utf-8"
+    );
+
+    const retryingIndexer = new Indexer(tempDir, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-embedding-model",
+        dimensions: 8,
+      },
+      indexing: {
+        watchFiles: false,
+        retries: 3,
+        retryDelayMs: 1,
+      },
+    }));
+
+    await retryingIndexer.initialize();
+    const retry = await retryingIndexer.retryFailedBatches();
+
+    expect(embedCallCount).toBe(1);
+    expect(retry.succeeded).toBe(0);
+    expect(retry.failed).toBe(1);
+    expect(retry.remaining).toBe(1);
+
+    const persistedBatches = JSON.parse(fs.readFileSync(failedBatchesPath, "utf-8")) as Array<{
+      attemptCount: number;
+      error: string;
+    }>;
+    expect(persistedBatches[0]?.attemptCount).toBe(2);
+    expect(persistedBatches[0]?.error).toContain("invalid api key");
+  });
+
+  it("clears pending global force re-embed metadata after retryFailedBatches() recovers all remaining chunks", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "failed-batches-force-reembed-home-"));
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectB = path.join(tempDir, "project-b");
+    const kbDir = path.join(tempDir, "shared-kb");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    const projectBFile = path.join(projectB, "src", "b.ts");
+    const kbFile = path.join(kbDir, "docs", "shared.ts");
+
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.mkdirSync(path.dirname(projectBFile), { recursive: true });
+    fs.mkdirSync(path.dirname(kbFile), { recursive: true });
+    fs.writeFileSync(projectAFile, "export function alpha() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(projectBFile, "export function beta() { return sharedDoc(); }\n", "utf-8");
+    fs.writeFileSync(kbFile, "export function sharedDoc() { return 'shared'; }\n", "utf-8");
+
+    const kbPrompt = "export function sharedDoc() { return 'shared'; }";
+    let failSharedKbEmbedding = false;
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+      const texts = Array.isArray(body.input) ? body.input : [];
+
+      if (failSharedKbEmbedding && texts.some((text) => text.includes(kbPrompt))) {
+        return new Response(JSON.stringify({ error: "simulated shared kb failure" }), { status: 500 });
+      }
+
+      const data = texts.map((text) => {
+        let seed = 0;
+        for (const ch of text) {
+          seed = (seed * 31 + ch.charCodeAt(0)) % 1000;
+        }
+        const embedding = Array.from({ length: 8 }, (_, idx) => ((seed + idx * 17) % 997) / 997);
+        return { embedding };
+      });
+
+      return new Response(
+        JSON.stringify({
+          data,
+          usage: { total_tokens: Math.max(1, texts.length * 8) },
+        }),
+        { status: 200 }
+      );
+    });
+
+    const createGlobalKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      scope: "global",
+      knowledgeBases: [kbDir],
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    }));
+
+    await createGlobalKbIndexer(projectA).index();
+    await createGlobalKbIndexer(projectB).index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const projectABranch = `${projectHash}:default`;
+    db.setMetadata(`index.embeddingStrategyVersion.${projectHash}`, "1");
+
+    const resettingIndexer = createGlobalKbIndexer(projectA);
+    await resettingIndexer.clearIndex();
+
+    failSharedKbEmbedding = true;
+    const failedStats = await resettingIndexer.index();
+    expect(failedStats.failedChunks).toBeGreaterThan(0);
+    expect(db.getMetadata(`index.forceReembed.${projectHash}`)).toBe("true");
+
+    const sharedChunkId = db.getChunksByFile(kbFile)[0]?.chunkId;
+    expect(sharedChunkId).toBeTruthy();
+    expect(db.chunkExistsOnBranch(projectABranch, sharedChunkId!)).toBe(false);
+
+    failSharedKbEmbedding = false;
+    const retryingIndexer = createGlobalKbIndexer(projectA);
+    const retry = await retryingIndexer.retryFailedBatches();
+
+    expect(retry.failed).toBe(0);
+    expect(retry.remaining).toBe(0);
+    expect(retry.succeeded).toBeGreaterThan(0);
+    expect(db.getMetadata(`index.forceReembed.${projectHash}`)).toBeNull();
+    expect(db.chunkExistsOnBranch(projectABranch, sharedChunkId!)).toBe(true);
 
     fs.rmSync(tempHome, { recursive: true, force: true });
   });

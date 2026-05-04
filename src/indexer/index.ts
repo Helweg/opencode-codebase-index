@@ -1902,6 +1902,41 @@ export class Indexer {
     return primary === legacy ? [primary] : [primary, legacy];
   }
 
+  private getProjectLocalScopedOwnershipIds(roots: string[]): {
+    chunkIds: Set<string>;
+    symbolIds: Set<string>;
+  } {
+    const chunkIds = new Set<string>();
+    const symbolIds = new Set<string>();
+    if (!this.database) {
+      return { chunkIds, symbolIds };
+    }
+
+    const projectRootPath = path.resolve(this.projectRoot);
+    const projectLocalFilePaths = new Set<string>([
+      ...Array.from(this.fileHashCache.keys()).filter(
+        (filePath) => this.isFileInCurrentScope(filePath, roots) && isPathWithinRoot(filePath, projectRootPath)
+      ),
+      ...(this.store?.getAllMetadata() ?? [])
+        .map(({ metadata }) => metadata.filePath)
+        .filter(
+          (filePath) => this.isFileInCurrentScope(filePath, roots) && isPathWithinRoot(filePath, projectRootPath)
+        ),
+    ]);
+
+    for (const filePath of projectLocalFilePaths) {
+      for (const chunk of this.database.getChunksByFile(filePath)) {
+        chunkIds.add(chunk.chunkId);
+      }
+
+      for (const symbol of this.database.getSymbolsByFile(filePath)) {
+        symbolIds.add(symbol.id);
+      }
+    }
+
+    return { chunkIds, symbolIds };
+  }
+
   private getProjectScopedBranchCatalogCleanupKeys(projectChunkIds: string[], projectSymbolIds: string[]): string[] {
     if (this.config.scope !== "global") {
       return this.getBranchCatalogCleanupKeys();
@@ -2012,11 +2047,30 @@ export class Indexer {
     }
 
     const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
+    const roots = this.getScopedRoots();
+    const { chunkIds: projectLocalChunkIds, symbolIds: projectLocalSymbolIds } = this.getProjectLocalScopedOwnershipIds(roots);
+
     return this.database.getAllBranches().some(
-      (branchKey) => !branchKey.startsWith(`${projectHash}:`) && (
-        this.database!.getBranchChunkIds(branchKey).length > 0 ||
-        this.database!.getBranchSymbolIds(branchKey).length > 0
-      )
+      (branchKey) => {
+        const branchChunkIds = this.database!.getBranchChunkIds(branchKey);
+        const branchSymbolIds = this.database!.getBranchSymbolIds(branchKey);
+        const hasBranchData = branchChunkIds.length > 0 || branchSymbolIds.length > 0;
+        if (!hasBranchData) {
+          return false;
+        }
+
+        if (branchKey.startsWith(`${projectHash}:`)) {
+          return false;
+        }
+
+        if (!branchKey.includes(":")) {
+          const referencesCurrentProjectChunks = branchChunkIds.some((chunkId) => projectLocalChunkIds.has(chunkId));
+          const referencesCurrentProjectSymbols = branchSymbolIds.some((symbolId) => projectLocalSymbolIds.has(symbolId));
+          return !(referencesCurrentProjectChunks || referencesCurrentProjectSymbols);
+        }
+
+        return true;
+      }
     );
   }
 
@@ -4175,6 +4229,7 @@ export class Indexer {
   async retryFailedBatches(): Promise<{ succeeded: number; failed: number; remaining: number }> {
     const { store, provider, invertedIndex, database, configuredProviderInfo } = await this.ensureInitialized();
     const maxChunkTokens = getSafeEmbeddingChunkTokenLimit(configuredProviderInfo);
+    const providerRateLimits = this.getProviderRateLimits(configuredProviderInfo.provider);
 
     const roots = this.config.scope === "global" ? this.getScopedRoots() : null;
     const { scoped: scopedFailedBatches, retained: retainedFailedBatches } = roots
@@ -4211,7 +4266,10 @@ export class Indexer {
               },
               {
                 retries: this.config.indexing.retries,
-                minTimeout: this.config.indexing.retryDelayMs,
+                minTimeout: Math.max(this.config.indexing.retryDelayMs, providerRateLimits.minRetryMs),
+                maxTimeout: providerRateLimits.maxRetryMs,
+                factor: 2,
+                shouldRetry: (error) => !((error as { error?: Error }).error instanceof CustomProviderNonRetryableError),
               }
             );
 
@@ -4363,6 +4421,12 @@ export class Indexer {
     if (succeeded > 0) {
       store.save();
       invertedIndex.save();
+    }
+
+    if (roots && succeeded > 0 && persistedStillFailing.length === 0 && this.hasProjectForceReembedPending()) {
+      database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+      this.saveIndexMetadata(configuredProviderInfo);
+      this.indexCompatibility = { compatible: true };
     }
 
     return { succeeded, failed, remaining: persistedStillFailing.length };

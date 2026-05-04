@@ -1037,7 +1037,7 @@ describe("indexer clearIndex force rebuild", () => {
     expect(db.chunkExistsOnBranch(defaultBranch, projectAChunk.chunkId)).toBe(false);
     expect(db.chunkExistsOnBranch(featureBranch, projectAChunk.chunkId)).toBe(false);
     expect(db.chunkExistsOnBranch(legacyFeatureBranch, projectAChunk.chunkId)).toBe(false);
-    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBe("true");
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBeNull();
   });
 
   it("allows incompatible global reset when only same-project non-current branches have data", async () => {
@@ -1110,7 +1110,42 @@ describe("indexer clearIndex force rebuild", () => {
 
     expect(db.chunkExistsOnBranch(defaultBranch, projectAChunk.chunkId)).toBe(false);
     expect(db.chunkExistsOnBranch(deletedLegacyBranch, projectAChunk.chunkId)).toBe(false);
-    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBe("true");
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBeNull();
+  });
+
+  it("allows incompatible global reset when only same-project legacy bare branch rows remain", async () => {
+    vi.stubEnv("HOME", tempHome);
+
+    const projectA = path.join(tempDir, "project-a");
+    const projectAFile = path.join(projectA, "src", "a.ts");
+    fs.mkdirSync(path.join(projectA, ".git", "refs", "heads", "feature"), { recursive: true });
+    fs.mkdirSync(path.dirname(projectAFile), { recursive: true });
+    fs.writeFileSync(path.join(projectA, ".git", "HEAD"), "ref: refs/heads/default\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "default"), "1111111111111111111111111111111111111111\n");
+    fs.writeFileSync(path.join(projectA, ".git", "refs", "heads", "feature", "test"), "2222222222222222222222222222222222222222\n");
+    fs.writeFileSync(projectAFile, "export function alpha() { return 'a'; }\n", "utf-8");
+
+    await createIndexer(projectA, 8, "global").index();
+
+    const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
+    const db = new Database(dbPath);
+    const projectAHash = hashContent(path.resolve(projectA)).slice(0, 16);
+    const namespacedDefaultBranch = `${projectAHash}:default`;
+    const legacyFeatureBranch = "feature/test";
+    const projectAChunk = db.getChunksByFile(projectAFile)[0];
+
+    db.addChunksToBranchBatch(legacyFeatureBranch, [projectAChunk.chunkId]);
+    db.clearBranch(namespacedDefaultBranch);
+
+    expect(db.getBranchChunkIds(namespacedDefaultBranch)).toHaveLength(0);
+    expect(db.chunkExistsOnBranch(legacyFeatureBranch, projectAChunk.chunkId)).toBe(true);
+
+    embeddingDimensions = 4;
+    const incompatibleIndexer = createIndexer(projectA, 4, "global");
+    await expect(incompatibleIndexer.clearIndex()).resolves.toBeUndefined();
+
+    expect(db.chunkExistsOnBranch(legacyFeatureBranch, projectAChunk.chunkId)).toBe(false);
+    expect(db.getMetadata(`index.forceReembed.${projectAHash}`)).toBeNull();
   });
 
   it("preserves foreign legacy shared-kb branch rows during strategy reset", async () => {
