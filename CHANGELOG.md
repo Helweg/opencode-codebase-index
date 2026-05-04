@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Apex semantic parsing**: Added tree-sitter-based semantic chunking for Salesforce Apex source files (`.cls` and `.trigger`) via the [`tree-sitter-sfapex`](https://github.com/aheber/tree-sitter-sfapex) grammar. Recognizes class, interface, enum, method, constructor, and trigger declarations with leading JavaDoc-style block comments attached to their target chunks. Anonymous Apex (`.apex`), SOQL, and SOSL standalone files are out of scope.
+- **Apex call graph extraction**: Method invocations, constructor calls (`new MyClass(...)`), and instance/static method calls are extracted for the `call_graph` tool. Apex is case-insensitive at the language level, so callee names are normalized to lowercase during extraction (matching the existing PHP behavior). Apex has no imports — namespaces are referenced via fully qualified names — so no `Import` edges are produced.
+
 ## [0.7.0] - 2026-04-14
 
 ### Added

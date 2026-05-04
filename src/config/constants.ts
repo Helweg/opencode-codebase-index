@@ -4,6 +4,7 @@ export const DEFAULT_INCLUDE = [
   "**/*.{go,rs,java,kt,scala}",
   "**/*.{c,cpp,cc,h,hpp}",
   "**/*.{rb,php,inc,swift}",
+  "**/*.{cls,trigger}",
   "**/*.{vue,svelte,astro}",
   "**/*.{sql,graphql,proto}",
   "**/*.{yaml,yml,toml}",
@@ -77,7 +78,7 @@ export const EMBEDDING_MODELS = {
       provider: "ollama",
       model: "nomic-embed-text",
       dimensions: 768,
-      maxTokens: 8192,
+      maxTokens: 2048,
       costPer1MTokens: 0.00,
     },
     "mxbai-embed-large": {

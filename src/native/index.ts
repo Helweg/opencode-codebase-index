@@ -325,27 +325,27 @@ export class VectorStore {
 // Token estimation: ~4 chars per token for code (conservative)
 const CHARS_PER_TOKEN = 4;
 const MAX_BATCH_TOKENS = 7500; // Leave buffer under 8192 API limit
-const MAX_SINGLE_CHUNK_TOKENS = 2000; // Truncate individual chunks beyond this
+const MAX_SINGLE_CHUNK_TOKENS = 2000; // Default truncation cap for individual chunks
 
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
-export function createEmbeddingText(chunk: CodeChunk, filePath: string): string {
+function getEmbeddingHeaderParts(chunk: CodeChunk, filePath: string): string[] {
   const parts: string[] = [];
-  
+
   const fileName = filePath.split("/").pop() || filePath;
   const dirPath = filePath.split("/").slice(-3, -1).join("/");
-  
+
   const langDescriptors: Record<string, string> = {
     typescript: "TypeScript",
-    javascript: "JavaScript", 
+    javascript: "JavaScript",
     python: "Python",
     rust: "Rust",
     go: "Go",
     java: "Java",
   };
-  
+
   const typeDescriptors: Record<string, string> = {
     function_declaration: "function",
     function: "function",
@@ -368,48 +368,103 @@ export function createEmbeddingText(chunk: CodeChunk, filePath: string): string 
 
   const lang = langDescriptors[chunk.language] || chunk.language;
   const typeDesc = typeDescriptors[chunk.chunkType] || chunk.chunkType;
-  
+
   if (chunk.name) {
     parts.push(`${lang} ${typeDesc} "${chunk.name}"`);
   } else {
     parts.push(`${lang} ${typeDesc}`);
   }
-  
+
   if (dirPath) {
     parts.push(`in ${dirPath}/${fileName}`);
   } else {
     parts.push(`in ${fileName}`);
   }
-  
+
   const semanticHints = extractSemanticHints(chunk.name || "", chunk.content);
   if (semanticHints.length > 0) {
     parts.push(`Purpose: ${semanticHints.join(", ")}`);
   }
-  
-  parts.push("");
-  
-  let content = chunk.content;
-  const headerLength = parts.join("\n").length;
-  const maxContentChars = (MAX_SINGLE_CHUNK_TOKENS * CHARS_PER_TOKEN) - headerLength;
-  
-  if (content.length > maxContentChars) {
-    content = content.slice(0, maxContentChars) + "\n... [truncated]";
-  }
-  
-  parts.push(content);
 
+  return parts;
+}
+
+function buildEmbeddingText(headerParts: string[], content: string, partIndex?: number, partCount?: number): string {
+  const parts = [...headerParts];
+  if (partCount && partCount > 1 && partIndex) {
+    parts.push(`Part ${partIndex}/${partCount}`);
+  }
+  parts.push("");
+  parts.push(content);
   return parts.join("\n");
 }
 
-export function createDynamicBatches<T extends { text: string }>(chunks: T[]): T[][] {
+function splitOversizedContent(content: string, maxContentChars: number): string[] {
+  if (content.length <= maxContentChars) {
+    return [content];
+  }
+
+  const overlapChars = Math.max(CHARS_PER_TOKEN * 32, Math.min(Math.floor(maxContentChars * 0.15), CHARS_PER_TOKEN * 128));
+  const stepChars = Math.max(1, maxContentChars - overlapChars);
+  const segments: string[] = [];
+
+  for (let start = 0; start < content.length; start += stepChars) {
+    const end = Math.min(content.length, start + maxContentChars);
+    segments.push(content.slice(start, end));
+    if (end >= content.length) {
+      break;
+    }
+  }
+
+  return segments;
+}
+
+export function createEmbeddingTexts(chunk: CodeChunk, filePath: string, maxChunkTokens = MAX_SINGLE_CHUNK_TOKENS): string[] {
+  const headerParts = getEmbeddingHeaderParts(chunk, filePath);
+  const headerLength = buildEmbeddingText(headerParts, "", 1, 9).length;
+  const maxContentChars = Math.max(1, (maxChunkTokens * CHARS_PER_TOKEN) - headerLength);
+  const segments = splitOversizedContent(chunk.content, maxContentChars);
+
+  if (segments.length === 1) {
+    return [buildEmbeddingText(headerParts, segments[0])];
+  }
+
+  return segments.map((segment, index) => buildEmbeddingText(headerParts, segment, index + 1, segments.length));
+}
+
+export function createEmbeddingText(chunk: CodeChunk, filePath: string, maxChunkTokens = MAX_SINGLE_CHUNK_TOKENS): string {
+  const text = createEmbeddingTexts(chunk, filePath, maxChunkTokens)[0];
+  if (!text) {
+    return "";
+  }
+
+  const maxChars = maxChunkTokens * CHARS_PER_TOKEN;
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  return text.slice(0, Math.max(0, maxChars - 17)) + "\n... [truncated]";
+}
+
+export interface DynamicBatchOptions {
+  maxBatchTokens?: number;
+  maxBatchItems?: number;
+}
+
+export function createDynamicBatches<T extends { text: string; tokenCount?: number }>(chunks: T[], options: DynamicBatchOptions = {}): T[][] {
   const batches: T[][] = [];
   let currentBatch: T[] = [];
   let currentTokens = 0;
+  const maxBatchTokens = Math.max(1, options.maxBatchTokens ?? MAX_BATCH_TOKENS);
+  const maxBatchItems = Math.max(1, options.maxBatchItems ?? Number.MAX_SAFE_INTEGER);
   
   for (const chunk of chunks) {
-    const chunkTokens = estimateTokens(chunk.text);
-    
-    if (currentBatch.length > 0 && currentTokens + chunkTokens > MAX_BATCH_TOKENS) {
+    const chunkTokens = chunk.tokenCount ?? estimateTokens(chunk.text);
+
+    if (
+      currentBatch.length > 0
+      && (currentTokens + chunkTokens > maxBatchTokens || currentBatch.length >= maxBatchItems)
+    ) {
       batches.push(currentBatch);
       currentBatch = [];
       currentTokens = 0;

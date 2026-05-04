@@ -291,35 +291,69 @@ class OllamaEmbeddingProvider implements EmbeddingProviderInterface {
     };
   }
 
-  async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
-    const results = await Promise.all(
-      texts.map(async (text) => {
-        const response = await fetch(`${this.credentials.baseUrl}/api/embeddings`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: this.modelInfo.model,
-            prompt: text,
-          }),
-        });
+  private estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
 
-        if (!response.ok) {
-          const error = await response.text();
-          throw new Error(`Ollama embedding API error: ${response.status} - ${error}`);
+  private truncateToTokenLimit(text: string, maxTokens: number): string {
+    const maxChars = Math.max(1, maxTokens * 4);
+    if (text.length <= maxChars) {
+      return text;
+    }
+
+    return `${text.slice(0, Math.max(0, maxChars - 17))}\n... [truncated]`;
+  }
+
+  private async embedSingle(text: string): Promise<{ embedding: number[]; tokensUsed: number }> {
+    const response = await fetch(`${this.credentials.baseUrl}/api/embeddings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.modelInfo.model,
+        prompt: text,
+        truncate: false,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Ollama embedding API error: ${response.status} - ${error}`);
+    }
+
+    const data = (await response.json()) as {
+      embedding: number[];
+    };
+
+    return {
+      embedding: data.embedding,
+      tokensUsed: this.estimateTokens(text),
+    };
+  }
+
+  async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
+    const results: Array<{ embedding: number[]; tokensUsed: number }> = [];
+
+    for (const text of texts) {
+      try {
+        results.push(await this.embedSingle(text));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const shouldRetryWithTruncation = message.includes("input length exceeds the context length");
+
+        if (!shouldRetryWithTruncation) {
+          throw error;
         }
 
-        const data = (await response.json()) as {
-          embedding: number[];
-        };
+        const truncated = this.truncateToTokenLimit(text, this.modelInfo.maxTokens);
+        if (truncated === text) {
+          throw error;
+        }
 
-        return {
-          embedding: data.embedding,
-          tokensUsed: Math.ceil(text.length / 4),
-        };
-      })
-    );
+        results.push(await this.embedSingle(truncated));
+      }
+    }
 
     return {
       embeddings: results.map((r) => r.embedding),

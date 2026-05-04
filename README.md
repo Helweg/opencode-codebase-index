@@ -211,7 +211,7 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Bash, C, C++, JSON, TOML, YAML
+**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML
 
 **Additional Supported Formats (line-based chunking)**: TXT, HTML, HTM, Markdown, Shell scripts
 
@@ -222,7 +222,7 @@ graph TD
 **/*.{rb,php,inc,swift}         **/*.{vue,svelte,astro}
 **/*.{sql,graphql,proto}        **/*.{yaml,yml,toml}
 **/*.{md,mdx}                   **/*.{sh,bash,zsh}
-**/*.{txt,html,htm}
+**/*.{txt,html,htm}              **/*.{cls,trigger}
 ```
 
 Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*.pdf"`, `"**/*.csv"`).
@@ -826,6 +826,8 @@ ollama pull nomic-embed-text
 ```
 
 The built-in `ollama` provider uses Ollama's native `/api/embeddings` endpoint and is the simplest setup when you want to use `nomic-embed-text`.
+
+For the built-in Ollama path, the plugin budgets `nomic-embed-text` against an observed effective input limit of about **2048 tokens**, not the model's higher advertised theoretical context. This keeps batching and chunk text generation aligned with real Ollama embedding runtime behavior.
 
 If you want to use a different Ollama embedding model through its OpenAI-compatible API, use the `custom` provider instead and set `customProvider.baseUrl` to `http://127.0.0.1:11434/v1` so the plugin calls `.../v1/embeddings`.
 

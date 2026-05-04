@@ -83,7 +83,7 @@ describe("config schema", () => {
       expect(config.embeddingProvider).toBe("auto");
       expect(config.embeddingModel).toBeUndefined();
       expect(config.scope).toBe("project");
-      expect(config.include).toHaveLength(11);
+      expect(config.include).toHaveLength(12);
       expect(config.exclude).toHaveLength(16);
     });
 
@@ -177,13 +177,13 @@ describe("config schema", () => {
     });
 
     it("should fallback to defaults for non-array include", () => {
-      expect(parseConfig({ include: "string" }).include).toHaveLength(11);
-      expect(parseConfig({ include: 123 }).include).toHaveLength(11);
+      expect(parseConfig({ include: "string" }).include).toHaveLength(12);
+      expect(parseConfig({ include: 123 }).include).toHaveLength(12);
     });
 
     it("should fallback to defaults for include with non-string items", () => {
-      expect(parseConfig({ include: [123, 456] }).include).toHaveLength(11);
-      expect(parseConfig({ include: ["valid", 123] }).include).toHaveLength(11);
+      expect(parseConfig({ include: [123, 456] }).include).toHaveLength(12);
+      expect(parseConfig({ include: ["valid", 123] }).include).toHaveLength(12);
     });
 
     it("should parse exclude as string array", () => {
@@ -900,6 +900,11 @@ describe("config schema", () => {
       expect(EMBEDDING_MODELS["github-copilot"]["text-embedding-3-small"].costPer1MTokens).toBe(0);
       expect(EMBEDDING_MODELS["ollama"]["nomic-embed-text"].costPer1MTokens).toBe(0);
       expect(EMBEDDING_MODELS["ollama"]["mxbai-embed-large"].costPer1MTokens).toBe(0);
+    });
+
+    it("should use the observed effective token budget for built-in ollama models", () => {
+      expect(EMBEDDING_MODELS["ollama"]["nomic-embed-text"].maxTokens).toBe(2048);
+      expect(EMBEDDING_MODELS["ollama"]["mxbai-embed-large"].maxTokens).toBe(512);
     });
 
     it("should have non-zero cost for paid providers", () => {
