@@ -1178,9 +1178,7 @@ trigger AccountTrigger on Account (before insert, before update, after delete) {
         let chunks = parse_file_internal("AccountTrigger.trigger", content).unwrap();
         assert!(!chunks.is_empty(), "Should have chunks for Apex trigger");
 
-        let has_trigger = chunks
-            .iter()
-            .any(|c| c.chunk_type == "trigger_declaration");
+        let has_trigger = chunks.iter().any(|c| c.chunk_type == "trigger_declaration");
         assert!(has_trigger, "Should find trigger_declaration");
     }
 
@@ -1197,9 +1195,7 @@ public class AccountService {
 "#;
 
         let chunks = parse_file_internal("AccountService.cls", content).unwrap();
-        let class_chunk = chunks
-            .iter()
-            .find(|c| c.chunk_type == "class_declaration");
+        let class_chunk = chunks.iter().find(|c| c.chunk_type == "class_declaration");
         assert!(class_chunk.is_some(), "Should find class_declaration");
         assert!(
             class_chunk
