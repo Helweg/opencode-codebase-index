@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { extractCalls, Database, hashContent } from "../src/native/index.js";
+import { extractCalls, Database, hashContent, parseFiles } from "../src/native/index.js";
 import type { SymbolData, CallEdgeData } from "../src/native/index.js";
+import { CALL_GRAPH_SYMBOL_CHUNK_TYPES } from "../src/indexer/index.js";
 
 const fixturesDir = path.join(__dirname, "fixtures", "call-graph");
 
@@ -322,6 +323,67 @@ describe("call-graph", () => {
         const importCalls = calls.filter((c) => c.callType === "Import");
         expect(importCalls.length).toBe(0);
       });
+    });
+  });
+
+  describe("apex trigger call graph", () => {
+    it("should treat trigger_declaration as a valid call graph symbol type", () => {
+      // Regression test for PR #68 review: without trigger_declaration in
+      // CALL_GRAPH_SYMBOL_CHUNK_TYPES, calls inside .trigger files were
+      // silently dropped because no enclosing symbol could be found.
+      expect(CALL_GRAPH_SYMBOL_CHUNK_TYPES.has("trigger_declaration")).toBe(true);
+    });
+
+    it("should produce edges for calls inside Apex triggers", () => {
+      const triggerContent = `trigger AccountTrigger on Account (before insert, before update) {
+    AccountService.process(Trigger.new);
+    helper(Trigger.newMap);
+}
+`;
+      const triggerPath = path.join(tempDir, "AccountTrigger.trigger");
+      fs.writeFileSync(triggerPath, triggerContent, "utf-8");
+
+      const parsed = parseFiles([{ path: triggerPath, content: triggerContent }]);
+      expect(parsed.length).toBe(1);
+
+      // Apply the same filter the Indexer uses to build symbols.
+      const fileSymbols: SymbolData[] = [];
+      for (const chunk of parsed[0].chunks) {
+        if (!chunk.name || !CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType)) continue;
+        fileSymbols.push({
+          id: `sym_${hashContent(triggerPath + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`,
+          filePath: triggerPath,
+          name: chunk.name,
+          kind: chunk.chunkType,
+          startLine: chunk.startLine,
+          startCol: 0,
+          endLine: chunk.endLine,
+          endCol: 0,
+          language: chunk.language,
+        });
+      }
+
+      // The trigger itself must produce a symbol; otherwise call sites would
+      // be dropped at the enclosingSymbol step.
+      expect(fileSymbols.length).toBeGreaterThan(0);
+      const triggerSymbol = fileSymbols.find((s) => s.kind === "trigger_declaration");
+      expect(triggerSymbol).toBeDefined();
+      expect(triggerSymbol!.name).toBe("AccountTrigger");
+
+      // Extract call sites and confirm each one resolves to an enclosing symbol
+      // (i.e. the trigger), so the Indexer would actually persist the edges.
+      const calls = extractCalls(triggerContent, "apex");
+      expect(calls.length).toBeGreaterThan(0);
+
+      const enclosedCalls = calls.filter((site) =>
+        fileSymbols.some(
+          (sym) => site.line >= sym.startLine && site.line <= sym.endLine,
+        ),
+      );
+      expect(enclosedCalls.length).toBe(calls.length);
+
+      // Sanity: at least one of the calls is the helper() direct call inside the trigger.
+      expect(calls.some((c) => c.calleeName === "helper")).toBe(true);
     });
   });
 

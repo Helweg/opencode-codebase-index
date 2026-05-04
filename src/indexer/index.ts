@@ -35,8 +35,8 @@ import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
 
-const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex"]);
-const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex"]);
+export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "function_declaration",
   "function",
   "arrow_function",
@@ -58,6 +58,7 @@ const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "trait_item",
   "mod_item",
   "trait_declaration",
+  "trigger_declaration",
 ]);
 
 function float32ArrayToBuffer(arr: number[]): Buffer {
