@@ -226,15 +226,19 @@ describe("Database", () => {
 
     it("should persist index metadata across database reopening", () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "db-test-persist-"));
+      let db1: InstanceType<typeof Database> | undefined;
+      let db2: InstanceType<typeof Database> | undefined;
       try {
         const dbPath = path.join(tempDir, "persist-test.db");
-        const db1 = new Database(dbPath);
+        db1 = new Database(dbPath);
         db1.setMetadata("index.embeddingProvider", "ollama");
         db1.setMetadata("index.embeddingDimensions", "768");
-        const db2 = new Database(dbPath);
+        db2 = new Database(dbPath);
         expect(db2.getMetadata("index.embeddingProvider")).toBe("ollama");
         expect(db2.getMetadata("index.embeddingDimensions")).toBe("768");
       } finally {
+        try { db1?.close(); } catch { /* best-effort */ }
+        try { db2?.close(); } catch { /* best-effort */ }
         try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort */ }
       }
     });
