@@ -4,7 +4,10 @@ import * as path from "path";
 import * as os from "os";
 import { extractCalls, Database, hashContent, parseFiles } from "../src/native/index.js";
 import type { SymbolData, CallEdgeData } from "../src/native/index.js";
-import { CALL_GRAPH_SYMBOL_CHUNK_TYPES } from "../src/indexer/index.js";
+import {
+  CALL_GRAPH_SYMBOL_CHUNK_TYPES,
+  CASE_INSENSITIVE_LANGUAGES,
+} from "../src/indexer/index.js";
 
 const fixturesDir = path.join(__dirname, "fixtures", "call-graph");
 
@@ -384,6 +387,113 @@ describe("call-graph", () => {
 
       // Sanity: at least one of the calls is the helper() direct call inside the trigger.
       expect(calls.some((c) => c.calleeName === "helper")).toBe(true);
+    });
+  });
+
+  describe("apex same-file case-insensitive resolution", () => {
+    it("should declare apex as a case-insensitive language", () => {
+      // The Rust call_extractor lowercases Apex callee names; the Indexer
+      // must use the same normalization when resolving same-file calls.
+      expect(CASE_INSENSITIVE_LANGUAGES.has("apex")).toBe(true);
+    });
+
+    it("should resolve a same-file Apex call when caller and callee differ in case", () => {
+      // Regression test for PR #68 review: previously, declaring `processOrder`
+      // and calling `PROCESSORDER()` left toSymbolId NULL because the lookup
+      // was case-sensitive while the call edge's targetName was already
+      // lowercased by the Rust extractor.
+      //
+      // We declare the methods as method-level symbols directly (the same
+      // scenario that occurs when the Indexer chunks larger Apex classes into
+      // method_declaration chunks via split_large_chunk) and then exercise
+      // the same lookup path the Indexer uses.
+      const apexContent = `public class CaseTest {
+    public void caller() {
+        PROCESSORDER();
+    }
+    public void processOrder() {
+        Integer x = 1;
+    }
+}
+`;
+      const filePath = path.join(tempDir, "CaseTest.cls");
+
+      // Verify the Rust extractor produces the lowercased target the Indexer
+      // would persist on the call edge.
+      const callSites = extractCalls(apexContent, "apex");
+      const processOrderCall = callSites.find((c) => c.calleeName === "processorder");
+      expect(processOrderCall).toBeDefined();
+
+      const fileSymbols: SymbolData[] = [
+        {
+          id: "sym_case_caller",
+          filePath,
+          name: "caller",
+          kind: "method_declaration",
+          startLine: 2,
+          startCol: 0,
+          endLine: 4,
+          endCol: 0,
+          language: "apex",
+        },
+        {
+          id: "sym_case_target",
+          filePath,
+          name: "processOrder", // mixed case declaration
+          kind: "method_declaration",
+          startLine: 5,
+          startCol: 0,
+          endLine: 7,
+          endCol: 0,
+          language: "apex",
+        },
+      ];
+
+      // Replicate the Indexer's same-file resolution logic verbatim, using
+      // the exported case-insensitivity invariant.
+      const isCaseInsensitive = CASE_INSENSITIVE_LANGUAGES.has("apex");
+      expect(isCaseInsensitive).toBe(true);
+      const normalizeKey = (s: string) => (isCaseInsensitive ? s.toLowerCase() : s);
+
+      const symbolsByName = new Map<string, SymbolData[]>();
+      for (const sym of fileSymbols) {
+        const key = normalizeKey(sym.name);
+        const list = symbolsByName.get(key) ?? [];
+        list.push(sym);
+        symbolsByName.set(key, list);
+      }
+
+      // The crux of the bug: this lookup must succeed even though the symbol
+      // was declared as `processOrder` and the edge target is `processorder`.
+      const candidates = symbolsByName.get(normalizeKey(processOrderCall!.calleeName));
+      expect(candidates).toBeDefined();
+      expect(candidates!.length).toBe(1);
+      expect(candidates![0].name).toBe("processOrder");
+
+      // Persist and resolve through a real Database to confirm end-to-end behavior.
+      const db = new Database(path.join(tempDir, "case.db"));
+      db.upsertSymbolsBatch(fileSymbols);
+
+      const edge: CallEdgeData = {
+        id: "edge_case_insensitive",
+        fromSymbolId: "sym_case_caller",
+        targetName: processOrderCall!.calleeName,
+        callType: processOrderCall!.callType,
+        line: processOrderCall!.line,
+        col: processOrderCall!.column,
+        isResolved: false,
+      };
+      db.upsertCallEdgesBatch([edge]);
+      db.resolveCallEdge(edge.id, candidates![0].id);
+
+      db.addSymbolsToBranchBatch(
+        "test",
+        fileSymbols.map((s) => s.id),
+      );
+      const callees = db.getCallees("sym_case_caller", "test");
+      expect(callees.length).toBe(1);
+      expect(callees[0].isResolved).toBe(true);
+      expect(callees[0].toSymbolId).toBe("sym_case_target");
     });
   });
 
