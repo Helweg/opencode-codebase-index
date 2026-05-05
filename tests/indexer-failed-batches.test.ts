@@ -15,11 +15,14 @@ describe("indexer failed batch recovery", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
   let failEmbeddings = false;
   let _indexers: Indexer[] = [];
+  let _dbs: Database[] = [];
+  let _extraDirs: string[] = [];
+  function trackDb(d: Database): Database { _dbs.push(d); return d; }
 
   beforeEach(() => {
     failEmbeddings = false;
     fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockImplementation(async (url, init) => {
+    fetchSpy.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
       if (String(url).endsWith("/api/tags")) {
         return new Response(JSON.stringify({
           models: [{ name: "nomic-embed-text" }],
@@ -83,9 +86,15 @@ describe("indexer failed batch recovery", () => {
   afterEach(async () => {
     await Promise.all(_indexers.map((i) => i.close()));
     _indexers = [];
+    _dbs.forEach((d) => d.close());
+    _dbs = [];
     fetchSpy.mockRestore();
     vi.unstubAllEnvs();
     fs.rmSync(tempDir, { recursive: true, force: true });
+    for (const dir of _extraDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    _extraDirs = [];
   });
 
   function createIndexer(): Indexer {
@@ -122,7 +131,7 @@ describe("indexer failed batch recovery", () => {
       },
     });
 
-    return new Indexer(tempDir, config);
+    return _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
   }
 
   function createOllamaIndexer(): Indexer {
@@ -136,7 +145,7 @@ describe("indexer failed batch recovery", () => {
       },
     });
 
-    return new Indexer(tempDir, config);
+    return _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
   }
 
   it("retries saved failed batches on a later successful rerun without force", async () => {
@@ -250,7 +259,7 @@ describe("indexer failed batch recovery", () => {
 
   it("splits oversized ollama chunks into pooled sub-requests before embedding", async () => {
     const embedPrompts: string[] = [];
-    fetchSpy.mockImplementation(async (url, init) => {
+    fetchSpy.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
       if (String(url).endsWith("/api/tags")) {
         return new Response(JSON.stringify({
           models: [{ name: "nomic-embed-text" }],
@@ -331,7 +340,7 @@ describe("indexer failed batch recovery", () => {
     );
 
     const embedPrompts: string[] = [];
-    fetchSpy.mockImplementation(async (url, init) => {
+    fetchSpy.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
       if (String(url).endsWith("/api/tags")) {
         return new Response(JSON.stringify({
           models: [{ name: "nomic-embed-text" }],
@@ -407,7 +416,7 @@ describe("indexer failed batch recovery", () => {
     );
 
     const embedPrompts: string[] = [];
-    fetchSpy.mockImplementation(async (url, init) => {
+    fetchSpy.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
       if (String(url).endsWith("/api/tags")) {
         return new Response(JSON.stringify({
           models: [{ name: "nomic-embed-text" }],
@@ -441,7 +450,7 @@ describe("indexer failed batch recovery", () => {
 
   it("pools split custom-provider chunks across multiple embedBatch calls", async () => {
     const requestSizes: number[] = [];
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
       requestSizes.push(texts.length);
@@ -487,7 +496,7 @@ describe("indexer failed batch recovery", () => {
 
   it("waits for all split parts before pooling when custom-provider calls complete out of order", async () => {
     let callCount = 0;
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
       const currentCall = callCount++;
@@ -536,7 +545,7 @@ describe("indexer failed batch recovery", () => {
   it("retries split custom-provider failed batches across multiple embedBatch calls", async () => {
     let firstChunkAttempt = true;
     const requestSizes: number[] = [];
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
       requestSizes.push(texts.length);
@@ -594,7 +603,7 @@ describe("indexer failed batch recovery", () => {
   it("waits for all split retry parts before pooling when retry calls complete out of order", async () => {
     let firstChunkAttempt = true;
     let callCount = 0;
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
       const currentCall = callCount++;
@@ -653,7 +662,7 @@ describe("indexer failed batch recovery", () => {
 
   it("deduplicates repeated retry failures for the same split chunk", async () => {
     const requestSizes: number[] = [];
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
       requestSizes.push(texts.length);
@@ -692,7 +701,7 @@ describe("indexer failed batch recovery", () => {
 
   it("increments attemptCount when the same split chunk fails multiple times in one index run", async () => {
     const embedPrompts: string[] = [];
-    fetchSpy.mockImplementation(async (url, init) => {
+    fetchSpy.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
       if (String(url).endsWith("/api/tags")) {
         return new Response(JSON.stringify({
           models: [{ name: "nomic-embed-text" }],
@@ -783,7 +792,7 @@ describe("indexer failed batch recovery", () => {
     });
 
     try {
-      fetchSpy.mockImplementation(async (_url, init) => {
+      fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
         const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -914,7 +923,7 @@ describe("indexer failed batch recovery", () => {
   });
 
   it("coalesces same-run failed chunks back into one persisted failed batch", async () => {
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -978,7 +987,7 @@ describe("indexer failed batch recovery", () => {
   });
 
   it("reports remaining failed batches using the coalesced persisted count", async () => {
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -1067,7 +1076,9 @@ describe("indexer failed batch recovery", () => {
 
   it("preserves foreign legacy failed batches without rewriting them during global scoped saves", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "failed-batches-global-home-"));
+    _extraDirs.push(tempHome);
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -1109,7 +1120,7 @@ describe("indexer failed batch recovery", () => {
       "utf-8"
     );
 
-    const indexer = new Indexer(projectA, parseConfig({
+    const indexer = _indexers[_indexers.push(new Indexer(projectA, parseConfig({
       embeddingProvider: "ollama",
       embeddingModel: "nomic-embed-text",
       scope: "global",
@@ -1118,7 +1129,7 @@ describe("indexer failed batch recovery", () => {
         retries: 0,
         retryDelayMs: 1,
       },
-    }));
+    }))) - 1];
 
     const stats = await indexer.index();
     expect(stats.failedChunks).toBe(0);
@@ -1133,13 +1144,11 @@ describe("indexer failed batch recovery", () => {
     expect(foreignChunk).toBeDefined();
     expect(typeof foreignChunk?.text).toBe("string");
     expect(foreignChunk?.texts).toBeUndefined();
-
-    fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
   it("does not retry custom-provider non-retryable errors during retryFailedBatches()", async () => {
     let embedCallCount = 0;
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       if (Array.isArray(body.input)) {
         embedCallCount += 1;
@@ -1179,7 +1188,7 @@ describe("indexer failed batch recovery", () => {
       "utf-8"
     );
 
-    const retryingIndexer = new Indexer(tempDir, parseConfig({
+    const retryingIndexer = _indexers[_indexers.push(new Indexer(tempDir, parseConfig({
       embeddingProvider: "custom",
       customProvider: {
         baseUrl: "http://localhost:11434/v1",
@@ -1191,7 +1200,7 @@ describe("indexer failed batch recovery", () => {
         retries: 3,
         retryDelayMs: 1,
       },
-    }));
+    }))) - 1];
 
     await retryingIndexer.initialize();
     const retry = await retryingIndexer.retryFailedBatches();
@@ -1211,7 +1220,9 @@ describe("indexer failed batch recovery", () => {
 
   it("clears pending global force re-embed metadata after retryFailedBatches() recovers all remaining chunks", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "failed-batches-force-reembed-home-"));
+    _extraDirs.push(tempHome);
     vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
 
     const projectA = path.join(tempDir, "project-a");
     const projectB = path.join(tempDir, "project-b");
@@ -1229,7 +1240,7 @@ describe("indexer failed batch recovery", () => {
 
     const kbPrompt = "export function sharedDoc() { return 'shared'; }";
     let failSharedKbEmbedding = false;
-    fetchSpy.mockImplementation(async (_url, init) => {
+    fetchSpy.mockImplementation(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
       const texts = Array.isArray(body.input) ? body.input : [];
 
@@ -1255,27 +1266,31 @@ describe("indexer failed batch recovery", () => {
       );
     });
 
-    const createGlobalKbIndexer = (projectRoot: string) => new Indexer(projectRoot, parseConfig({
-      embeddingProvider: "custom",
-      customProvider: {
-        baseUrl: "http://localhost:11434/v1",
-        model: "mock-8d",
-        dimensions: 8,
-      },
-      scope: "global",
-      knowledgeBases: [kbDir],
-      indexing: {
-        watchFiles: false,
-        retries: 0,
-        retryDelayMs: 1,
-      },
-    }));
+    const createGlobalKbIndexer = (projectRoot: string) => {
+      const idx = new Indexer(projectRoot, parseConfig({
+        embeddingProvider: "custom",
+        customProvider: {
+          baseUrl: "http://localhost:11434/v1",
+          model: "mock-8d",
+          dimensions: 8,
+        },
+        scope: "global",
+        knowledgeBases: [kbDir],
+        indexing: {
+          watchFiles: false,
+          retries: 0,
+          retryDelayMs: 1,
+        },
+      }));
+      _indexers.push(idx);
+      return idx;
+    };
 
     await createGlobalKbIndexer(projectA).index();
     await createGlobalKbIndexer(projectB).index();
 
     const dbPath = path.join(tempHome, ".opencode", "global-index", "codebase.db");
-    const db = new Database(dbPath);
+    const db = trackDb(new Database(dbPath));
     const projectHash = hashContent(path.resolve(projectA)).slice(0, 16);
     const projectABranch = `${projectHash}:default`;
     db.setMetadata(`index.embeddingStrategyVersion.${projectHash}`, "1");
@@ -1301,8 +1316,6 @@ describe("indexer failed batch recovery", () => {
     expect(retry.succeeded).toBeGreaterThan(0);
     expect(db.getMetadata(`index.forceReembed.${projectHash}`)).toBeNull();
     expect(db.chunkExistsOnBranch(projectABranch, sharedChunkId!)).toBe(true);
-
-    fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
   it("preserves previously indexed chunk in branch catalog when stale failed-batch retry fails", async () => {
@@ -1315,7 +1328,7 @@ describe("indexer failed batch recovery", () => {
 
     // Step 2: Capture the actual indexed chunk id from the database
     const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
-    const dbBefore = new Database(dbPath);
+    const dbBefore = trackDb(new Database(dbPath));
     const branches = dbBefore.getAllBranches();
     const branchKey = branches.find((b) => b.includes("default")) || branches[0];
     expect(branchKey).toBeDefined();
@@ -1370,7 +1383,7 @@ describe("indexer failed batch recovery", () => {
     expect(failedBatchesAfter.length).toBeGreaterThan(0);
     expect(failedBatchesAfter.some((batch) => batch.chunks.some((c) => c.id === existingChunkId))).toBe(true);
 
-    const dbAfter = new Database(dbPath);
+    const dbAfter = trackDb(new Database(dbPath));
     const branchChunksAfter = dbAfter.getBranchChunkIds(branchKey!);
     expect(branchChunksAfter).toContain(existingChunkId);
   });
@@ -1382,7 +1395,7 @@ describe("indexer failed batch recovery", () => {
     expect(failedStats.failedChunks).toBeGreaterThan(0);
 
     const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
-    const dbBefore = new Database(dbPath);
+    const dbBefore = trackDb(new Database(dbPath));
     const branchKey = "default";
     expect(dbBefore.getBranchChunkIds(branchKey)).toHaveLength(0);
 
@@ -1394,7 +1407,7 @@ describe("indexer failed batch recovery", () => {
     expect(retry.remaining).toBe(0);
     expect(retry.succeeded).toBeGreaterThan(0);
 
-    const dbAfter = new Database(dbPath);
+    const dbAfter = trackDb(new Database(dbPath));
     const branchChunksAfter = dbAfter.getBranchChunkIds(branchKey);
     expect(branchChunksAfter.length).toBe(retry.succeeded);
     for (const chunkId of branchChunksAfter) {
@@ -1430,7 +1443,7 @@ describe("indexer failed batch recovery", () => {
     expect(status.failedBatchesCount).toBeGreaterThan(0);
 
     const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
-    const dbAfter = new Database(dbPath);
+    const dbAfter = trackDb(new Database(dbPath));
     const branches = dbAfter.getAllBranches();
     const branchKey = branches.find((b) => b.includes("default")) || branches[0];
     if (branchKey) {
@@ -1481,7 +1494,7 @@ describe("indexer failed batch recovery", () => {
     expect(status.failedBatchesCount).toBeGreaterThan(0);
 
     const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
-    const dbAfter = new Database(dbPath);
+    const dbAfter = trackDb(new Database(dbPath));
     const branches = dbAfter.getAllBranches();
     const branchKey = branches.find((b) => b.includes("default")) || branches[0];
     if (branchKey) {

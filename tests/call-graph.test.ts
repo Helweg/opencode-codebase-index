@@ -482,6 +482,7 @@ describe("call-graph", () => {
 
       // Persist and resolve through a real Database to confirm end-to-end behavior.
       const db = new Database(path.join(tempDir, "case.db"));
+      _dbs.push(db);
       db.upsertSymbolsBatch(fileSymbols);
 
       const edge: CallEdgeData = {
