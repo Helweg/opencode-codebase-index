@@ -83,7 +83,7 @@ describe("config schema", () => {
       expect(config.embeddingProvider).toBe("auto");
       expect(config.embeddingModel).toBeUndefined();
       expect(config.scope).toBe("project");
-      expect(config.include).toHaveLength(12);
+      expect(config.include).toHaveLength(13);
       expect(config.exclude).toHaveLength(16);
     });
 
@@ -177,13 +177,13 @@ describe("config schema", () => {
     });
 
     it("should fallback to defaults for non-array include", () => {
-      expect(parseConfig({ include: "string" }).include).toHaveLength(12);
-      expect(parseConfig({ include: 123 }).include).toHaveLength(12);
+      expect(parseConfig({ include: "string" }).include).toHaveLength(13);
+      expect(parseConfig({ include: 123 }).include).toHaveLength(13);
     });
 
     it("should fallback to defaults for include with non-string items", () => {
-      expect(parseConfig({ include: [123, 456] }).include).toHaveLength(12);
-      expect(parseConfig({ include: ["valid", 123] }).include).toHaveLength(12);
+      expect(parseConfig({ include: [123, 456] }).include).toHaveLength(13);
+      expect(parseConfig({ include: ["valid", 123] }).include).toHaveLength(13);
     });
 
     it("should parse exclude as string array", () => {
