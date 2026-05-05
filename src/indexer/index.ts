@@ -4076,14 +4076,14 @@ export class Indexer {
       const allMetadata = store.getAllMetadata();
       const hasForeignData =
         allMetadata.some(({ metadata }) => !this.isFileInCurrentScope(metadata.filePath, roots)) ||
-        this.hasForeignScopedBranchData() ||
-        this.hasForeignScopedFileHashData(roots) ||
+  await this.hasForeignScopedBranchData() ||
+  await this.hasForeignScopedFileHashData(roots) ||
         this.hasForeignScopedFailedBatches(roots);
 
       if (!compatibility.compatible && hasForeignData) {
         if (compatibility.code === IncompatibilityCode.EMBEDDING_STRATEGY_MISMATCH) {
-          this.clearSharedIndexProjectData(store, invertedIndex, database, roots);
-          this.clearScopedFileHashCache(roots);
+          await this.clearSharedIndexProjectData(store, invertedIndex, database, roots);
+          await this.clearScopedFileHashCache(roots);
           this.clearScopedFailedBatches(roots);
           await database.setMetadata(this.getProjectForceReembedMetadataKey(), "true");
           await database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
