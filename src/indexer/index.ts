@@ -20,7 +20,7 @@ import {
   InvertedIndex,
   Database,
   parseFiles,
-  createEmbeddingText,
+  createEmbeddingTexts,
   generateChunkId,
   generateChunkHash,
   ChunkMetadata,
@@ -30,13 +30,20 @@ import {
   hashContent,
   extractCalls,
   parseFileAsText,
+  estimateTokens,
 } from "../native/index.js";
 import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
 
-const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php"]);
-const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex"]);
+// Languages whose identifiers are case-insensitive at the language level.
+// The Rust call_extractor lowercases callee names for these languages (except
+// constructors and imports), so same-file resolution in this file must use
+// the same normalization when looking up symbols by name. Keep this set in
+// sync with the matching branch in native/src/call_extractor.rs.
+export const CASE_INSENSITIVE_LANGUAGES = new Set(["apex"]);
+export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "function_declaration",
   "function",
   "arrow_function",
@@ -58,6 +65,7 @@ const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "trait_item",
   "mod_item",
   "trait_declaration",
+  "trigger_declaration",
 ]);
 
 function float32ArrayToBuffer(arr: number[]): Buffer {
@@ -85,6 +93,23 @@ function getErrorMessage(error: unknown): string {
 function isRateLimitError(error: unknown): boolean {
   const message = getErrorMessage(error);
   return message.includes("429") || message.toLowerCase().includes("rate limit") || message.toLowerCase().includes("too many requests");
+}
+
+function getSafeEmbeddingChunkTokenLimit(provider: ConfiguredProviderInfo): number {
+  const providerMaxTokens = provider.modelInfo.maxTokens;
+  const maxChunkTokens = Math.max(256, Math.floor(providerMaxTokens * 0.75));
+  return Math.min(2000, maxChunkTokens);
+}
+
+function getDynamicBatchOptions(provider: ConfiguredProviderInfo): { maxBatchTokens?: number; maxBatchItems?: number } {
+  if (provider.provider === "ollama") {
+    return {
+      maxBatchTokens: provider.modelInfo.maxTokens,
+      maxBatchItems: 1,
+    };
+  }
+
+  return {};
 }
 
 function isSqliteCorruptionError(error: unknown): boolean {
@@ -166,14 +191,37 @@ export type ProgressCallback = (progress: IndexProgress) => void;
 
 interface PendingChunk {
   id: string;
-  text: string;
+  texts: Array<{
+    text: string;
+    tokenCount: number;
+  }>;
+  storageText: string;
   content: string;
   contentHash: string;
   metadata: ChunkMetadata;
 }
 
+interface PendingEmbeddingRequest {
+  chunk: PendingChunk;
+  partIndex: number;
+  text: string;
+  tokenCount: number;
+}
+
 interface FailedBatch {
   chunks: PendingChunk[];
+  error: string;
+  attemptCount: number;
+  lastAttempt: string;
+}
+
+interface RetryableFailedChunk {
+  chunk: PendingChunk;
+  attemptCount: number;
+}
+
+interface SerializedFailedBatch {
+  chunks: unknown[];
   error: string;
   attemptCount: number;
   lastAttempt: string;
@@ -207,6 +255,7 @@ interface IndexMetadata {
   embeddingProvider: string;
   embeddingModel: string;
   embeddingDimensions: number;
+  embeddingStrategyVersion: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -214,6 +263,7 @@ interface IndexMetadata {
 enum IncompatibilityCode {
   DIMENSION_MISMATCH = "DIMENSION_MISMATCH",
   MODEL_MISMATCH = "MODEL_MISMATCH",
+  EMBEDDING_STRATEGY_MISMATCH = "EMBEDDING_STRATEGY_MISMATCH",
 }
 
 interface IndexCompatibility {
@@ -224,7 +274,213 @@ interface IndexCompatibility {
 }
 
 const INDEX_METADATA_VERSION = "1";
+const EMBEDDING_STRATEGY_VERSION = "2";
 const RANKING_TOKEN_CACHE_LIMIT = 4096;
+
+function createPendingChunkStorageText(texts: PendingChunk["texts"]): string {
+  const primaryText = texts[0]?.text ?? "";
+  if (texts.length <= 1) {
+    return primaryText;
+  }
+
+  return `${primaryText}\n\n... [split into ${texts.length} parts for embedding]`;
+}
+
+function normalizePendingChunk(rawChunk: unknown, maxChunkTokens?: number): PendingChunk | null {
+  if (!rawChunk || typeof rawChunk !== "object") {
+    return null;
+  }
+
+  const chunk = rawChunk as {
+    id?: unknown;
+    text?: unknown;
+    texts?: Array<{ text?: unknown; tokenCount?: unknown }>;
+    storageText?: unknown;
+    content?: unknown;
+    contentHash?: unknown;
+    metadata?: unknown;
+  };
+
+  if (typeof chunk.id !== "string" || typeof chunk.contentHash !== "string" || !chunk.metadata || typeof chunk.metadata !== "object") {
+    return null;
+  }
+
+  const texts = Array.isArray(chunk.texts)
+    ? chunk.texts
+      .map((entry) => {
+        if (!entry || typeof entry.text !== "string") {
+          return null;
+        }
+
+        return {
+          text: entry.text,
+          tokenCount: typeof entry.tokenCount === "number" && Number.isFinite(entry.tokenCount)
+            ? entry.tokenCount
+            : estimateTokens(entry.text),
+        };
+      })
+      .filter((entry): entry is PendingChunk["texts"][number] => entry !== null)
+    : [];
+
+  if (texts.length === 0 && typeof chunk.text === "string") {
+    if (typeof chunk.content === "string" && chunk.content.length > 0 && chunk.metadata && typeof chunk.metadata === "object") {
+      const metadata = chunk.metadata as Partial<ChunkMetadata>;
+      const rebuiltChunk = {
+        content: chunk.content,
+        startLine: typeof metadata.startLine === "number" ? metadata.startLine : 1,
+        endLine: typeof metadata.endLine === "number" ? metadata.endLine : 1,
+        chunkType: typeof metadata.chunkType === "string" ? metadata.chunkType : "other",
+        name: typeof metadata.name === "string" ? metadata.name : undefined,
+        language: typeof metadata.language === "string" ? metadata.language : "text",
+      };
+      const filePath = typeof metadata.filePath === "string" ? metadata.filePath : "unknown";
+      texts.push(
+        ...createEmbeddingTexts(rebuiltChunk, filePath, maxChunkTokens).map((text) => ({
+          text,
+          tokenCount: estimateTokens(text),
+        }))
+      );
+    } else {
+      texts.push({
+        text: chunk.text,
+        tokenCount: estimateTokens(chunk.text),
+      });
+    }
+  }
+
+  if (texts.length === 0) {
+    return null;
+  }
+
+  return {
+    id: chunk.id,
+    texts,
+    storageText: typeof chunk.storageText === "string" ? chunk.storageText : createPendingChunkStorageText(texts),
+    content: typeof chunk.content === "string" ? chunk.content : "",
+    contentHash: chunk.contentHash,
+    metadata: chunk.metadata as ChunkMetadata,
+  };
+}
+
+function getPendingChunkFilePath(rawChunk: unknown): string | null {
+  if (!rawChunk || typeof rawChunk !== "object") {
+    return null;
+  }
+
+  const chunk = rawChunk as { metadata?: unknown };
+  if (!chunk.metadata || typeof chunk.metadata !== "object") {
+    return null;
+  }
+
+  const metadata = chunk.metadata as { filePath?: unknown };
+  return typeof metadata.filePath === "string" ? metadata.filePath : null;
+}
+
+function normalizeFailedBatch(batch: SerializedFailedBatch, maxChunkTokens?: number): FailedBatch | null {
+  const chunks = batch.chunks
+    .map((chunk) => normalizePendingChunk(chunk, maxChunkTokens))
+    .filter((chunk): chunk is PendingChunk => chunk !== null);
+
+  if (chunks.length === 0) {
+    return null;
+  }
+
+  return {
+    chunks,
+    error: batch.error,
+    attemptCount: batch.attemptCount,
+    lastAttempt: batch.lastAttempt,
+  } satisfies FailedBatch;
+}
+
+function createPendingEmbeddingRequests(chunks: PendingChunk[]): PendingEmbeddingRequest[] {
+  return chunks.flatMap((chunk) =>
+    chunk.texts.map((textPart, partIndex) => ({
+      chunk,
+      partIndex,
+      text: textPart.text,
+      tokenCount: textPart.tokenCount,
+    }))
+  );
+}
+
+function createPendingEmbeddingRequestBatches(
+  chunks: PendingChunk[],
+  options: { maxBatchTokens?: number; maxBatchItems?: number } = {}
+): PendingEmbeddingRequest[][] {
+  return createDynamicBatches(createPendingEmbeddingRequests(chunks), options);
+}
+
+function getUniquePendingChunksFromRequests(requests: PendingEmbeddingRequest[]): PendingChunk[] {
+  const uniqueChunks = new Map<string, PendingChunk>();
+  for (const request of requests) {
+    uniqueChunks.set(request.chunk.id, request.chunk);
+  }
+  return Array.from(uniqueChunks.values());
+}
+
+function coalesceFailedBatches(batches: FailedBatch[]): FailedBatch[] {
+  const grouped = new Map<string, FailedBatch>();
+
+  for (const batch of batches) {
+    const key = `${batch.attemptCount}:${batch.lastAttempt}:${batch.error}`;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...batch,
+        chunks: [...batch.chunks],
+      });
+      continue;
+    }
+
+    existing.chunks.push(...batch.chunks);
+  }
+
+  return Array.from(grouped.values());
+}
+
+function poolEmbeddingVectors(vectors: number[][], weights: number[]): number[] {
+  const firstVector = vectors[0];
+  if (!firstVector) {
+    return [];
+  }
+
+  const pooled = new Array<number>(firstVector.length).fill(0);
+  let totalWeight = 0;
+
+  for (let index = 0; index < vectors.length; index++) {
+    const vector = vectors[index];
+    const weight = Math.max(1, weights[index] ?? 1);
+    totalWeight += weight;
+
+    for (let dimension = 0; dimension < vector.length; dimension++) {
+      pooled[dimension] += vector[dimension] * weight;
+    }
+  }
+
+  if (totalWeight === 0) {
+    return firstVector;
+  }
+
+  return pooled.map((value) => value / totalWeight);
+}
+
+function hasAllEmbeddingParts(
+  parts: Array<{ vector: number[]; tokenCount: number } | undefined>,
+  expectedPartCount: number
+): boolean {
+  if (parts.length !== expectedPartCount) {
+    return false;
+  }
+
+  for (let index = 0; index < expectedPartCount; index++) {
+    if (parts[index] === undefined) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 function isPathWithinRoot(filePath: string, rootPath: string): boolean {
   const normalizedFilePath = path.resolve(filePath);
@@ -1535,6 +1791,100 @@ export class Indexer {
     return `index.globalBranchMigration.${projectHash}`;
   }
 
+  private getProjectEmbeddingStrategyMetadataKey(): string {
+    const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
+    return `index.embeddingStrategyVersion.${projectHash}`;
+  }
+
+  private getProjectForceReembedMetadataKey(): string {
+    const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
+    return `index.forceReembed.${projectHash}`;
+  }
+
+  private hasProjectForceReembedPending(): boolean {
+    return this.config.scope === "global" && this.database?.getMetadata(this.getProjectForceReembedMetadataKey()) === "true";
+  }
+
+  private hasScopedIndexedData(): boolean {
+    if (!this.store || this.config.scope !== "global") {
+      return false;
+    }
+
+    if (this.hasProjectForceReembedPending()) {
+      return false;
+    }
+
+    const roots = this.getScopedRoots();
+
+    if (Array.from(this.fileHashCache.keys()).some((filePath) => this.isFileInCurrentScope(filePath, roots))) {
+      return true;
+    }
+
+    if (this.loadSerializedFailedBatches().some((batch) =>
+      batch.chunks.some((chunk) => {
+        const filePath = getPendingChunkFilePath(chunk);
+        return filePath !== null && this.isFileInCurrentScope(filePath, roots);
+      })
+    )) {
+      return true;
+    }
+
+    if (!this.database) {
+      return false;
+    }
+
+    if (this.getBranchCatalogKeys().some((branchKey) => {
+      const branchChunkIds = this.database!.getBranchChunkIds(branchKey);
+      if (branchChunkIds.length > 0) {
+        return true;
+      }
+
+      return this.database!.getBranchSymbolIds(branchKey).length > 0;
+    })) {
+      return true;
+    }
+
+    const hasAnyBranchRows = this.database.getAllBranches().some((branchKey) => {
+      const branchChunkIds = this.database!.getBranchChunkIds(branchKey);
+      if (branchChunkIds.length > 0) {
+        return true;
+      }
+
+      return this.database!.getBranchSymbolIds(branchKey).length > 0;
+    });
+    if (hasAnyBranchRows) {
+      return false;
+    }
+
+    return this.store.getAllMetadata().some(({ metadata }) => this.isFileInCurrentScope(metadata.filePath, roots));
+  }
+
+  private loadStoredEmbeddingStrategyVersion(): string | null {
+    if (!this.database) {
+      return null;
+    }
+
+    if (this.hasProjectForceReembedPending()) {
+      return null;
+    }
+
+    if (this.config.scope !== "global") {
+      return this.database.getMetadata("index.embeddingStrategyVersion") ?? "1";
+    }
+
+    const projectVersion = this.database.getMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+    if (projectVersion) {
+      return projectVersion;
+    }
+
+    const legacySharedVersion = this.database.getMetadata("index.embeddingStrategyVersion");
+    if (legacySharedVersion && this.hasScopedIndexedData()) {
+      return legacySharedVersion;
+    }
+
+    return null;
+  }
+
   private getBranchCatalogKeys(): string[] {
     const primary = this.getBranchCatalogKey();
     if (this.config.scope !== "global") {
@@ -1547,6 +1897,85 @@ export class Indexer {
 
     const legacy = this.getLegacyBranchCatalogKey();
     return primary === legacy ? [primary] : [primary, legacy];
+  }
+
+  private getBranchCatalogCleanupKeys(): string[] {
+    const primary = this.getBranchCatalogKey();
+    if (this.config.scope !== "global") {
+      return [primary];
+    }
+
+    const legacy = this.getLegacyBranchCatalogKey();
+    return primary === legacy ? [primary] : [primary, legacy];
+  }
+
+  private getProjectLocalScopedOwnershipIds(roots: string[]): {
+    chunkIds: Set<string>;
+    symbolIds: Set<string>;
+  } {
+    const chunkIds = new Set<string>();
+    const symbolIds = new Set<string>();
+    if (!this.database) {
+      return { chunkIds, symbolIds };
+    }
+
+    const projectRootPath = path.resolve(this.projectRoot);
+    const projectLocalFilePaths = new Set<string>([
+      ...Array.from(this.fileHashCache.keys()).filter(
+        (filePath) => this.isFileInCurrentScope(filePath, roots) && isPathWithinRoot(filePath, projectRootPath)
+      ),
+      ...(this.store?.getAllMetadata() ?? [])
+        .map(({ metadata }) => metadata.filePath)
+        .filter(
+          (filePath) => this.isFileInCurrentScope(filePath, roots) && isPathWithinRoot(filePath, projectRootPath)
+        ),
+    ]);
+
+    for (const filePath of projectLocalFilePaths) {
+      for (const chunk of this.database.getChunksByFile(filePath)) {
+        chunkIds.add(chunk.chunkId);
+      }
+
+      for (const symbol of this.database.getSymbolsByFile(filePath)) {
+        symbolIds.add(symbol.id);
+      }
+    }
+
+    return { chunkIds, symbolIds };
+  }
+
+  private getProjectScopedBranchCatalogCleanupKeys(projectChunkIds: string[], projectSymbolIds: string[]): string[] {
+    if (this.config.scope !== "global") {
+      return this.getBranchCatalogCleanupKeys();
+    }
+
+    const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
+    const keys = new Set<string>();
+    const projectChunkIdSet = new Set(projectChunkIds);
+    const projectSymbolIdSet = new Set(projectSymbolIds);
+
+    for (const branchKey of this.database?.getAllBranches() ?? []) {
+      if (branchKey.startsWith(`${projectHash}:`)) {
+        keys.add(branchKey);
+        continue;
+      }
+
+      if (branchKey.includes(":")) {
+        continue;
+      }
+
+      const referencesProjectChunks = this.database?.getBranchChunkIds(branchKey).some((chunkId) => projectChunkIdSet.has(chunkId)) ?? false;
+      const referencesProjectSymbols = this.database?.getBranchSymbolIds(branchKey).some((symbolId) => projectSymbolIdSet.has(symbolId)) ?? false;
+      if (referencesProjectChunks || referencesProjectSymbols) {
+        keys.add(branchKey);
+      }
+    }
+
+    for (const branchKey of this.getBranchCatalogCleanupKeys()) {
+      keys.add(branchKey);
+    }
+
+    return Array.from(keys);
   }
 
   private isFileInCurrentScope(filePath: string, roots: string[]): boolean {
@@ -1576,16 +2005,25 @@ export class Indexer {
     this.saveFileHashCache();
   }
 
-  private partitionFailedBatches(roots: string[]): { scoped: FailedBatch[]; retained: FailedBatch[] } {
+  private partitionFailedBatches(roots: string[], maxChunkTokens?: number): { scoped: FailedBatch[]; retained: SerializedFailedBatch[] } {
     const scoped: FailedBatch[] = [];
-    const retained: FailedBatch[] = [];
+    const retained: SerializedFailedBatch[] = [];
 
-    for (const batch of this.loadFailedBatches()) {
-      const scopedChunks = batch.chunks.filter((chunk) => this.isFileInCurrentScope(chunk.metadata.filePath, roots));
-      const retainedChunks = batch.chunks.filter((chunk) => !this.isFileInCurrentScope(chunk.metadata.filePath, roots));
+    for (const batch of this.loadSerializedFailedBatches()) {
+      const scopedChunks = batch.chunks.filter((chunk) => {
+        const filePath = getPendingChunkFilePath(chunk);
+        return filePath !== null && this.isFileInCurrentScope(filePath, roots);
+      });
+      const retainedChunks = batch.chunks.filter((chunk) => {
+        const filePath = getPendingChunkFilePath(chunk);
+        return filePath === null || !this.isFileInCurrentScope(filePath, roots);
+      });
 
       if (scopedChunks.length > 0) {
-        scoped.push({ ...batch, chunks: scopedChunks });
+        const normalizedBatch = normalizeFailedBatch({ ...batch, chunks: scopedChunks }, maxChunkTokens);
+        if (normalizedBatch) {
+          scoped.push(normalizedBatch);
+        }
       }
 
       if (retainedChunks.length > 0) {
@@ -1610,6 +2048,39 @@ export class Indexer {
     return retained.length > 0;
   }
 
+  private hasForeignScopedBranchData(): boolean {
+    if (!this.database || this.config.scope !== "global") {
+      return false;
+    }
+
+    const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
+    const roots = this.getScopedRoots();
+    const { chunkIds: projectLocalChunkIds, symbolIds: projectLocalSymbolIds } = this.getProjectLocalScopedOwnershipIds(roots);
+
+    return this.database.getAllBranches().some(
+      (branchKey) => {
+        const branchChunkIds = this.database!.getBranchChunkIds(branchKey);
+        const branchSymbolIds = this.database!.getBranchSymbolIds(branchKey);
+        const hasBranchData = branchChunkIds.length > 0 || branchSymbolIds.length > 0;
+        if (!hasBranchData) {
+          return false;
+        }
+
+        if (branchKey.startsWith(`${projectHash}:`)) {
+          return false;
+        }
+
+        if (!branchKey.includes(":")) {
+          const referencesCurrentProjectChunks = branchChunkIds.some((chunkId) => projectLocalChunkIds.has(chunkId));
+          const referencesCurrentProjectSymbols = branchSymbolIds.some((symbolId) => projectLocalSymbolIds.has(symbolId));
+          return !(referencesCurrentProjectChunks || referencesCurrentProjectSymbols);
+        }
+
+        return true;
+      }
+    );
+  }
+
   private saveScopedFailedBatches(batches: FailedBatch[], roots: string[]): void {
     const { retained } = this.partitionFailedBatches(roots);
     this.saveFailedBatches([...retained, ...batches]);
@@ -1628,6 +2099,11 @@ export class Indexer {
       ...scopedEntries.map(({ metadata }) => metadata.filePath),
     ]);
 
+    const projectRootPath = path.resolve(this.projectRoot);
+    const projectLocalFilePaths = new Set<string>(
+      Array.from(filePaths).filter((filePath) => isPathWithinRoot(filePath, projectRootPath))
+    );
+
     const removedChunkIds = new Set<string>(scopedEntries.map(({ key }) => key));
     for (const filePath of filePaths) {
       for (const chunk of database.getChunksByFile(filePath)) {
@@ -1636,7 +2112,29 @@ export class Indexer {
     }
     const removedChunkIdList = Array.from(removedChunkIds);
 
-    for (const branchKey of this.getBranchCatalogKeys()) {
+    const projectLocalChunkIds = new Set<string>(
+      scopedEntries
+        .filter(({ metadata }) => isPathWithinRoot(metadata.filePath, projectRootPath))
+        .map(({ key }) => key)
+    );
+    for (const filePath of projectLocalFilePaths) {
+      for (const chunk of database.getChunksByFile(filePath)) {
+        projectLocalChunkIds.add(chunk.chunkId);
+      }
+    }
+
+    const symbolIds: string[] = [];
+    const projectLocalSymbolIds = new Set<string>();
+    for (const filePath of filePaths) {
+      for (const symbol of database.getSymbolsByFile(filePath)) {
+        symbolIds.push(symbol.id);
+        if (projectLocalFilePaths.has(filePath)) {
+          projectLocalSymbolIds.add(symbol.id);
+        }
+      }
+    }
+
+    for (const branchKey of this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
       database.deleteBranchChunksForBranch(branchKey, removedChunkIdList);
     }
     const sharedChunkIds = new Set(database.getReferencedChunkIds(removedChunkIdList));
@@ -1647,14 +2145,7 @@ export class Indexer {
       invertedIndex.removeChunk(chunkId);
     }
 
-    const symbolIds: string[] = [];
-    for (const filePath of filePaths) {
-      for (const symbol of database.getSymbolsByFile(filePath)) {
-        symbolIds.push(symbol.id);
-      }
-    }
-
-    for (const branchKey of this.getBranchCatalogKeys()) {
+    for (const branchKey of this.getProjectScopedBranchCatalogCleanupKeys(Array.from(projectLocalChunkIds), Array.from(projectLocalSymbolIds))) {
       database.deleteBranchSymbolsForBranch(branchKey, symbolIds);
     }
     const sharedSymbolIds = new Set(database.getReferencedSymbolIds(symbolIds));
@@ -1721,19 +2212,47 @@ export class Indexer {
     this.logger.info("Recovery complete, next index will re-process all files");
   }
 
-  private loadFailedBatches(): FailedBatch[] {
+  private loadFailedBatches(maxChunkTokens?: number): FailedBatch[] {
     try {
-      if (existsSync(this.failedBatchesPath)) {
-        const data = readFileSync(this.failedBatchesPath, "utf-8");
-        return JSON.parse(data) as FailedBatch[];
-      }
+      return this.loadSerializedFailedBatches()
+        .map((batch) => normalizeFailedBatch(batch, maxChunkTokens))
+        .filter((batch): batch is FailedBatch => batch !== null);
     } catch {
       return [];
     }
-    return [];
   }
 
-  private saveFailedBatches(batches: FailedBatch[]): void {
+  private loadSerializedFailedBatches(): SerializedFailedBatch[] {
+    if (!existsSync(this.failedBatchesPath)) {
+      return [];
+    }
+
+    const data = readFileSync(this.failedBatchesPath, "utf-8");
+    const parsed = JSON.parse(data) as Array<{
+      chunks?: unknown[];
+      error?: unknown;
+      attemptCount?: unknown;
+      lastAttempt?: unknown;
+    }>;
+
+    return parsed
+      .map((batch) => {
+        const chunks = Array.isArray(batch.chunks) ? batch.chunks : [];
+        if (chunks.length === 0) {
+          return null;
+        }
+
+        return {
+          chunks,
+          error: typeof batch.error === "string" ? batch.error : "Unknown embedding error",
+          attemptCount: typeof batch.attemptCount === "number" ? batch.attemptCount : 1,
+          lastAttempt: typeof batch.lastAttempt === "string" ? batch.lastAttempt : new Date().toISOString(),
+        } satisfies SerializedFailedBatch;
+      })
+      .filter((batch): batch is SerializedFailedBatch => batch !== null);
+  }
+
+  private saveFailedBatches(batches: SerializedFailedBatch[]): void {
     if (batches.length === 0) {
       if (existsSync(this.failedBatchesPath)) {
         try {
@@ -1749,11 +2268,12 @@ export class Indexer {
 
   private collectRetryableFailedChunks(
     currentFileHashes: Map<string, string>,
-    unchangedFilePaths: Set<string>
-  ): PendingChunk[] {
-    const retryableById = new Map<string, PendingChunk>();
+    unchangedFilePaths: Set<string>,
+    maxChunkTokens?: number
+  ): RetryableFailedChunk[] {
+    const retryableById = new Map<string, RetryableFailedChunk>();
 
-    for (const batch of this.loadFailedBatches()) {
+    for (const batch of this.loadFailedBatches(maxChunkTokens)) {
       for (const chunk of batch.chunks) {
         const filePath = chunk.metadata.filePath;
         if (!currentFileHashes.has(filePath)) {
@@ -1762,7 +2282,14 @@ export class Indexer {
         if (!unchangedFilePaths.has(filePath)) {
           continue;
         }
-        retryableById.set(chunk.id, chunk);
+
+        const existing = retryableById.get(chunk.id);
+        if (!existing || batch.attemptCount > existing.attemptCount) {
+          retryableById.set(chunk.id, {
+            chunk,
+            attemptCount: batch.attemptCount,
+          });
+        }
       }
     }
 
@@ -2068,6 +2595,19 @@ export class Indexer {
       dbIsNew = true;
     }
 
+    if (isGitRepo(this.projectRoot)) {
+      this.currentBranch = getBranchOrDefault(this.projectRoot);
+      this.baseBranch = getBaseBranch(this.projectRoot);
+      this.logger.branch("info", "Detected git repository", {
+        currentBranch: this.currentBranch,
+        baseBranch: this.baseBranch,
+      });
+    } else {
+      this.currentBranch = "default";
+      this.baseBranch = "default";
+      this.logger.branch("debug", "Not a git repository, using default branch");
+    }
+
     // Recover from interrupted indexing AFTER store, invertedIndex, and database
     // are all initialized. healthCheck() calls ensureInitialized() which checks
     // these fields — if they're not set, it re-enters initialize() causing infinite
@@ -2080,6 +2620,8 @@ export class Indexer {
       this.migrateFromLegacyIndex();
     }
 
+    this.loadFileHashCache();
+
     this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
     if (!this.indexCompatibility.compatible) {
       this.logger.warn("Index compatibility issue detected", {
@@ -2087,19 +2629,6 @@ export class Indexer {
         storedMetadata: this.indexCompatibility.storedMetadata,
         configuredProviderInfo: this.configuredProviderInfo,
       });
-    }
-
-    if (isGitRepo(this.projectRoot)) {
-      this.currentBranch = getBranchOrDefault(this.projectRoot);
-      this.baseBranch = getBaseBranch(this.projectRoot);
-      this.logger.branch("info", "Detected git repository", {
-        currentBranch: this.currentBranch,
-        baseBranch: this.baseBranch,
-      });
-    } else {
-      this.currentBranch = "default";
-      this.baseBranch = "default";
-      this.logger.branch("debug", "Not a git repository, using default branch");
     }
 
     // Auto-GC: Run garbage collection if enabled and interval has elapsed
@@ -2260,14 +2789,15 @@ export class Indexer {
     const version = this.database.getMetadata("index.version");
     if (!version) return null;
 
-    return {
-      indexVersion: version,
-      embeddingProvider: this.database.getMetadata("index.embeddingProvider") ?? "",
-      embeddingModel: this.database.getMetadata("index.embeddingModel") ?? "",
-      embeddingDimensions: parseInt(this.database.getMetadata("index.embeddingDimensions") ?? "0", 10),
-      createdAt: this.database.getMetadata("index.createdAt") ?? "",
-      updatedAt: this.database.getMetadata("index.updatedAt") ?? "",
-    };
+      return {
+        indexVersion: version,
+        embeddingProvider: this.database.getMetadata("index.embeddingProvider") ?? "",
+        embeddingModel: this.database.getMetadata("index.embeddingModel") ?? "",
+        embeddingDimensions: parseInt(this.database.getMetadata("index.embeddingDimensions") ?? "0", 10),
+        embeddingStrategyVersion: this.loadStoredEmbeddingStrategyVersion() ?? EMBEDDING_STRATEGY_VERSION,
+        createdAt: this.database.getMetadata("index.createdAt") ?? "",
+        updatedAt: this.database.getMetadata("index.updatedAt") ?? "",
+      };
   }
 
   private saveIndexMetadata(provider: ConfiguredProviderInfo): void {
@@ -2275,13 +2805,22 @@ export class Indexer {
 
     const now = new Date().toISOString();
     const existingCreatedAt = this.database.getMetadata("index.createdAt");
+    const completeProjectEmbeddingStrategyReset = !this.hasProjectForceReembedPending();
 
     this.database.setMetadata("index.version", INDEX_METADATA_VERSION);
     this.database.setMetadata("index.embeddingProvider", provider.provider);
     this.database.setMetadata("index.embeddingModel", provider.modelInfo.model);
     this.database.setMetadata("index.embeddingDimensions", provider.modelInfo.dimensions.toString());
     if (this.config.scope === "global") {
+      if (completeProjectEmbeddingStrategyReset) {
+        this.database.setMetadata(this.getProjectEmbeddingStrategyMetadataKey(), EMBEDDING_STRATEGY_VERSION);
+      }
       this.database.setMetadata(this.getLegacyMigrationMetadataKey(), "done");
+      if (completeProjectEmbeddingStrategyReset) {
+        this.database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+      }
+    } else {
+      this.database.setMetadata("index.embeddingStrategyVersion", EMBEDDING_STRATEGY_VERSION);
     }
     this.database.setMetadata("index.updatedAt", now);
 
@@ -2315,6 +2854,15 @@ export class Indexer {
         compatible: false,
         code: IncompatibilityCode.MODEL_MISMATCH,
         reason: `Model mismatch: index was built with "${storedMetadata.embeddingModel}", but current model is "${currentModel}". Embeddings are incompatible. Run index_codebase with force=true to rebuild.`,
+        storedMetadata,
+      };
+    }
+
+    if (storedMetadata.embeddingStrategyVersion !== EMBEDDING_STRATEGY_VERSION) {
+      return {
+        compatible: false,
+        code: IncompatibilityCode.EMBEDDING_STRATEGY_MISMATCH,
+        reason: `Embedding strategy mismatch: index was built with embedding strategy v${storedMetadata.embeddingStrategyVersion}, but the current code requires v${EMBEDDING_STRATEGY_VERSION}. Run index_codebase with force=true to rebuild cached embeddings.`,
         storedMetadata,
       };
     }
@@ -2382,6 +2930,8 @@ export class Indexer {
     const { store, provider, invertedIndex, database, configuredProviderInfo } = await this.ensureInitialized();
     const scopedRoots = this.config.scope === "global" ? this.getScopedRoots() : null;
     const branchCatalogKey = this.getBranchCatalogKey();
+    const forceScopedReembed = scopedRoots !== null && database.getMetadata(this.getProjectForceReembedMetadataKey()) === "true";
+    const failedForcedChunkIds = new Set<string>();
 
     if (!this.indexCompatibility?.compatible) {
       throw new Error(
@@ -2483,6 +3033,9 @@ export class Indexer {
       if (scopedRoots && !this.isFileInCurrentScope(metadata.filePath, scopedRoots)) {
         continue;
       }
+      if (forceScopedReembed && scopedRoots && this.isFileInCurrentScope(metadata.filePath, scopedRoots)) {
+        continue;
+      }
       existingChunks.set(key, metadata.hash);
       const fileChunks = existingChunksByFile.get(metadata.filePath) || new Set();
       fileChunks.add(key);
@@ -2553,7 +3106,10 @@ export class Indexer {
           continue;
         }
 
-        const text = createEmbeddingText(chunk, parsed.path);
+        const texts = createEmbeddingTexts(chunk, parsed.path, getSafeEmbeddingChunkTokenLimit(configuredProviderInfo)).map((text) => ({
+          text,
+          tokenCount: estimateTokens(text),
+        }));
         const metadata: ChunkMetadata = {
           filePath: parsed.path,
           startLine: chunk.startLine,
@@ -2564,15 +3120,32 @@ export class Indexer {
           hash: contentHash,
         };
 
-        pendingChunks.push({ id, text, content: chunk.content, contentHash, metadata });
+        pendingChunks.push({
+          id,
+          texts,
+          storageText: createPendingChunkStorageText(texts),
+          content: chunk.content,
+          contentHash,
+          metadata,
+        });
         fileChunkCount++;
       }
     }
 
-    const retryableFailedChunks = this.collectRetryableFailedChunks(currentFileHashes, unchangedFilePaths);
+    const retryableFailedChunks = this.collectRetryableFailedChunks(
+      currentFileHashes,
+      unchangedFilePaths,
+      getSafeEmbeddingChunkTokenLimit(configuredProviderInfo)
+    );
+    const retryableFailedAttemptCounts = new Map<string, number>();
+    const retryableChunksWithExistingData = new Set<string>();
     if (retryableFailedChunks.length > 0) {
       const pendingChunkIds = new Set(pendingChunks.map((chunk) => chunk.id));
-      for (const chunk of retryableFailedChunks) {
+      for (const { chunk, attemptCount } of retryableFailedChunks) {
+        retryableFailedAttemptCounts.set(chunk.id, attemptCount);
+        if (existingChunks.has(chunk.id)) {
+          retryableChunksWithExistingData.add(chunk.id);
+        }
         if (!pendingChunkIds.has(chunk.id)) {
           pendingChunks.push(chunk);
           pendingChunkIds.add(chunk.id);
@@ -2622,11 +3195,23 @@ export class Indexer {
         allSymbolIds.add(symbolId);
       }
 
+      // For case-insensitive languages (e.g. Apex), the Rust call extractor
+      // already lowercases non-constructor / non-import callee names, so we
+      // must lowercase the symbol-map keys here too. Otherwise a declaration
+      // like `MyMethod` would not match a lowercased call edge target like
+      // `mymethod`, leaving same-file calls unresolved (toSymbolId = NULL).
+      const fileLanguage = parsed.chunks[0]?.language;
+      const isCaseInsensitiveLanguage =
+        !!fileLanguage && CASE_INSENSITIVE_LANGUAGES.has(fileLanguage);
+      const normalizeSymbolKey = (name: string): string =>
+        isCaseInsensitiveLanguage ? name.toLowerCase() : name;
+
       const symbolsByName = new Map<string, SymbolData[]>();
       for (const symbol of fileSymbols) {
-        const existing = symbolsByName.get(symbol.name) ?? [];
+        const key = normalizeSymbolKey(symbol.name);
+        const existing = symbolsByName.get(key) ?? [];
         existing.push(symbol);
-        symbolsByName.set(symbol.name, existing);
+        symbolsByName.set(key, existing);
       }
 
       if (fileSymbols.length > 0) {
@@ -2635,7 +3220,6 @@ export class Indexer {
       }
 
       // Extract call sites from file content (only for supported languages)
-      const fileLanguage = parsed.chunks[0]?.language;
       if (!fileLanguage || !CALL_GRAPH_LANGUAGES.has(fileLanguage)) continue;
 
       const callSites = extractCalls(changedFile.content, fileLanguage);
@@ -2666,9 +3250,10 @@ export class Indexer {
       if (edges.length > 0) {
         database.upsertCallEdgesBatch(edges);
 
-        // Resolve same-file calls
+        // Resolve same-file calls (with the same case-insensitivity rules
+        // used to build symbolsByName above).
         for (const edge of edges) {
-          const candidates = symbolsByName.get(edge.targetName);
+          const candidates = symbolsByName.get(normalizeSymbolKey(edge.targetName));
           if (candidates && candidates.length === 1) {
             database.resolveCallEdge(edge.id, candidates[0].id);
           }
@@ -2771,9 +3356,12 @@ export class Indexer {
 
     const allContentHashes = pendingChunks.map((c) => c.contentHash);
     const missingHashes = new Set(database.getMissingEmbeddings(allContentHashes));
+    const forcedReembedChunkIds = forceScopedReembed
+      ? new Set(pendingChunks.map((chunk) => chunk.id))
+      : new Set<string>();
 
-    const chunksNeedingEmbedding = pendingChunks.filter((c) => missingHashes.has(c.contentHash));
-    const chunksWithExistingEmbedding = pendingChunks.filter((c) => !missingHashes.has(c.contentHash));
+    const chunksNeedingEmbedding = pendingChunks.filter((c) => forcedReembedChunkIds.has(c.id) || missingHashes.has(c.contentHash));
+    const chunksWithExistingEmbedding = pendingChunks.filter((c) => !forcedReembedChunkIds.has(c.id) && !missingHashes.has(c.contentHash));
 
     this.logger.cache("info", "Embedding cache lookup", {
       needsEmbedding: chunksNeedingEmbedding.length,
@@ -2798,10 +3386,17 @@ export class Indexer {
       interval: providerRateLimits.intervalMs,
       intervalCap: providerRateLimits.concurrency
     });
-    const dynamicBatches = createDynamicBatches(chunksNeedingEmbedding);
+    const pendingChunksById = new Map(chunksNeedingEmbedding.map((chunk) => [chunk.id, chunk]));
+    const embeddingPartsByChunk = new Map<string, Array<{ vector: number[]; tokenCount: number } | undefined>>();
+    const completedChunkIds = new Set<string>();
+    const failedChunkIds = new Set<string>();
+    const requestBatches = createPendingEmbeddingRequestBatches(
+      chunksNeedingEmbedding,
+      getDynamicBatchOptions(configuredProviderInfo)
+    );
     let rateLimitBackoffMs = 0;
 
-    for (const batch of dynamicBatches) {
+    for (const requestBatch of requestBatches) {
       queue.add(async () => {
         if (rateLimitBackoffMs > 0) {
           await new Promise(resolve => setTimeout(resolve, rateLimitBackoffMs));
@@ -2810,7 +3405,7 @@ export class Indexer {
         try {
           const result = await pRetry(
             async () => {
-              const texts = batch.map((c) => c.text);
+              const texts = requestBatch.map((request) => request.text);
               return provider.embedBatch(texts);
             },
             {
@@ -2842,34 +3437,96 @@ export class Indexer {
             rateLimitBackoffMs = Math.max(0, rateLimitBackoffMs - 2000);
           }
 
-          const items = batch.map((chunk, idx) => ({
-            id: chunk.id,
-            vector: result.embeddings[idx],
-            metadata: chunk.metadata,
-          }));
+          const touchedChunkIds = new Set<string>();
 
-          store.addBatch(items);
+          requestBatch.forEach((request, idx) => {
+            if (failedChunkIds.has(request.chunk.id) || completedChunkIds.has(request.chunk.id)) {
+              return;
+            }
 
-          const embeddingBatchItems = batch.map((chunk, i) => ({
-            contentHash: chunk.contentHash,
-            embedding: float32ArrayToBuffer(result.embeddings[i]),
-            chunkText: chunk.text,
-            model: configuredProviderInfo.modelInfo.model,
-          }));
-          database.upsertEmbeddingsBatch(embeddingBatchItems);
+            const vector = result.embeddings[idx];
+            if (!vector) {
+              throw new Error(`Embedding API returned too few vectors for chunk ${request.chunk.id}`);
+            }
 
-          for (const chunk of batch) {
-            invertedIndex.removeChunk(chunk.id);
-            invertedIndex.addChunk(chunk.id, chunk.content);
+            const parts = embeddingPartsByChunk.get(request.chunk.id) ?? [];
+            parts[request.partIndex] = {
+              vector,
+              tokenCount: request.tokenCount,
+            };
+            embeddingPartsByChunk.set(request.chunk.id, parts);
+            touchedChunkIds.add(request.chunk.id);
+          });
+
+          const pooledResults: Array<{ chunk: PendingChunk; vector: number[] }> = [];
+          for (const chunkId of touchedChunkIds) {
+            if (failedChunkIds.has(chunkId) || completedChunkIds.has(chunkId)) {
+              continue;
+            }
+
+            const chunk = pendingChunksById.get(chunkId);
+            if (!chunk) {
+              continue;
+            }
+
+            const parts = embeddingPartsByChunk.get(chunk.id) ?? [];
+            if (!hasAllEmbeddingParts(parts, chunk.texts.length)) {
+              continue;
+            }
+
+            const orderedParts = parts as Array<{ vector: number[]; tokenCount: number }>;
+            pooledResults.push({
+              chunk,
+              vector: poolEmbeddingVectors(
+                orderedParts.map((part) => part.vector),
+                orderedParts.map((part) => part.tokenCount)
+              ),
+            });
           }
 
-          stats.indexedChunks += batch.length;
+          if (pooledResults.length > 0) {
+            const items = pooledResults.map(({ chunk, vector }) => ({
+              id: chunk.id,
+              vector,
+              metadata: chunk.metadata,
+            }));
+
+            store.addBatch(items);
+
+            const embeddingBatchItems = pooledResults.map(({ chunk, vector }) => ({
+              contentHash: chunk.contentHash,
+              embedding: float32ArrayToBuffer(vector),
+              chunkText: chunk.storageText,
+              model: configuredProviderInfo.modelInfo.model,
+            }));
+
+            try {
+              database.upsertEmbeddingsBatch(embeddingBatchItems);
+            } catch (dbError) {
+              // Rollback vectors added to store if DB write fails
+              for (const { chunk } of pooledResults) {
+                store.remove(chunk.id);
+              }
+              throw dbError;
+            }
+
+            for (const { chunk } of pooledResults) {
+              invertedIndex.removeChunk(chunk.id);
+              invertedIndex.addChunk(chunk.id, chunk.content);
+              completedChunkIds.add(chunk.id);
+              embeddingPartsByChunk.delete(chunk.id);
+            }
+
+            stats.indexedChunks += pooledResults.length;
+            this.logger.recordChunksEmbedded(pooledResults.length);
+          }
+
           stats.tokensUsed += result.totalTokensUsed;
 
-          this.logger.recordChunksEmbedded(batch.length);
           this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
           this.logger.embedding("debug", `Embedded batch`, {
-            batchSize: batch.length,
+            batchSize: pooledResults.length,
+            requestCount: requestBatch.length,
             tokens: result.totalTokensUsed,
           });
 
@@ -2881,17 +3538,48 @@ export class Indexer {
             totalChunks: pendingChunks.length,
           });
         } catch (error) {
-          stats.failedChunks += batch.length;
-          failedBatchesForCurrentRun.push({
-            chunks: batch,
-            error: getErrorMessage(error),
-            attemptCount: 1,
-            lastAttempt: new Date().toISOString(),
-          });
+          const failedChunks = getUniquePendingChunksFromRequests(requestBatch)
+            .filter((chunk) => !completedChunkIds.has(chunk.id));
+          const failureMessage = getErrorMessage(error);
+          const failureTimestamp = new Date().toISOString();
+
+          for (const chunk of failedChunks) {
+            if (!failedChunkIds.has(chunk.id)) {
+              failedChunkIds.add(chunk.id);
+              stats.failedChunks += 1;
+            }
+
+            if (forceScopedReembed) {
+              failedForcedChunkIds.add(chunk.id);
+            }
+
+            embeddingPartsByChunk.delete(chunk.id);
+
+            const existingFailedBatchIndex = failedBatchesForCurrentRun.findIndex(
+              (failedBatch) => failedBatch.chunks[0]?.id === chunk.id
+            );
+            const existingFailedBatch = existingFailedBatchIndex === -1
+              ? undefined
+              : failedBatchesForCurrentRun[existingFailedBatchIndex];
+            const failedBatch = {
+              chunks: [chunk],
+              error: failureMessage,
+              attemptCount: (existingFailedBatch?.attemptCount ?? retryableFailedAttemptCounts.get(chunk.id) ?? 0) + 1,
+              lastAttempt: failureTimestamp,
+            } satisfies FailedBatch;
+
+            if (existingFailedBatchIndex === -1) {
+              failedBatchesForCurrentRun.push(failedBatch);
+            } else {
+              failedBatchesForCurrentRun[existingFailedBatchIndex] = failedBatch;
+            }
+          }
+
           this.logger.recordEmbeddingError();
           this.logger.embedding("error", `Failed to embed batch after retries`, {
-            batchSize: batch.length,
-            error: getErrorMessage(error),
+            batchSize: failedChunks.length,
+            requestCount: requestBatch.length,
+            error: failureMessage,
           });
         }
       });
@@ -2899,9 +3587,9 @@ export class Indexer {
 
     await queue.onIdle();
     if (scopedRoots) {
-      this.saveScopedFailedBatches(failedBatchesForCurrentRun, scopedRoots);
+      this.saveScopedFailedBatches(coalesceFailedBatches(failedBatchesForCurrentRun), scopedRoots);
     } else {
-      this.saveFailedBatches(failedBatchesForCurrentRun);
+      this.saveFailedBatches(coalesceFailedBatches(failedBatchesForCurrentRun));
     }
 
     onProgress?.({
@@ -2912,8 +3600,15 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
+    const branchChunkIds = Array.from(currentChunkIds).filter(
+      (chunkId) => {
+        const isNewlyFailed = failedChunkIds.has(chunkId) && !retryableChunksWithExistingData.has(chunkId);
+        const isForcedFailed = forceScopedReembed && failedForcedChunkIds.has(chunkId);
+        return !isNewlyFailed && !isForcedFailed;
+      }
+    );
     database.clearBranch(branchCatalogKey);
-    database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
+    database.addChunksToBranchBatch(branchCatalogKey, branchChunkIds);
     database.clearBranchSymbols(branchCatalogKey);
     database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
 
@@ -2951,6 +3646,9 @@ export class Indexer {
 
     stats.durationMs = Date.now() - startTime;
 
+    if (forceScopedReembed && failedForcedChunkIds.size === 0) {
+      database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+    }
     this.saveIndexMetadata(configuredProviderInfo);
     this.indexCompatibility = { compatible: true };
 
@@ -3378,10 +4076,21 @@ export class Indexer {
       const allMetadata = store.getAllMetadata();
       const hasForeignData =
         allMetadata.some(({ metadata }) => !this.isFileInCurrentScope(metadata.filePath, roots)) ||
+        this.hasForeignScopedBranchData() ||
         this.hasForeignScopedFileHashData(roots) ||
         this.hasForeignScopedFailedBatches(roots);
 
       if (!compatibility.compatible && hasForeignData) {
+        if (compatibility.code === IncompatibilityCode.EMBEDDING_STRATEGY_MISMATCH) {
+          this.clearSharedIndexProjectData(store, invertedIndex, database, roots);
+          this.clearScopedFileHashCache(roots);
+          this.clearScopedFailedBatches(roots);
+          database.setMetadata(this.getProjectForceReembedMetadataKey(), "true");
+          database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+          this.indexCompatibility = { compatible: true };
+          return;
+        }
+
         throw new Error(
           `Global index compatibility reset is unsafe because the shared index contains files from other projects. ` +
           `The current global index cannot be force-rebuilt for ${this.projectRoot} without deleting other repositories' indexed data. ` +
@@ -3405,6 +4114,9 @@ export class Indexer {
         database.deleteMetadata("index.embeddingProvider");
         database.deleteMetadata("index.embeddingModel");
         database.deleteMetadata("index.embeddingDimensions");
+        database.deleteMetadata("index.embeddingStrategyVersion");
+        database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+        database.deleteMetadata(this.getProjectForceReembedMetadataKey());
         database.deleteMetadata(this.getLegacyMigrationMetadataKey());
         database.deleteMetadata("index.createdAt");
         database.deleteMetadata("index.updatedAt");
@@ -3447,6 +4159,9 @@ export class Indexer {
     database.deleteMetadata("index.embeddingProvider");
     database.deleteMetadata("index.embeddingModel");
     database.deleteMetadata("index.embeddingDimensions");
+    database.deleteMetadata("index.embeddingStrategyVersion");
+    database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+    database.deleteMetadata(this.getProjectForceReembedMetadataKey());
     database.deleteMetadata(this.getLegacyMigrationMetadataKey());
     database.deleteMetadata("index.createdAt");
     database.deleteMetadata("index.updatedAt");
@@ -3532,12 +4247,14 @@ export class Indexer {
   }
 
   async retryFailedBatches(): Promise<{ succeeded: number; failed: number; remaining: number }> {
-    const { store, provider, invertedIndex } = await this.ensureInitialized();
+    const { store, provider, invertedIndex, database, configuredProviderInfo } = await this.ensureInitialized();
+    const maxChunkTokens = getSafeEmbeddingChunkTokenLimit(configuredProviderInfo);
+    const providerRateLimits = this.getProviderRateLimits(configuredProviderInfo.provider);
 
     const roots = this.config.scope === "global" ? this.getScopedRoots() : null;
     const { scoped: scopedFailedBatches, retained: retainedFailedBatches } = roots
-      ? this.partitionFailedBatches(roots)
-      : { scoped: this.loadFailedBatches(), retained: [] as FailedBatch[] };
+      ? this.partitionFailedBatches(roots, maxChunkTokens)
+      : { scoped: this.loadFailedBatches(maxChunkTokens), retained: [] as FailedBatch[] };
     const failedBatches = scopedFailedBatches;
     if (failedBatches.length === 0) {
       return { succeeded: 0, failed: 0, remaining: 0 };
@@ -3548,51 +4265,177 @@ export class Indexer {
     const stillFailing: FailedBatch[] = [];
 
     for (const batch of failedBatches) {
+      const batchChunksById = new Map(batch.chunks.map((chunk) => [chunk.id, chunk]));
+      const embeddingPartsByChunk = new Map<string, Array<{ vector: number[]; tokenCount: number } | undefined>>();
+      const completedChunkIds = new Set<string>();
+      const failedChunkIds = new Set<string>();
+      const failedChunksForBatch = new Map<string, FailedBatch>();
+      const pooledResults: Array<{ chunk: PendingChunk; vector: number[] }> = [];
       try {
-        const result = await pRetry(
-          async () => {
-            const texts = batch.chunks.map((c) => c.text);
-            return provider.embedBatch(texts);
-          },
-          {
-            retries: this.config.indexing.retries,
-            minTimeout: this.config.indexing.retryDelayMs,
-          }
+        const requestBatches = createPendingEmbeddingRequestBatches(
+          batch.chunks,
+          getDynamicBatchOptions(configuredProviderInfo)
         );
 
-        const items = batch.chunks.map((chunk, idx) => ({
+        for (const requestBatch of requestBatches) {
+          try {
+            const result = await pRetry(
+              async () => {
+                const texts = requestBatch.map((request) => request.text);
+                return provider.embedBatch(texts);
+              },
+              {
+                retries: this.config.indexing.retries,
+                minTimeout: Math.max(this.config.indexing.retryDelayMs, providerRateLimits.minRetryMs),
+                maxTimeout: providerRateLimits.maxRetryMs,
+                factor: 2,
+                shouldRetry: (error) => !((error as { error?: Error }).error instanceof CustomProviderNonRetryableError),
+              }
+            );
+
+            const touchedChunkIds = new Set<string>();
+            requestBatch.forEach((request, idx) => {
+              if (failedChunkIds.has(request.chunk.id) || completedChunkIds.has(request.chunk.id)) {
+                return;
+              }
+
+              const vector = result.embeddings[idx];
+              if (!vector) {
+                throw new Error(`Embedding API returned too few vectors for chunk ${request.chunk.id}`);
+              }
+
+              const parts = embeddingPartsByChunk.get(request.chunk.id) ?? [];
+              parts[request.partIndex] = {
+                vector,
+                tokenCount: request.tokenCount,
+              };
+              embeddingPartsByChunk.set(request.chunk.id, parts);
+              touchedChunkIds.add(request.chunk.id);
+            });
+
+            for (const chunkId of touchedChunkIds) {
+              if (failedChunkIds.has(chunkId) || completedChunkIds.has(chunkId)) {
+                continue;
+              }
+
+              const chunk = batchChunksById.get(chunkId);
+              if (!chunk) {
+                continue;
+              }
+
+              const parts = embeddingPartsByChunk.get(chunk.id) ?? [];
+              if (!hasAllEmbeddingParts(parts, chunk.texts.length)) {
+                continue;
+              }
+
+              const orderedParts = parts as Array<{ vector: number[]; tokenCount: number }>;
+              pooledResults.push({
+                chunk,
+                vector: poolEmbeddingVectors(
+                  orderedParts.map((part) => part.vector),
+                  orderedParts.map((part) => part.tokenCount)
+                ),
+              });
+            }
+
+            this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
+          } catch (error) {
+            const failureMessage = String(error);
+            const failureTimestamp = new Date().toISOString();
+            const failedChunks = getUniquePendingChunksFromRequests(requestBatch)
+              .filter((chunk) => !completedChunkIds.has(chunk.id) && !failedChunkIds.has(chunk.id));
+
+            for (const chunk of failedChunks) {
+              failedChunkIds.add(chunk.id);
+              embeddingPartsByChunk.delete(chunk.id);
+              failedChunksForBatch.set(chunk.id, {
+                chunks: [chunk],
+                attemptCount: batch.attemptCount + 1,
+                lastAttempt: failureTimestamp,
+                error: failureMessage,
+              });
+            }
+
+            failed += failedChunks.length;
+            this.logger.recordEmbeddingError();
+          }
+        }
+
+        const successfulResults = pooledResults.filter(({ chunk }) => !failedChunkIds.has(chunk.id));
+
+        const items = successfulResults.map(({ chunk, vector }) => ({
           id: chunk.id,
-          vector: result.embeddings[idx],
+          vector,
           metadata: chunk.metadata,
         }));
 
-        store.addBatch(items);
-
-        for (const chunk of batch.chunks) {
-          invertedIndex.removeChunk(chunk.id);
-          invertedIndex.addChunk(chunk.id, chunk.content);
+        if (items.length > 0) {
+          store.addBatch(items);
         }
 
-        this.logger.recordChunksEmbedded(batch.chunks.length);
-        this.logger.recordEmbeddingApiCall(result.totalTokensUsed);
+        if (successfulResults.length > 0) {
+          try {
+            database.upsertEmbeddingsBatch(
+              successfulResults.map(({ chunk, vector }) => ({
+                contentHash: chunk.contentHash,
+                embedding: float32ArrayToBuffer(vector),
+                chunkText: chunk.storageText,
+                model: configuredProviderInfo.modelInfo.model,
+              }))
+            );
+          } catch (dbError) {
+            // Rollback vectors added to store if DB write fails
+            for (const { chunk } of successfulResults) {
+              store.remove(chunk.id);
+            }
+            throw dbError;
+          }
+        }
 
-        succeeded += batch.chunks.length;
+        for (const { chunk } of successfulResults) {
+          invertedIndex.removeChunk(chunk.id);
+          invertedIndex.addChunk(chunk.id, chunk.content);
+          completedChunkIds.add(chunk.id);
+          embeddingPartsByChunk.delete(chunk.id);
+        }
+
+        database.addChunksToBranchBatch(
+          this.getBranchCatalogKey(),
+          successfulResults.map(({ chunk }) => chunk.id)
+        );
+
+        this.logger.recordChunksEmbedded(successfulResults.length);
+
+        succeeded += successfulResults.length;
+        stillFailing.push(...failedChunksForBatch.values());
       } catch (error) {
-        failed += batch.chunks.length;
+        const failureMessage = getErrorMessage(error);
+        const failureTimestamp = new Date().toISOString();
+        const unaccountedChunks = batch.chunks.filter(
+          (chunk) => !failedChunksForBatch.has(chunk.id) && !completedChunkIds.has(chunk.id)
+        );
+
+        for (const chunk of unaccountedChunks) {
+          failedChunksForBatch.set(chunk.id, {
+            chunks: [chunk],
+            attemptCount: batch.attemptCount + 1,
+            lastAttempt: failureTimestamp,
+            error: failureMessage,
+          });
+        }
+
+        failed += unaccountedChunks.length;
         this.logger.recordEmbeddingError();
-        stillFailing.push({
-          ...batch,
-          attemptCount: batch.attemptCount + 1,
-          lastAttempt: new Date().toISOString(),
-          error: String(error),
-        });
+        stillFailing.push(...coalesceFailedBatches(Array.from(failedChunksForBatch.values())));
       }
     }
 
+    const persistedStillFailing = coalesceFailedBatches(stillFailing);
+
     if (roots) {
-      this.saveFailedBatches([...retainedFailedBatches, ...stillFailing]);
+      this.saveFailedBatches([...retainedFailedBatches, ...persistedStillFailing]);
     } else {
-      this.saveFailedBatches(stillFailing);
+      this.saveFailedBatches(persistedStillFailing);
     }
 
     if (succeeded > 0) {
@@ -3600,7 +4443,13 @@ export class Indexer {
       invertedIndex.save();
     }
 
-    return { succeeded, failed, remaining: stillFailing.length };
+    if (roots && succeeded > 0 && persistedStillFailing.length === 0 && this.hasProjectForceReembedPending()) {
+      database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+      this.saveIndexMetadata(configuredProviderInfo);
+      this.indexCompatibility = { compatible: true };
+    }
+
+    return { succeeded, failed, remaining: persistedStillFailing.length };
   }
 
   getFailedBatchesCount(): number {

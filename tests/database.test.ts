@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { Database, ChunkData } from "../src/native/index.js";
+import { Database, ChunkData, SymbolData } from "../src/native/index.js";
 
 describe("Database", () => {
   let tempDir: string;
@@ -162,6 +162,30 @@ describe("Database", () => {
 
       expect(branches).toContain("main");
       expect(branches).toContain("feature");
+    });
+
+    it("should include branches that only have symbols", () => {
+      const testSymbol: SymbolData = {
+        id: "sym_abc123",
+        filePath: "/path/to/file.ts",
+        name: "testFunction",
+        kind: "function",
+        startLine: 10,
+        startCol: 0,
+        endLine: 20,
+        endCol: 0,
+        language: "typescript",
+      };
+
+      db.upsertSymbol(testSymbol);
+      db.addSymbolsToBranchBatch("symbols-only", [testSymbol.id]);
+      db.upsertChunk(testChunk);
+      db.addChunksToBranch("chunks-only", [testChunk.chunkId]);
+
+      const branches = db.getAllBranches();
+
+      expect(branches).toContain("symbols-only");
+      expect(branches).toContain("chunks-only");
     });
 
     it("should compute branch delta", () => {
@@ -338,6 +362,38 @@ describe("Database", () => {
       expect(stats.chunkCount).toBe(1);
       expect(stats.branchChunkCount).toBe(1);
       expect(stats.branchCount).toBe(1);
+    });
+
+    it("should count branches that only have symbols", () => {
+      const testSymbol: SymbolData = {
+        id: "sym_stats",
+        filePath: "/file.ts",
+        name: "statsFunction",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 5,
+        endCol: 0,
+        language: "typescript",
+      };
+
+      db.upsertChunk({
+        chunkId: "chunk_stats",
+        contentHash: "hash_stats",
+        filePath: "/chunk.ts",
+        startLine: 1,
+        endLine: 5,
+        language: "typescript",
+      });
+      db.addChunksToBranch("chunk-branch", ["chunk_stats"]);
+      db.upsertSymbol(testSymbol);
+      db.addSymbolsToBranchBatch("symbol-branch", [testSymbol.id]);
+
+      const stats = db.getStats();
+
+      expect(stats.branchChunkCount).toBe(1);
+      expect(stats.branchCount).toBe(2);
+      expect(stats.symbolCount).toBe(1);
     });
   });
 

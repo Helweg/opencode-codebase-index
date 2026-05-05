@@ -8,6 +8,7 @@ import {
   hashContent,
   hashFile,
   VectorStore,
+  createEmbeddingTexts,
   createEmbeddingText,
   createDynamicBatches,
   generateChunkId,
@@ -137,6 +138,98 @@ trait Timestampable {
       expect(chunks.length).toBeGreaterThanOrEqual(2);
       expect(chunks.some((c) => c.content.includes("function helper"))).toBe(true);
       expect(chunks.some((c) => c.content.includes("trait Timestampable"))).toBe(true);
+    });
+
+    it("should parse Apex classes (.cls) with methods and constructors", () => {
+      const content = `
+public with sharing class AccountService {
+    private static final String DEFAULT_NAME = 'Untitled';
+
+    public AccountService() {}
+
+    public static Account createAccount(String name) {
+        Account a = new Account(Name = name);
+        insert a;
+        return a;
+    }
+
+    public Integer countActiveAccounts() {
+        return [SELECT COUNT() FROM Account WHERE Active__c = TRUE];
+    }
+}
+`;
+      const chunks = parseFile("AccountService.cls", content);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(1);
+      expect(chunks.some((c) => c.chunkType === "class_declaration")).toBe(true);
+      expect(chunks.some((c) => c.content.includes("createAccount"))).toBe(true);
+      expect(chunks.some((c) => c.content.includes("countActiveAccounts"))).toBe(true);
+    });
+
+    it("should parse Apex triggers (.trigger)", () => {
+      const content = `
+trigger AccountTrigger on Account (before insert, before update, after delete) {
+    for (Account a : Trigger.new) {
+        a.Description = 'Updated by trigger';
+    }
+}
+`;
+      const chunks = parseFile("AccountTrigger.trigger", content);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(1);
+      expect(chunks.some((c) => c.chunkType === "trigger_declaration")).toBe(true);
+      expect(chunks.some((c) => c.name === "AccountTrigger")).toBe(true);
+      expect(chunks.some((c) => c.content.includes("before insert"))).toBe(true);
+    });
+
+    it("should attach Apex JavaDoc block comments to declarations", () => {
+      const content = `
+/**
+ * Service for managing Account records.
+ * Used by Aura controllers and batch jobs.
+ */
+public class AccountService {
+    /**
+     * Creates a new Account with the given name.
+     */
+    public static Account createAccount(String name) {
+        return new Account(Name = name);
+    }
+}
+`;
+      const chunks = parseFile("AccountService.cls", content);
+
+      const classChunk = chunks.find((c) => c.chunkType === "class_declaration");
+      expect(classChunk).toBeDefined();
+      expect(classChunk?.content).toContain("Service for managing Account");
+    });
+
+    it("should parse a realistic 200+ line Apex fixture without errors", () => {
+      const fixturePath = path.join(
+        __dirname,
+        "fixtures",
+        "apex",
+        "AccountServiceFixture.cls",
+      );
+      const content = fs.readFileSync(fixturePath, "utf-8");
+      const chunks = parseFile("AccountServiceFixture.cls", content);
+
+      expect(chunks.length).toBeGreaterThan(0);
+
+      // The outer class is very large (>2KB) and will be split into multiple
+      // chunks by split_large_chunk; the chunks inherit chunk_type from the
+      // parent semantic node, so we expect class_declaration chunks.
+      expect(chunks.some((c) => c.chunkType === "class_declaration")).toBe(true);
+
+      // Recognizable identifiers should appear somewhere in the output.
+      const allContent = chunks.map((c) => c.content).join("\n");
+      expect(allContent).toContain("AccountServiceFixture");
+      expect(allContent).toContain("createAccount");
+      expect(allContent).toContain("AccountServiceException");
+      expect(allContent).toContain("ProcessingStatus");
+
+      // Language label is consistent.
+      expect(chunks.every((c) => c.language === "apex")).toBe(true);
     });
   });
 
@@ -588,6 +681,84 @@ trait Timestampable {
       const batches = createDynamicBatches(chunks);
 
       expect(batches.length).toBe(2);
+    });
+
+    it("should respect maxBatchItems option", () => {
+      const chunks = [
+        { text: "a".repeat(100), id: "1" },
+        { text: "b".repeat(100), id: "2" },
+        { text: "c".repeat(100), id: "3" },
+      ];
+
+      const batches = createDynamicBatches(chunks, { maxBatchItems: 1 });
+
+      expect(batches).toHaveLength(3);
+      expect(batches.every((batch) => batch.length === 1)).toBe(true);
+    });
+
+    it("should respect maxBatchTokens override", () => {
+      const chunks = [
+        { text: "a".repeat(1000), id: "1" },
+        { text: "b".repeat(1000), id: "2" },
+      ];
+
+      const batches = createDynamicBatches(chunks, { maxBatchTokens: 300 });
+
+      expect(batches).toHaveLength(2);
+    });
+  });
+
+  describe("createEmbeddingText", () => {
+    it("should respect a lower max token override", () => {
+      const chunk: CodeChunk = {
+        content: "x".repeat(10000),
+        startLine: 1,
+        endLine: 50,
+        chunkType: "function",
+        name: "hugeChunk",
+        language: "typescript",
+      };
+
+      const text = createEmbeddingText(chunk, "/src/huge.ts", 256);
+
+      expect(text.length).toBeLessThan(256 * 4 + 64);
+      expect(text).toContain("... [truncated]");
+    });
+  });
+
+  describe("createEmbeddingTexts", () => {
+    it("splits oversized chunks into multiple embedding texts with part markers", () => {
+      const chunk: CodeChunk = {
+        content: "x".repeat(8000),
+        startLine: 1,
+        endLine: 200,
+        chunkType: "function",
+        name: "hugeChunk",
+        language: "typescript",
+      };
+
+      const texts = createEmbeddingTexts(chunk, "/src/huge.ts", 256);
+
+      expect(texts.length).toBeGreaterThan(1);
+      expect(texts[0]).toContain("Part 1/");
+      expect(texts[1]).toContain("Part 2/");
+      expect(texts.every((text) => text.length <= 256 * 4 + 128)).toBe(true);
+    });
+
+    it("returns a single text when the chunk fits the token budget", () => {
+      const chunk: CodeChunk = {
+        content: "function small() { return 1; }",
+        startLine: 1,
+        endLine: 3,
+        chunkType: "function",
+        name: "small",
+        language: "typescript",
+      };
+
+      const texts = createEmbeddingTexts(chunk, "/src/small.ts", 512);
+
+      expect(texts).toHaveLength(1);
+      expect(texts[0]).not.toContain("Part 1/");
     });
   });
 

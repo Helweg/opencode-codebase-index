@@ -768,7 +768,13 @@ pub fn chunk_exists_on_branch(conn: &Connection, branch: &str, chunk_id: &str) -
 
 /// Get all branches
 pub fn get_all_branches(conn: &Connection) -> DbResult<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT DISTINCT branch FROM branch_chunks")?;
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT branch FROM branch_chunks
+        UNION
+        SELECT branch FROM branch_symbols
+        "#,
+    )?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
     let mut results = Vec::new();
@@ -1494,7 +1500,14 @@ pub fn get_stats(conn: &Connection) -> DbResult<DbStats> {
     let branch_chunk_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM branch_chunks", [], |row| row.get(0))?;
     let branch_count: i64 = conn.query_row(
-        "SELECT COUNT(DISTINCT branch) FROM branch_chunks",
+        r#"
+        SELECT COUNT(*)
+        FROM (
+            SELECT branch FROM branch_chunks
+            UNION
+            SELECT branch FROM branch_symbols
+        )
+        "#,
         [],
         |row| row.get(0),
     )?;
