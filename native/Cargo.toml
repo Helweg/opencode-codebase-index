@@ -1,6 +1,6 @@
 [package]
 name = "codebase-index-native"
-version = "0.1.0"
+version = "0.7.1"
 edition = "2021"
 license = "MIT"
 description = "Native Rust core for opencode-codebase-index: tree-sitter parsing and vector search"

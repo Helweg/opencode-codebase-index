@@ -93,7 +93,7 @@ function loadRawConfig(projectRoot: string, configPath?: string): unknown {
     );
   }
 
-  const globalConfig = path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
+  const globalConfig = path.join(process.env["HOME"] ?? process.env["USERPROFILE"] ?? os.homedir(), ".config", "opencode", "codebase-index.json");
   if (existsSync(globalConfig)) {
     return JSON.parse(readFileSync(globalConfig, "utf-8"));
   }
@@ -210,107 +210,107 @@ export async function runEvaluation(options: EvalRunOptions): Promise<EvalRunRes
   const indexer = new Indexer(options.projectRoot, effectiveConfig);
 
   try {
-  await indexer.index();
+    await indexer.index();
 
-  const perQuery: PerQueryEvalResult[] = [];
+    const perQuery: PerQueryEvalResult[] = [];
 
-  for (const query of dataset.queries) {
-    if (query.expected.branch && query.expected.branch !== indexer.getCurrentBranch()) {
-      throw new Error(
-        `Query '${query.id}' expects branch '${query.expected.branch}', but current branch is '${indexer.getCurrentBranch()}'. Switch branch before running this dataset.`
-      );
-    }
-
-    const start = performance.now();
-    const result = await indexer.search(query.query, 10, {
-      metadataOnly: true,
-      filterByBranch: query.expected.branch ? true : false,
-    });
-    const elapsed = performance.now() - start;
-
-    const materialized = result.map((item) => ({
-      filePath: item.filePath,
-      startLine: item.startLine,
-      endLine: item.endLine,
-      score: item.score,
-      chunkType: item.chunkType,
-      name: item.name,
-    }));
-
-    perQuery.push(buildPerQueryResult(query, materialized, elapsed, 10));
-  }
-
-  const logger = indexer.getLogger();
-  const metricSnapshot = logger.getMetrics();
-
-  const costPer1MTokensUsd =
-    effectiveConfig.embeddingProvider === "custom" || effectiveConfig.embeddingProvider === "auto"
-      ? 0
-      : getDefaultModelForProvider(effectiveConfig.embeddingProvider).costPer1MTokens;
-
-  const summary: EvalSummary = {
-    generatedAt: new Date().toISOString(),
-    projectRoot: options.projectRoot,
-    datasetPath,
-    datasetName: dataset.name,
-    datasetVersion: dataset.version,
-    queryCount: dataset.queries.length,
-    topK: 10,
-    searchConfig: {
-      fusionStrategy: effectiveConfig.search.fusionStrategy,
-      hybridWeight: effectiveConfig.search.hybridWeight,
-      rrfK: effectiveConfig.search.rrfK,
-      rerankTopN: effectiveConfig.search.rerankTopN,
-    },
-    metrics: computeEvalMetrics(
-      dataset.queries,
-      perQuery,
-      metricSnapshot.embeddingApiCalls,
-      metricSnapshot.embeddingTokensUsed,
-      costPer1MTokensUsd
-    ),
-  };
-
-  const outputDir = createRunDirectory(toAbsolute(options.projectRoot, options.outputRoot));
-  const perQueryArtifact = buildPerQueryArtifact(perQuery);
-
-  writeJson(path.join(outputDir, "summary.json"), summary);
-  writeJson(path.join(outputDir, "per-query.json"), perQueryArtifact);
-
-  let comparison: EvalComparison | undefined;
-  if (againstPath) {
-    const baseline = loadSummary(againstPath);
-    comparison = compareSummaries(summary, baseline, againstPath);
-    writeJson(path.join(outputDir, "compare.json"), comparison);
-  }
-
-  let gate: EvalGateResult | undefined;
-  if (options.ciMode) {
-    if (!budgetPath) {
-      throw new Error("CI mode requires --budget path");
-    }
-    const budget = loadBudget(budgetPath);
-
-    if (!comparison && budget.baselinePath) {
-      const resolvedBaseline = toAbsolute(options.projectRoot, budget.baselinePath);
-      if (existsSync(resolvedBaseline)) {
-        const baselineSummary = loadSummary(resolvedBaseline);
-        comparison = compareSummaries(summary, baselineSummary, resolvedBaseline);
-        writeJson(path.join(outputDir, "compare.json"), comparison);
-      } else if (budget.failOnMissingBaseline) {
+    for (const query of dataset.queries) {
+      if (query.expected.branch && query.expected.branch !== indexer.getCurrentBranch()) {
         throw new Error(
-          `Budget baseline is missing: ${resolvedBaseline}. Set failOnMissingBaseline=false to allow CI run without baseline.`
+          `Query '${query.id}' expects branch '${query.expected.branch}', but current branch is '${indexer.getCurrentBranch()}'. Switch branch before running this dataset.`
         );
       }
+
+      const start = performance.now();
+      const result = await indexer.search(query.query, 10, {
+        metadataOnly: true,
+        filterByBranch: query.expected.branch ? true : false,
+      });
+      const elapsed = performance.now() - start;
+
+      const materialized = result.map((item) => ({
+        filePath: item.filePath,
+        startLine: item.startLine,
+        endLine: item.endLine,
+        score: item.score,
+        chunkType: item.chunkType,
+        name: item.name,
+      }));
+
+      perQuery.push(buildPerQueryResult(query, materialized, elapsed, 10));
     }
 
-    gate = evaluateBudgetGate(budget, summary, comparison);
-  }
+    const logger = indexer.getLogger();
+    const metricSnapshot = logger.getMetrics();
 
-  const markdown = createSummaryMarkdown(summary, comparison, gate);
-  writeText(path.join(outputDir, "summary.md"), markdown);
+    const costPer1MTokensUsd =
+      effectiveConfig.embeddingProvider === "custom" || effectiveConfig.embeddingProvider === "auto"
+        ? 0
+        : getDefaultModelForProvider(effectiveConfig.embeddingProvider).costPer1MTokens;
 
-  return { outputDir, summary, perQuery, comparison, gate };
+    const summary: EvalSummary = {
+      generatedAt: new Date().toISOString(),
+      projectRoot: options.projectRoot,
+      datasetPath,
+      datasetName: dataset.name,
+      datasetVersion: dataset.version,
+      queryCount: dataset.queries.length,
+      topK: 10,
+      searchConfig: {
+        fusionStrategy: effectiveConfig.search.fusionStrategy,
+        hybridWeight: effectiveConfig.search.hybridWeight,
+        rrfK: effectiveConfig.search.rrfK,
+        rerankTopN: effectiveConfig.search.rerankTopN,
+      },
+      metrics: computeEvalMetrics(
+        dataset.queries,
+        perQuery,
+        metricSnapshot.embeddingApiCalls,
+        metricSnapshot.embeddingTokensUsed,
+        costPer1MTokensUsd
+      ),
+    };
+
+    const outputDir = createRunDirectory(toAbsolute(options.projectRoot, options.outputRoot));
+    const perQueryArtifact = buildPerQueryArtifact(perQuery);
+
+    writeJson(path.join(outputDir, "summary.json"), summary);
+    writeJson(path.join(outputDir, "per-query.json"), perQueryArtifact);
+
+    let comparison: EvalComparison | undefined;
+    if (againstPath) {
+      const baseline = loadSummary(againstPath);
+      comparison = compareSummaries(summary, baseline, againstPath);
+      writeJson(path.join(outputDir, "compare.json"), comparison);
+    }
+
+    let gate: EvalGateResult | undefined;
+    if (options.ciMode) {
+      if (!budgetPath) {
+        throw new Error("CI mode requires --budget path");
+      }
+      const budget = loadBudget(budgetPath);
+
+      if (!comparison && budget.baselinePath) {
+        const resolvedBaseline = toAbsolute(options.projectRoot, budget.baselinePath);
+        if (existsSync(resolvedBaseline)) {
+          const baselineSummary = loadSummary(resolvedBaseline);
+          comparison = compareSummaries(summary, baselineSummary, resolvedBaseline);
+          writeJson(path.join(outputDir, "compare.json"), comparison);
+        } else if (budget.failOnMissingBaseline) {
+          throw new Error(
+            `Budget baseline is missing: ${resolvedBaseline}. Set failOnMissingBaseline=false to allow CI run without baseline.`
+          );
+        }
+      }
+
+      gate = evaluateBudgetGate(budget, summary, comparison);
+    }
+
+    const markdown = createSummaryMarkdown(summary, comparison, gate);
+    writeText(path.join(outputDir, "summary.md"), markdown);
+
+    return { outputDir, summary, perQuery, comparison, gate };
   } finally {
     await indexer.close();
   }

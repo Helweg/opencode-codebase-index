@@ -26,7 +26,7 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
     }
     lines.push("");
   }
-  
+
   if (stats.indexedChunks === 0 && stats.removedChunks === 0) {
     lines.push(`${stats.totalFiles} files processed, ${stats.existingChunks} code chunks already up to date.`);
   } else if (stats.indexedChunks === 0) {
@@ -54,23 +54,23 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
       const tooLarge = stats.skippedFiles.filter(f => f.reason === "too_large");
       const excluded = stats.skippedFiles.filter(f => f.reason === "excluded");
       const gitignored = stats.skippedFiles.filter(f => f.reason === "gitignore");
-      
+
       lines.push("");
       lines.push(`Skipped files: ${stats.skippedFiles.length}`);
       if (tooLarge.length > 0) {
-        lines.push(`  Too large (${tooLarge.length}): ${tooLarge.slice(0, 5).map(f => f.path).join(", ")}${tooLarge.length > 5 ? "..." : ""}`);
+        lines.push(`  Too large (${tooLarge.length}):\n    ${tooLarge.slice(0, 5).map(f => f.path).join("\n    ")}${tooLarge.length > 5 ? "\n    ..." : ""}`);
       }
       if (excluded.length > 0) {
-        lines.push(`  Excluded (${excluded.length}): ${excluded.slice(0, 5).map(f => f.path).join(", ")}${excluded.length > 5 ? "..." : ""}`);
+        lines.push(`  Excluded (${excluded.length}):\n    ${excluded.slice(0, 5).map(f => f.path).join("\n    ")}${excluded.length > 5 ? "\n    ..." : ""}`);
       }
       if (gitignored.length > 0) {
-        lines.push(`  Gitignored (${gitignored.length}): ${gitignored.slice(0, 5).map(f => f.path).join(", ")}${gitignored.length > 5 ? "..." : ""}`);
+        lines.push(`  Gitignored (${gitignored.length}):\n    ${gitignored.slice(0, 5).map(f => f.path).join("\n    ")}${gitignored.length > 5 ? "\n    ..." : ""}`);
       }
     }
 
     if (stats.parseFailures.length > 0) {
       lines.push("");
-      lines.push(`Files with no extractable chunks (${stats.parseFailures.length}): ${stats.parseFailures.slice(0, 10).join(", ")}${stats.parseFailures.length > 10 ? "..." : ""}`);
+      lines.push(`Files with no extractable chunks (${stats.parseFailures.length}):\n  ${stats.parseFailures.slice(0, 10).join("\n  ")}${stats.parseFailures.length > 10 ? "\n  ..." : ""}`);
     }
   }
 
@@ -78,6 +78,24 @@ export function formatIndexStats(stats: IndexStats, verbose: boolean = false): s
 }
 
 export function formatStatus(status: StatusResult): string {
+  if (status.indexingInProgress && status.progress) {
+    const lines = [
+      "Indexing is currently in progress.",
+      formatProgressTitle(status.progress),
+    ];
+
+    if (status.progress.currentFiles?.length) {
+      lines.push(`Current batch:\n${status.progress.currentFiles.map(f => `  ${f}`).join("\n")}`);
+    }
+
+    if (status.progress.estimatedSecondsRemaining != null) {
+      lines.push(`Estimated time remaining: ${formatEta(status.progress.estimatedSecondsRemaining)}`);
+    }
+
+    lines.push(`Indexed chunks currently available: ${status.vectorCount.toLocaleString()}`);
+    return lines.join("\n");
+  }
+
   if (!status.indexed) {
     if (status.warning) {
       return status.warning;
@@ -136,14 +154,28 @@ export function formatStatus(status: StatusResult): string {
   return lines.join("\n");
 }
 
+function formatEta(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const min = Math.floor(seconds / 60);
+  const sec = seconds % 60;
+  return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
+}
+
 export function formatProgressTitle(progress: IndexProgress): string {
   switch (progress.phase) {
     case "scanning":
       return "Scanning files...";
     case "parsing":
+      if (progress.currentFiles?.length) {
+        return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files [${progress.currentFiles.join(", ")}]`;
+      }
       return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files`;
-    case "embedding":
-      return `Embedding: ${progress.chunksProcessed}/${progress.totalChunks} chunks`;
+    case "embedding": {
+      const etaStr = progress.estimatedSecondsRemaining != null
+        ? ` (~${formatEta(progress.estimatedSecondsRemaining)} left)`
+        : "";
+      return `Embedding: ${progress.chunksProcessed}/${progress.totalChunks} chunks${etaStr}`;
+    }
     case "storing":
       return "Storing index...";
     case "complete":
@@ -156,19 +188,19 @@ export function formatProgressTitle(progress: IndexProgress): string {
 export function calculatePercentage(progress: IndexProgress): number {
   if (progress.phase === "scanning") return 0;
   if (progress.phase === "complete") return 100;
-  
+
   if (progress.phase === "parsing") {
     if (progress.totalFiles === 0) return 5;
     return Math.round(5 + (progress.filesProcessed / progress.totalFiles) * 15);
   }
-  
+
   if (progress.phase === "embedding") {
     if (progress.totalChunks === 0) return 20;
     return Math.round(20 + (progress.chunksProcessed / progress.totalChunks) * 70);
   }
-  
+
   if (progress.phase === "storing") return 95;
-  
+
   return 0;
 }
 
@@ -196,15 +228,15 @@ export function formatHealthCheck(result: HealthCheckResult): string {
   }
 
   const lines: string[] = [];
-  
+
   if (result.removed > 0) {
     lines.push(`Removed stale entries: ${result.removed}`);
   }
-  
+
   if (result.gcOrphanEmbeddings > 0) {
     lines.push(`Garbage collected orphan embeddings: ${result.gcOrphanEmbeddings}`);
   }
-  
+
   if (result.gcOrphanChunks > 0) {
     lines.push(`Garbage collected orphan chunks: ${result.gcOrphanChunks}`);
   }
@@ -218,7 +250,7 @@ export function formatHealthCheck(result: HealthCheckResult): string {
   }
 
   if (result.filePaths.length > 0) {
-    lines.push(`Cleaned paths: ${result.filePaths.join(", ")}`);
+    lines.push(`Cleaned paths:\n  ${result.filePaths.join("\n  ")}`);
   }
 
   return lines.join("\n");

@@ -2,6 +2,13 @@ import { existsSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 
+// os.homedir() uses native system calls and ignores process.env overrides on
+// Windows and some Linux configurations.  Read env vars first so that
+// vi.stubEnv("HOME"/"USERPROFILE") works correctly in tests.
+function getHomeDir(): string {
+  return process.env["HOME"] ?? process.env["USERPROFILE"] ?? os.homedir();
+}
+
 import { resolveWorktreeMainRepoRoot } from "../git/index.js";
 
 const PROJECT_CONFIG_RELATIVE_PATH = path.join(".opencode", "codebase-index.json");
@@ -22,7 +29,7 @@ function hasProjectConfig(projectRoot: string): boolean {
 }
 
 export function getGlobalIndexPath(): string {
-  return path.join(os.homedir(), ".opencode", "global-index");
+  return path.join(getHomeDir(), ".opencode", "global-index");
 }
 
 export function resolveProjectConfigPath(projectRoot: string): string {

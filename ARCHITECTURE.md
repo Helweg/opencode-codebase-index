@@ -16,7 +16,7 @@ This document explains the architecture of opencode-codebase-index, including da
 
 ## High-Level Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              OpenCode Agent                                 │
 │                                                                             │
@@ -24,7 +24,7 @@ This document explains the architecture of opencode-codebase-index, including da
 │         index_codebase, index_status, index_health_check, index_metrics,    │
 │         index_logs, add_knowledge_base, list_knowledge_bases,               │
 │         remove_knowledge_base                                               │
-│  Commands: /search, /find, /call-graph, /index, /status                     │
+│  Commands: /search, /find, /call-graph, /index, /status               │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -63,7 +63,7 @@ This document explains the architecture of opencode-codebase-index, including da
 
 ### Indexing Flow
 
-```
+```text
 Source Files → Parse → Chunk → Embed → Store
 
 1. COLLECT: File discovery (respects .gitignore)
@@ -95,7 +95,7 @@ Source Files → Parse → Chunk → Embed → Store
 
 ### Search Flow
 
-```
+```text
 Query → Embed → Search → Rank → Return
 
 1. EMBED QUERY
@@ -127,14 +127,16 @@ Query → Embed → Search → Rank → Return
 ### Indexer (`src/indexer/index.ts`)
 
 The central orchestrator. Responsibilities:
+
 - Manages full and incremental indexing
 - Coordinates parsing → embedding → storage
 - Handles rate limiting and retries
 - Tracks per-file hashes for delta detection
 
 Key methods:
+
 | Method | Purpose |
-|--------|---------|
+| --- | --- |
 | `index()` | Main entry: orchestrates full indexing flow |
 | `searchSemantic()` | Pure vector similarity search |
 | `searchHybrid()` | Combines semantic + BM25 |
@@ -145,7 +147,7 @@ Key methods:
 Abstracts different AI embedding APIs:
 
 | Provider | Implementation | Rate Limit Strategy |
-|----------|----------------|---------------------|
+| --- | --- | --- |
 | GitHub Copilot | OAuth + internal API | 1 concurrent, 4s delay |
 | OpenAI | Official API | 3 concurrent, 500ms delay |
 | Google | Gemini API | 5 concurrent, 200ms delay |
@@ -158,7 +160,7 @@ Detection order: GitHub Copilot → OpenAI → Google → Ollama
 Rust components exposed via NAPI:
 
 | Component | Crate | Purpose |
-|-----------|-------|---------|
+| --- | --- | --- |
 | Parser | tree-sitter-* | Language-aware code parsing |
 | VectorStore | usearch | HNSW vector similarity search |
 | Database | rusqlite | Persistent storage with batch ops |
@@ -168,6 +170,7 @@ Rust components exposed via NAPI:
 ### Watcher (`src/watcher/index.ts`)
 
 File system observer using chokidar:
+
 - Watches for file changes → triggers incremental index
 - Watches `.git/HEAD` → detects branch switches
 - Debounces rapid changes (500ms window)
@@ -178,7 +181,7 @@ File system observer using chokidar:
 ### Why Hybrid TypeScript + Rust?
 
 | Layer | Language | Rationale |
-|-------|----------|-----------|
+| --- | --- | --- |
 | Plugin interface | TypeScript | Native OpenCode integration, config parsing |
 | Core logic | TypeScript | Orchestration, API calls, easier iteration |
 | Hot paths | Rust | Performance: parsing, vectors, DB operations |
@@ -188,11 +191,13 @@ The 80/20 rule: TypeScript for flexibility, Rust for speed-critical operations.
 ### Why usearch for Vectors?
 
 Alternatives considered:
+
 - **FAISS**: Heavier, complex build, overkill for our scale
 - **hnswlib**: Good, but usearch is faster and has F16 support
 - **In-memory arrays**: Too slow for 10k+ vectors
 
 usearch advantages:
+
 - F16 quantization → 50% memory savings
 - Fast HNSW algorithm
 - Simple C++ core, easy Rust bindings
@@ -201,11 +206,13 @@ usearch advantages:
 ### Why SQLite for Storage?
 
 Alternatives considered:
+
 - **JSON files**: No transactions, slow for large data
 - **LevelDB/RocksDB**: Overkill, complex keys
 - **PostgreSQL**: External dependency, overkill
 
 SQLite advantages:
+
 - Single-file database
 - ACID transactions for batch inserts
 - Fast lookups by content hash
@@ -215,11 +222,13 @@ SQLite advantages:
 ### Why BM25 Hybrid Search?
 
 Pure semantic search has weaknesses:
+
 - Misses exact identifier matches
 - Can't find "the function named exactly X"
 - Embedding models have knowledge cutoffs
 
 BM25 hybrid provides:
+
 - Exact keyword matching for precision
 - Fallback when semantic misses
 - Better results for technical queries
@@ -230,11 +239,13 @@ BM25 hybrid provides:
 Problem: Redundant prompt phrases in tool responses increase token usage and may cause LLMs to exit reasoning prematurely.
 
 Solution:
+
 - **Remove summary phrases**: e.g., "Found X results", "Index status:", "Health check complete:"
 - **Return raw data**: Direct result lists without introductory text
 - **Maintain clarity**: Keep essential context for unambiguous results
 
 Benefits:
+
 - Reduced token consumption for LLM tool calls
 - Faster LLM processing (less text to parse)
 - Better integration with LLM reasoning loops
@@ -245,14 +256,15 @@ Benefits:
 Problem: Switching branches changes code but embeddings are expensive.
 
 Solution:
+
 1. **Store embeddings by content hash** (not by file)
    - Same code = same embedding, regardless of branch
    - Deduplicated storage
-   
+
 2. **Branch catalog tracks membership**
    - Lightweight: just chunk IDs per branch
    - Instant branch switch (no re-embedding)
-   
+
 3. **Filter search by current branch**
    - Query only returns relevant results
    - No stale results from other branches
@@ -260,11 +272,13 @@ Solution:
 ### Why Content-Based Deduplication?
 
 Instead of storing embeddings per-file, we hash the content:
+
 - `hash(code) → embedding_id`
 - Same utility function across files? One embedding.
 - Copy-paste code? Already embedded.
 
 Benefits:
+
 - Reduces token costs (don't re-embed duplicates)
 - Smaller index size
 - Faster incremental indexing
@@ -274,7 +288,7 @@ Benefits:
 ### Indexing Performance
 
 | Phase | Time Complexity | Actual Performance |
-|-------|-----------------|-------------------|
+| --- | --- | --- |
 | File collection | O(n files) | ~10ms for 1000 files |
 | Parsing | O(n files × file size) | ~7ms for 100 files |
 | Embedding | O(n chunks) × API latency | Bottleneck (rate limited) |
@@ -283,7 +297,7 @@ Benefits:
 ### Search Performance
 
 | Phase | Time Complexity | Actual Performance |
-|-------|-----------------|-------------------|
+| --- | --- | --- |
 | Query embedding | O(1) API call | ~800-1000ms |
 | Vector search | O(log n) HNSW | ~1ms for 10k vectors |
 | BM25 search | O(n tokens) | ~5ms for 50k tokens |
@@ -294,7 +308,7 @@ Benefits:
 ### Memory Usage
 
 | Component | Memory Profile |
-|-----------|----------------|
+| --- | --- |
 | Vector index | ~3KB per chunk (F16 quantization) |
 | SQLite | ~1KB per chunk metadata |
 | BM25 index | ~2KB per unique token |
@@ -306,7 +320,7 @@ For a typical 500-file codebase (~5000 chunks): ~30MB total
 Tool return formats are optimized to reduce token usage:
 
 | Tool | Before Optimization | After Optimization | Token Savings |
-|------|---------------------|-------------------|---------------|
+| --- | --- | --- | --- |
 | `codebase_search` | "Found X results for 'query': ..." | Raw result list | ~15-20 tokens |
 | `codebase_peek` | "Found X locations for 'query': ..." | Raw result list | ~15-20 tokens |
 | `find_similar` | "Found X similar code blocks: ..." | Raw result list | ~15-20 tokens |
@@ -321,7 +335,7 @@ Tool return formats are optimized to reduce token usage:
 ### What Gets Sent to Cloud
 
 | Data | Destination | Purpose |
-|------|-------------|---------|
+| --- | --- | --- |
 | Code chunks | Embedding provider | Vector generation |
 | Search queries | Embedding provider | Query embedding |
 
@@ -330,9 +344,11 @@ The vector index itself stays local. Only code/queries go to the embedding API.
 ### Privacy Options
 
 For maximum privacy, use Ollama:
+
 ```json
 { "embeddingProvider": "ollama" }
 ```
+
 All processing happens locally. Nothing leaves your machine.
 
 ### Credential Handling

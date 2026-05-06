@@ -1,3 +1,5 @@
+import type { StatusResult } from "../src/indexer/index.js";
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMcpServer } from "../src/mcp-server.js";
 import { parseConfig } from "../src/config/schema.js";
@@ -46,7 +48,7 @@ let mockIndexResult = {
   parseFailures: [],
 };
 
-let mockStatusResult = {
+let mockStatusResult: StatusResult = {
   indexed: true,
   vectorCount: 50,
   provider: "openai",
@@ -57,6 +59,7 @@ let mockStatusResult = {
   compatibility: { compatible: true },
   failedBatchesCount: 0,
   failedBatchesPath: undefined as string | undefined,
+  indexingInProgress: false,
 };
 
 let mockHealthCheckResult = {
@@ -189,6 +192,7 @@ describe("MCP server tools and prompts", () => {
       compatibility: { compatible: true },
       failedBatchesCount: 0,
       failedBatchesPath: undefined,
+      indexingInProgress: false,
     };
     mockHealthCheckResult = {
       removed: 0,
@@ -242,7 +246,7 @@ describe("MCP server tools and prompts", () => {
     expect(prompts.prompts).toHaveLength(5);
 
     const promptNames = prompts.prompts.map(p => p.name).sort();
-    const expectedNames = ["definition", "find", "index", "search", "status"].sort();
+    const expectedNames = ["definition", "find", "index", "index_status", "search"].sort();
 
     expect(promptNames).toEqual(expectedNames);
   });
@@ -326,6 +330,7 @@ describe("MCP server tools and prompts", () => {
       compatibility: null,
       failedBatchesCount: 2,
       failedBatchesPath: "/tmp/index/failed-batches.json",
+      indexingInProgress: false,
     };
 
     const result = await client.callTool({
@@ -536,7 +541,7 @@ describe("MCP server tools and prompts", () => {
 
   it("should get status prompt", async () => {
     const prompt = await client.getPrompt({
-      name: "status",
+      name: "index_status",
       arguments: {},
     });
 

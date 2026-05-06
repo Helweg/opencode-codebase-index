@@ -20,7 +20,7 @@ export interface Metrics {
   embeddingApiCalls: number;
   embeddingTokensUsed: number;
   embeddingErrors: number;
-  
+
   searchCount: number;
   searchTotalMs: number;
   searchAvgMs: number;
@@ -29,14 +29,14 @@ export interface Metrics {
   vectorSearchMs: number;
   keywordSearchMs: number;
   fusionMs: number;
-  
+
   cacheHits: number;
   cacheMisses: number;
-  
+
   queryCacheHits: number;
   queryCacheSimilarHits: number;
   queryCacheMisses: number;
-  
+
   gcRuns: number;
   gcOrphansRemoved: number;
   gcChunksRemoved: number;
@@ -83,15 +83,22 @@ function createEmptyMetrics(): Metrics {
   };
 }
 
+export type ClientLogCallback = (level: "error" | "warn" | "info", message: string, extra?: Record<string, unknown>) => void;
+
 export class Logger {
   private config: DebugConfig;
   private metrics: Metrics;
   private logs: LogEntry[] = [];
   private maxLogs = 1000;
+  private clientLog: ClientLogCallback | null = null;
 
   constructor(config: DebugConfig) {
     this.config = config;
     this.metrics = createEmptyMetrics();
+  }
+
+  setClientLogger(fn: ClientLogCallback): void {
+    this.clientLog = fn;
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -152,10 +159,12 @@ export class Logger {
 
   warn(message: string, data?: Record<string, unknown>): void {
     this.log("warn", "general", message, data);
+    this.clientLog?.("warn", message, data);
   }
 
   error(message: string, data?: Record<string, unknown>): void {
     this.log("error", "general", message, data);
+    this.clientLog?.("error", message, data);
   }
 
   debug(message: string, data?: Record<string, unknown>): void {
@@ -224,7 +233,7 @@ export class Logger {
     this.metrics.searchTotalMs += durationMs;
     this.metrics.searchLastMs = durationMs;
     this.metrics.searchAvgMs = this.metrics.searchTotalMs / this.metrics.searchCount;
-    
+
     if (breakdown) {
       this.metrics.embeddingCallMs = breakdown.embeddingMs;
       this.metrics.vectorSearchMs = breakdown.vectorMs;
@@ -305,12 +314,12 @@ export class Logger {
   formatMetrics(): string {
     const m = this.metrics;
     const lines: string[] = [];
-    
+
     if (m.indexingStartTime && m.indexingEndTime) {
       const duration = m.indexingEndTime - m.indexingStartTime;
       lines.push(`Indexing duration: ${(duration / 1000).toFixed(2)}s`);
     }
-    
+
     lines.push("");
     lines.push("Indexing:");
     lines.push(`  Files scanned: ${m.filesScanned}`);
@@ -319,13 +328,13 @@ export class Logger {
     lines.push(`  Chunks embedded: ${m.chunksEmbedded}`);
     lines.push(`  Chunks from cache: ${m.chunksFromCache}`);
     lines.push(`  Chunks removed: ${m.chunksRemoved}`);
-    
+
     lines.push("");
     lines.push("Embedding API:");
     lines.push(`  API calls: ${m.embeddingApiCalls}`);
     lines.push(`  Tokens used: ${m.embeddingTokensUsed.toLocaleString()}`);
     lines.push(`  Errors: ${m.embeddingErrors}`);
-    
+
     if (m.searchCount > 0) {
       lines.push("");
       lines.push("Search:");
@@ -339,7 +348,7 @@ export class Logger {
         lines.push(`    - Fusion: ${m.fusionMs.toFixed(2)}ms`);
       }
     }
-    
+
     const totalCacheOps = m.cacheHits + m.cacheMisses;
     if (totalCacheOps > 0) {
       lines.push("");
@@ -348,7 +357,7 @@ export class Logger {
       lines.push(`  Misses: ${m.cacheMisses}`);
       lines.push(`  Hit rate: ${((m.cacheHits / totalCacheOps) * 100).toFixed(1)}%`);
     }
-    
+
     if (m.gcRuns > 0) {
       lines.push("");
       lines.push("Garbage Collection:");
@@ -357,7 +366,7 @@ export class Logger {
       lines.push(`  Chunks removed: ${m.gcChunksRemoved}`);
       lines.push(`  Embeddings removed: ${m.gcEmbeddingsRemoved}`);
     }
-    
+
     return lines.join("\n");
   }
 
@@ -366,7 +375,7 @@ export class Logger {
     if (logs.length === 0) {
       return "No logs recorded.";
     }
-    
+
     return logs.map(l => {
       const dataStr = l.data ? ` ${JSON.stringify(l.data)}` : "";
       return `[${l.timestamp}] [${l.level.toUpperCase()}] [${l.category}] ${l.message}${dataStr}`;
@@ -385,6 +394,10 @@ export class Logger {
 let globalLogger: Logger | null = null;
 
 export function initializeLogger(config: DebugConfig): Logger {
+  // If logger already exists, just return it (preserves any logs already written)
+  if (globalLogger) {
+    return globalLogger;
+  }
   globalLogger = new Logger(config);
   return globalLogger;
 }

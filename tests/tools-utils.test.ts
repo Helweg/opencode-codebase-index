@@ -9,7 +9,7 @@ import {
   formatLogs,
   formatSearchResults,
 } from "../src/tools/utils.js";
-import type { IndexStats, IndexProgress, SearchResult, HealthCheckResult, StatusResult } from "../src/indexer/index.js";
+import type { IndexStats, IndexProgress, SearchResult, StatusResult } from "../src/indexer/index.js";
 import type { LogEntry } from "../src/utils/logger.js";
 
 function createBaseStats(overrides: Partial<IndexStats> = {}): IndexStats {
@@ -169,6 +169,36 @@ describe("tools utils", () => {
   });
 
   describe("formatStatus", () => {
+    it("should show live indexing progress when indexing is in progress", () => {
+      const status: StatusResult = {
+        indexed: true,
+        vectorCount: 120,
+        provider: "openai",
+        model: "text-embedding-3-small",
+        indexPath: "/tmp/index",
+        currentBranch: "default",
+        baseBranch: "default",
+        compatibility: { compatible: true },
+        failedBatchesCount: 0,
+        failedBatchesPath: undefined,
+        indexingInProgress: true,
+        progress: {
+          phase: "parsing",
+          filesProcessed: 12,
+          totalFiles: 40,
+          chunksProcessed: 15,
+          totalChunks: 80,
+          currentFiles: ["src/indexer/index.ts"],
+        },
+      };
+      const result = formatStatus(status);
+
+      expect(result).toContain("Indexing is currently in progress");
+      expect(result).toContain("Parsing: 12/40 files");
+      expect(result).toContain("src/indexer/index.ts");
+      expect(result).toContain("Indexed chunks currently available: 120");
+    });
+
     it("should return not-indexed message when not indexed", () => {
       const status: StatusResult = {
         indexed: false,
@@ -181,6 +211,7 @@ describe("tools utils", () => {
         compatibility: null,
         failedBatchesCount: 0,
         failedBatchesPath: undefined,
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -200,6 +231,7 @@ describe("tools utils", () => {
         compatibility: { compatible: true },
         failedBatchesCount: 0,
         failedBatchesPath: undefined,
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -223,6 +255,7 @@ describe("tools utils", () => {
         compatibility: { compatible: true },
         failedBatchesCount: 0,
         failedBatchesPath: undefined,
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -253,6 +286,7 @@ describe("tools utils", () => {
         },
         failedBatchesCount: 0,
         failedBatchesPath: undefined,
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -274,6 +308,7 @@ describe("tools utils", () => {
         compatibility: null,
         failedBatchesCount: 0,
         failedBatchesPath: undefined,
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -292,6 +327,7 @@ describe("tools utils", () => {
         compatibility: null,
         failedBatchesCount: 2,
         failedBatchesPath: "/tmp/index/failed-batches.json",
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -312,6 +348,7 @@ describe("tools utils", () => {
         failedBatchesCount: 0,
         failedBatchesPath: undefined,
         warning: "Detected a corrupted local SQLite index at /tmp/index/codebase.db and reset the local index. Run index_codebase to rebuild search data.",
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -332,6 +369,7 @@ describe("tools utils", () => {
         compatibility: { compatible: true },
         failedBatchesCount: 1,
         failedBatchesPath: "/tmp/index/failed-batches.json",
+        indexingInProgress: false,
       };
       const result = formatStatus(status);
 
@@ -343,6 +381,10 @@ describe("tools utils", () => {
   describe("formatProgressTitle", () => {
     it("should format scanning phase", () => {
       expect(formatProgressTitle({ phase: "scanning", filesProcessed: 0, totalFiles: 0, chunksProcessed: 0, totalChunks: 0 })).toBe("Scanning files...");
+    });
+
+    it("should format parsing phase with current files batch", () => {
+      expect(formatProgressTitle({ phase: "parsing", filesProcessed: 5, totalFiles: 20, chunksProcessed: 0, totalChunks: 0, currentFiles: ["src/main.ts"] })).toBe("Parsing: 5/20 files [src/main.ts]");
     });
 
     it("should format parsing phase with counts", () => {

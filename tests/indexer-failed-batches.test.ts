@@ -203,6 +203,7 @@ describe("indexer failed batch recovery", () => {
       compatibility: null,
       failedBatchesCount: 2,
       failedBatchesPath: "/tmp/index/failed-batches.json",
+      indexingInProgress: false,
     });
 
     expect(message).toContain("rerun index_codebase normally");

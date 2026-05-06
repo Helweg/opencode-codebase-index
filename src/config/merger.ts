@@ -111,7 +111,7 @@ export function loadProjectConfigLayer(projectRoot: string): Record<string, unkn
 
 /**
  * Loads and merges global and project configs.
- * 
+ *
  * Merge rules:
  * - Global config is the base
  * - For most fields: project overrides global if set, otherwise load global (fallback)
@@ -120,7 +120,7 @@ export function loadProjectConfigLayer(projectRoot: string): Record<string, unkn
  * - For include/exclude: project overrides global if set, otherwise load global
  */
 export function loadMergedConfig(projectRoot: string): unknown {
-  const globalConfigPath = os.homedir() + "/.config/opencode/codebase-index.json";
+  const globalConfigPath = (process.env["HOME"] ?? process.env["USERPROFILE"] ?? os.homedir()) + "/.config/opencode/codebase-index.json";
   const globalConfig = loadJsonFile(globalConfigPath) as Record<string, unknown> | null;
   const projectConfigPath = resolveProjectConfigPath(projectRoot);
   const projectConfig = loadJsonFile(projectConfigPath) as Record<string, unknown> | null;
@@ -172,6 +172,30 @@ export function loadMergedConfig(projectRoot: string): unknown {
     merged.reranker = globalConfig.reranker;
   }
 
+  // For database: deep merge pgvector sub-object so project can override just specific fields
+  if (projectConfig && "database" in normalizedProjectConfig) {
+    const projectDb = normalizedProjectConfig.database as Record<string, unknown> | undefined;
+    const globalDb = globalConfig && (globalConfig.database as Record<string, unknown> | undefined);
+
+    if (projectDb) {
+      if (globalDb && projectDb.pgvector && globalDb.pgvector) {
+        // Deep merge pgvector: global base + project overrides
+        merged.database = {
+          ...projectDb,
+          pgvector: {
+            ...(globalDb.pgvector as Record<string, unknown>),
+            ...(projectDb.pgvector as Record<string, unknown>),
+          },
+        };
+      } else {
+        // Project has pgvector but global doesn't, or full override
+        merged.database = projectDb;
+      }
+    }
+  } else if (globalConfig && globalConfig.database) {
+    merged.database = globalConfig.database;
+  }
+
   // For include: project overrides if set, otherwise use global
   if (projectConfig && "include" in normalizedProjectConfig) {
     merged.include = normalizedProjectConfig.include;
@@ -186,23 +210,29 @@ export function loadMergedConfig(projectRoot: string): unknown {
     merged.exclude = globalConfig.exclude;
   }
 
-  // For indexing: project overrides if set, otherwise use global
+  // For indexing: deep merge so project can override individual sub-keys
   if (projectConfig && "indexing" in normalizedProjectConfig) {
-    merged.indexing = normalizedProjectConfig.indexing;
+    const globalIndexing = globalConfig && (globalConfig.indexing as Record<string, unknown> | undefined);
+    const projectIndexing = normalizedProjectConfig.indexing as Record<string, unknown> | undefined;
+    merged.indexing = projectIndexing ? { ...(globalIndexing ?? {}), ...projectIndexing } : globalIndexing;
   } else if (globalConfig && globalConfig.indexing) {
     merged.indexing = globalConfig.indexing;
   }
 
-  // For search: project overrides if set, otherwise use global
+  // For search: deep merge so project can override individual sub-keys
   if (projectConfig && "search" in normalizedProjectConfig) {
-    merged.search = normalizedProjectConfig.search;
+    const globalSearch = globalConfig && (globalConfig.search as Record<string, unknown> | undefined);
+    const projectSearch = normalizedProjectConfig.search as Record<string, unknown> | undefined;
+    merged.search = projectSearch ? { ...(globalSearch ?? {}), ...projectSearch } : globalSearch;
   } else if (globalConfig && globalConfig.search) {
     merged.search = globalConfig.search;
   }
 
-  // For debug: project overrides if set, otherwise use global
+  // For debug: deep merge so project can override individual sub-keys
   if (projectConfig && "debug" in normalizedProjectConfig) {
-    merged.debug = normalizedProjectConfig.debug;
+    const globalDebug = globalConfig && (globalConfig.debug as Record<string, unknown> | undefined);
+    const projectDebug = normalizedProjectConfig.debug as Record<string, unknown> | undefined;
+    merged.debug = projectDebug ? { ...(globalDebug ?? {}), ...projectDebug } : globalDebug;
   } else if (globalConfig && globalConfig.debug) {
     merged.debug = globalConfig.debug;
   }
@@ -222,6 +252,7 @@ export function loadMergedConfig(projectRoot: string): unknown {
         key === "customProvider" ||
         key === "embeddingModel" ||
         key === "reranker" ||
+        key === "database" ||
         key === "include" ||
         key === "exclude" ||
         key === "indexing" ||

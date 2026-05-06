@@ -29,6 +29,7 @@ Then jump to the relevant section below for provider, build, performance, or bra
 ## OpenCode Hangs in Home Directory
 
 **Symptoms:**
+
 - OpenCode becomes unresponsive when opened in home directory (`~`)
 - New session starts but nothing happens when typing
 - High CPU or memory usage
@@ -38,13 +39,17 @@ Then jump to the relevant section below for provider, build, performance, or bra
 **Solutions:**
 
 ### Default Behavior (v0.4.1+)
+
 The plugin now requires a project marker (`.git`, `package.json`, `Cargo.toml`, etc.) by default. If no marker is found, file watching and auto-indexing are disabled. You'll see this warning:
-```
+
+```text
 [codebase-index] Skipping file watching and auto-indexing: no project marker found
 ```
 
 ### If You Need to Index a Non-Project Directory
+
 Set `requireProjectMarker` to `false` in your config:
+
 ```json
 {
   "indexing": {
@@ -56,7 +61,9 @@ Set `requireProjectMarker` to `false` in your config:
 **Warning:** Only do this for specific directories you intend to index. Never disable this for your home directory.
 
 ### Recognized Project Markers
+
 The plugin looks for any of these files/directories:
+
 - `.git`
 - `package.json`
 - `Cargo.toml`
@@ -77,7 +84,8 @@ The plugin looks for any of these files/directories:
 ## No Embedding Provider Available
 
 **Error message:**
-```
+
+```text
 No embedding provider available. Configure GitHub, OpenAI, Google, or Ollama.
 ```
 
@@ -86,9 +94,11 @@ No embedding provider available. Configure GitHub, OpenAI, Google, or Ollama.
 **Solutions:**
 
 ### Option 1: Use GitHub Copilot (if you have a subscription)
+
 No additional configuration needed. The plugin automatically detects Copilot credentials.
 
 ### Option 2: Use OpenAI
+
 ```bash
 export OPENAI_API_KEY=sk-...
 ```
@@ -96,11 +106,13 @@ export OPENAI_API_KEY=sk-...
 Or set in your shell profile (`~/.bashrc`, `~/.zshrc`).
 
 ### Option 3: Use Google (Gemini)
+
 ```bash
 export GOOGLE_API_KEY=...
 ```
 
 ### Option 4: Use Ollama (local, free)
+
 ```bash
 # Install Ollama from https://ollama.ai
 # Then pull the embedding model:
@@ -115,9 +127,11 @@ ollama pull nomic-embed-text
 ```
 
 ### Verify Provider Detection
+
 Run `/status` in OpenCode to see which provider is detected.
 
 Auto-detect tries providers in this order:
+
 1. Ollama
 2. GitHub Copilot
 3. OpenAI
@@ -128,7 +142,8 @@ Auto-detect tries providers in this order:
 ## Rate Limiting Errors
 
 **Error messages:**
-```
+
+```text
 429 Too Many Requests
 Rate limit exceeded
 Too many requests
@@ -139,34 +154,44 @@ Too many requests
 **Solutions:**
 
 ### For GitHub Copilot
+
 GitHub Copilot has strict rate limits (~15 requests/minute). The plugin automatically:
+
 - Uses concurrency of 1
 - Adds 4-second delays between requests
 - Retries with exponential backoff
 
 **If still hitting limits:**
-1. Wait 1-2 minutes and retry
+
+1. Wait 1–2 minutes and retry
 2. Switch to a different provider for large codebases:
+
    ```json
    { "embeddingProvider": "ollama" }
    ```
 
 ### For OpenAI
+
 OpenAI has generous limits, but if you hit them:
+
 1. Check your OpenAI account tier (free tier has lower limits)
 2. Consider upgrading to a paid tier
 3. Use Ollama for initial indexing, then switch back
 
 ### For Google
+
 Similar to OpenAI. Check your quota at [Google Cloud Console](https://console.cloud.google.com/).
 
 If you see provider/model errors, verify that your configured Google credentials have access to the Gemini embeddings API.
 
 ### For Large Codebases (1k+ files)
-Use Ollama locally - no rate limits:
+
+Use Ollama locally — no rate limits:
+
 ```bash
 ollama pull nomic-embed-text
 ```
+
 ```json
 { "embeddingProvider": "ollama" }
 ```
@@ -176,6 +201,7 @@ ollama pull nomic-embed-text
 ## Index Corruption / Stale Results
 
 **Symptoms:**
+
 - Search returns deleted files
 - Results don't match current code
 - "Chunk not found" errors
@@ -183,13 +209,17 @@ ollama pull nomic-embed-text
 **Solutions:**
 
 ### Run Health Check
-```
+
+```text
 /status
 ```
+
 Then ask the agent to run `index_health_check` to remove orphaned entries.
 
 ### Force Re-index
+
 Ask the agent:
+
 > "Force reindex the codebase"
 
 Or run `/index force`.
@@ -197,7 +227,9 @@ Or run `/index force`.
 Only use force reindex for a full rebuild. If `/status` reports failed embedding batches, fix the provider/auth issue first and rerun `/index` normally.
 
 ### Reset Everything
+
 Delete the entire index directory:
+
 ```bash
 rm -rf .opencode/index/
 ```
@@ -209,32 +241,38 @@ The next `/index` will rebuild from scratch.
 ## Embedding Provider Changed
 
 **Error message:**
-```
+
+```text
 Index incompatible: <reason>. Run index with force=true to rebuild.
 ```
 
 **Cause:** The index was built with a different embedding provider or model than what's currently configured. Embeddings from different providers have different dimensions and are not compatible.
 
 **Common scenarios:**
+
 - Switched from GitHub Copilot to OpenAI
 - Changed Ollama embedding model
 - Updated to a new version of the embedding model
 
 **Solutions:**
 
-### Force Re-index
+### Rebuild Index After Provider Change
+
 Ask the agent:
+
 > "Force reindex the codebase"
 
 Or run `/index` with the force option. This will:
+
 1. Delete all existing embeddings
 2. Re-index all files with the new provider
 
 ### Why This Happens
+
 Different embedding providers produce vectors with different dimensions:
 
 | Provider | Model | Dimensions |
-|----------|-------|------------|
+| --- | --- | --- |
 | GitHub Copilot | text-embedding-3-small | 1536 |
 | OpenAI | text-embedding-3-small | 1536 |
 | Google | text-embedding-004 | 768 |
@@ -243,6 +281,7 @@ Different embedding providers produce vectors with different dimensions:
 Mixing embeddings from different providers would produce garbage search results, so the plugin refuses to search until you rebuild the index.
 
 ### Check Current Index Metadata
+
 Run `/status` to see what provider/model the index was built with.
 
 ---
@@ -250,7 +289,8 @@ Run `/status` to see what provider/model the index was built with.
 ## Native Module Build Failures
 
 **Error messages:**
-```
+
+```text
 Error loading native module
 NAPI_RS error
 dyld: Library not loaded
@@ -261,7 +301,9 @@ dyld: Library not loaded
 **Solutions:**
 
 ### Check Supported Platforms
+
 Pre-built binaries are available for:
+
 - macOS x64 (Intel)
 - macOS arm64 (Apple Silicon)
 - Linux x64 (glibc)
@@ -269,7 +311,9 @@ Pre-built binaries are available for:
 - Windows x64
 
 ### Rebuild from Source
+
 Requires Rust toolchain:
+
 ```bash
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -281,7 +325,9 @@ npx napi build --release --platform
 ```
 
 ### Linux Musl Issues
+
 If on Alpine Linux or musl-based systems, you need to build from source:
+
 ```bash
 # Install musl target
 rustup target add x86_64-unknown-linux-musl
@@ -296,26 +342,32 @@ cargo build --release --target x86_64-unknown-linux-musl
 ## Slow Indexing Performance
 
 **Symptoms:**
+
 - Initial indexing takes very long
 - Progress seems stuck
 
 **Causes and Solutions:**
 
 ### 1. Large Codebase with Cloud Provider
+
 Cloud providers have network latency and rate limits.
 
 **Solution:** Use Ollama locally:
+
 ```bash
 ollama pull nomic-embed-text
 ```
+
 ```json
 { "embeddingProvider": "ollama" }
 ```
 
 ### 2. Many Large Files
+
 Files over 1MB are skipped by default, but many medium-sized files can still be slow.
 
 **Solution:** Increase chunk limits or enable semantic-only mode:
+
 ```json
 {
   "indexing": {
@@ -326,15 +378,19 @@ Files over 1MB are skipped by default, but many medium-sized files can still be 
 ```
 
 ### 3. GitHub Copilot Rate Limits
+
 Copilot has 4-second delays between requests.
 
 **Solution:** For initial indexing, use a faster provider, then switch back:
+
 ```json
 { "embeddingProvider": "openai" }
 ```
 
 ### Check Progress
+
 Run `/status` to see current index stats and estimate remaining work with:
+
 > "Estimate indexing cost"
 
 ---
@@ -342,31 +398,38 @@ Run `/status` to see current index stats and estimate remaining work with:
 ## Search Returns No Results
 
 **Symptoms:**
+
 - Queries return empty results
 - "No matches found" for queries that should match
 
 **Solutions:**
 
 ### 1. Check Index Status
-```
+
+```text
 /status
 ```
+
 Verify the index exists and has chunks.
 
 ### 2. Index Hasn't Run Yet
+
 Run `/index` to index the codebase.
 
 ### 3. Query Too Vague or Too Specific
+
 Semantic search works best with descriptive queries:
 
 | Bad Query | Better Query |
-|-----------|--------------|
+| --- | --- |
 | "auth" | "authentication middleware that validates JWT tokens" |
 | "error" | "error handling for failed API calls" |
 | "user" | "function that creates new user accounts" |
 
 ### 4. Similarity Threshold Too High
+
 Lower the minimum score:
+
 ```json
 {
   "search": {
@@ -376,7 +439,9 @@ Lower the minimum score:
 ```
 
 ### 5. Files Excluded
+
 Check if your files are being excluded by `.gitignore` or size limits:
+
 > "Run `/index` in verbose mode"
 
 This shows which files were skipped and why.
@@ -390,12 +455,16 @@ This shows which files were skipped and why.
 **Cause:** The branch catalog may not have updated.
 
 **Solution:**
+
 1. Check current branch detection:
-   ```
+
+   ```text
    /status
    ```
+
 2. Re-index to update the branch catalog:
-   ```
+
+   ```text
    /index
    ```
 
@@ -404,6 +473,7 @@ This shows which files were skipped and why.
 **Cause:** Detached HEAD or unusual git state.
 
 **Solution:** Check your git state:
+
 ```bash
 git status
 cat .git/HEAD
@@ -416,6 +486,7 @@ The plugin reads `.git/HEAD` directly. If you're in detached HEAD state, it uses
 **Cause:** File watcher may not be running.
 
 **Solution:** Enable file watching:
+
 ```json
 {
   "indexing": {
@@ -425,7 +496,8 @@ The plugin reads `.git/HEAD` directly. If you're in detached HEAD state, it uses
 ```
 
 Or manually trigger re-index after switching branches:
-```
+
+```text
 /index
 ```
 
@@ -448,7 +520,7 @@ If none of these solutions work:
 ## Quick Reference
 
 | Problem | Quick Fix |
-|---------|-----------|
+| --- | --- |
 | Hangs in home dir | Ensure `indexing.requireProjectMarker` is `true` (default) |
 | No provider | `export OPENAI_API_KEY=...` or use Ollama |
 | Rate limited | Switch to Ollama for large codebases |
