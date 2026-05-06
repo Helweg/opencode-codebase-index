@@ -93,7 +93,7 @@ function loadRawConfig(projectRoot: string, configPath?: string): unknown {
     );
   }
 
-  const globalConfig = path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
+  const globalConfig = path.join(process.env["HOME"] ?? process.env["USERPROFILE"] ?? os.homedir(), ".config", "opencode", "codebase-index.json");
   if (existsSync(globalConfig)) {
     return JSON.parse(readFileSync(globalConfig, "utf-8"));
   }

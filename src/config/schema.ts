@@ -7,6 +7,12 @@ export type IndexScope = "project" | "global";
 
 export interface IndexingConfig {
   autoIndex: boolean;
+  /**
+   * When true, skips calling indexer.index() on plugin load even if autoIndex is true.
+   * Useful for MCP servers or environments where you want explicit control over indexing.
+   * Default: false
+   */
+  skipAutoIndexOnLoad: boolean;
   watchFiles: boolean;
   maxFileSize: number;
   maxChunksPerFile: number;
@@ -82,6 +88,65 @@ export interface DebugConfig {
   metrics: boolean;
 }
 
+// ── Database Engine ────────────────────────────────────────────────────────
+
+export type DatabaseEngine = "sqlite" | "pgvector";
+
+/**
+ * Connection settings for a PostgreSQL/pgvector remote database backend.
+ * Provide either `connectionString` OR the individual host/port/… fields.
+ */
+export interface PgVectorConfig {
+  /**
+   * Full PostgreSQL connection string, e.g.
+   * "postgresql://user:pass@host:5432/dbname"
+   * When set, all other individual fields are ignored.
+   */
+  connectionString?: string;
+  /** Hostname of the PostgreSQL server. Default: "localhost" */
+  host?: string;
+  /** Port number. Default: 5432 */
+  port?: number;
+  /** Database name. Default: "postgres" */
+  database?: string;
+  /** PostgreSQL user. Default: "postgres" */
+  user?: string;
+  /** PostgreSQL password */
+  password?: string;
+  /**
+   * Maximum number of connections in the pool.
+   * Default: 10
+   */
+  poolSize?: number;
+  /**
+   * Table name prefix used for all codebase-index tables.
+   * Allows multiple independent indexes in the same database.
+   * Default: "ci"
+   */
+  tablePrefix?: string;
+  /**
+   * Connection timeout in milliseconds.
+   * Default: 5000
+   */
+  connectionTimeoutMs?: number;
+  /**
+   * SSL mode: "disable" | "require" | "verify-full".
+   * Default: "disable"
+   */
+  ssl?: "disable" | "require" | "verify-full";
+}
+
+export interface DatabaseConfig {
+  /**
+   * Storage engine to use.
+   * "sqlite" uses the local native SQLite + usearch index (default).
+   * "pgvector" stores everything in a remote PostgreSQL database with the pgvector extension.
+   */
+  engine: DatabaseEngine;
+  /** Required when engine = "pgvector". Contains pg connection settings. */
+  pgvector?: PgVectorConfig;
+}
+
 export interface CustomProviderConfig {
   /** Base URL of the OpenAI-compatible embeddings API. The path /embeddings is appended automatically (e.g. "http://localhost:11434/v1", "https://api.example.com/v1") */
   baseUrl: string;
@@ -106,6 +171,8 @@ export interface CustomProviderConfig {
 export interface CodebaseIndexConfig {
   embeddingProvider: EmbeddingProvider | 'custom' | 'auto';
   embeddingModel?: EmbeddingModelName;
+  /** Database backend configuration. Defaults to sqlite if omitted. */
+  database?: Partial<DatabaseConfig>;
   /** Configuration for custom OpenAI-compatible embedding providers (required when embeddingProvider is 'custom') */
   customProvider?: CustomProviderConfig;
   scope: IndexScope;
@@ -129,6 +196,7 @@ export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
   search: SearchConfig;
   debug: DebugConfig;
   reranker?: RerankerConfig;
+  database: DatabaseConfig;
   knowledgeBases: string[];
   additionalInclude: string[];
 };
@@ -136,6 +204,7 @@ export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
 function getDefaultIndexingConfig(): IndexingConfig {
   return {
     autoIndex: false,
+    skipAutoIndexOnLoad: false,
     watchFiles: true,
     maxFileSize: 1048576,
     maxChunksPerFile: 100,
@@ -183,6 +252,16 @@ function getDefaultRerankerBaseUrl(provider: RerankerProvider): string {
     case "custom":
       return "";
   }
+}
+
+function getDefaultDatabaseConfig(): DatabaseConfig {
+  return {
+    engine: "sqlite",
+  };
+}
+
+function isValidDatabaseEngine(value: unknown): value is DatabaseEngine {
+  return value === "sqlite" || value === "pgvector";
 }
 
 function getDefaultDebugConfig(): DebugConfig {
@@ -254,6 +333,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   const rawIndexing = (input.indexing && typeof input.indexing === "object" ? input.indexing : {}) as Record<string, unknown>;
   const indexing: IndexingConfig = {
     autoIndex: typeof rawIndexing.autoIndex === "boolean" ? rawIndexing.autoIndex : defaultIndexing.autoIndex,
+    skipAutoIndexOnLoad: typeof rawIndexing.skipAutoIndexOnLoad === "boolean" ? rawIndexing.skipAutoIndexOnLoad : defaultIndexing.skipAutoIndexOnLoad,
     watchFiles: typeof rawIndexing.watchFiles === "boolean" ? rawIndexing.watchFiles : defaultIndexing.watchFiles,
     maxFileSize: typeof rawIndexing.maxFileSize === "number" ? rawIndexing.maxFileSize : defaultIndexing.maxFileSize,
     maxChunksPerFile: typeof rawIndexing.maxChunksPerFile === "number" ? Math.max(1, rawIndexing.maxChunksPerFile) : defaultIndexing.maxChunksPerFile,
@@ -308,7 +388,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   let embeddingModel: EmbeddingModelName | undefined = undefined;
   let customProvider: CustomProviderConfig | undefined = undefined;
   let reranker: RerankerConfig | undefined = undefined;
-  
+
   if (embeddingProviderValue === 'custom') {
     embeddingProvider = 'custom';
     const rawCustom = (input.customProvider && typeof input.customProvider === 'object' ? input.customProvider : null) as Record<string, unknown> | null;
@@ -394,6 +474,54 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     };
   }
 
+  // ── Database backend ──────────────────────────────────────────────
+  const defaultDatabase = getDefaultDatabaseConfig();
+  const rawDatabase = (input.database && typeof input.database === "object" ? input.database : {}) as Record<string, unknown>;
+  const engine = isValidDatabaseEngine(rawDatabase.engine) ? rawDatabase.engine : defaultDatabase.engine;
+
+  let pgvector: PgVectorConfig | undefined = undefined;
+  if (engine === "pgvector") {
+    const rawPg = (rawDatabase.pgvector && typeof rawDatabase.pgvector === "object"
+      ? rawDatabase.pgvector
+      : {}) as Record<string, unknown>;
+
+    const connectionString = getResolvedString(rawPg.connectionString, "$root.database.pgvector.connectionString");
+    const host = getResolvedString(rawPg.host, "$root.database.pgvector.host");
+    const user = getResolvedString(rawPg.user, "$root.database.pgvector.user");
+    const password = getResolvedString(rawPg.password, "$root.database.pgvector.password");
+    const dbName = getResolvedString(rawPg.database, "$root.database.pgvector.database");
+
+    if (!connectionString && !host) {
+      throw new Error(
+        "database.engine is 'pgvector' but database.pgvector configuration is missing. " +
+        "Provide either connectionString or host/port/database/user/password."
+      );
+    }
+
+    const sslValue = rawPg.ssl;
+    const ssl: PgVectorConfig["ssl"] =
+      sslValue === "require" || sslValue === "verify-full" ? sslValue : "disable";
+
+    pgvector = {
+      connectionString: connectionString ?? undefined,
+      host: host ?? undefined,
+      port: typeof rawPg.port === "number" ? rawPg.port : undefined,
+      database: dbName ?? undefined,
+      user: user ?? undefined,
+      password: password ?? undefined,
+      poolSize: typeof rawPg.poolSize === "number" ? Math.max(1, Math.floor(rawPg.poolSize)) : undefined,
+      tablePrefix: typeof rawPg.tablePrefix === "string" && rawPg.tablePrefix.trim().length > 0
+        ? rawPg.tablePrefix.trim().replace(/[^a-zA-Z0-9_]/g, "_")
+        : undefined,
+      connectionTimeoutMs: typeof rawPg.connectionTimeoutMs === "number"
+        ? Math.max(1000, rawPg.connectionTimeoutMs)
+        : undefined,
+      ssl,
+    };
+  }
+
+  const database: DatabaseConfig = { engine, pgvector };
+
   return {
     embeddingProvider,
     embeddingModel,
@@ -406,6 +534,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     search,
     debug,
     reranker,
+    database,
     knowledgeBases,
   };
 }

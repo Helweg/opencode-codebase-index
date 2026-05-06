@@ -242,7 +242,7 @@ describe("MCP server tools and prompts", () => {
     expect(prompts.prompts).toHaveLength(5);
 
     const promptNames = prompts.prompts.map(p => p.name).sort();
-    const expectedNames = ["definition", "find", "index", "search", "status"].sort();
+    const expectedNames = ["definition", "find", "index", "index_status", "search"].sort();
 
     expect(promptNames).toEqual(expectedNames);
   });
@@ -536,7 +536,7 @@ describe("MCP server tools and prompts", () => {
 
   it("should get status prompt", async () => {
     const prompt = await client.getPrompt({
-      name: "status",
+      name: "index_status",
       arguments: {},
     });
 

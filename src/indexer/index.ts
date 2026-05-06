@@ -2622,7 +2622,7 @@ export class Indexer {
 
     this.loadFileHashCache();
 
-    this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
+    this.indexCompatibility = await this.validateIndexCompatibility(this.configuredProviderInfo);
     if (!this.indexCompatibility.compatible) {
       this.logger.warn("Index compatibility issue detected", {
         reason: this.indexCompatibility.reason,
@@ -2658,11 +2658,11 @@ export class Indexer {
     if (shouldRunGc) {
       const result = await this.healthCheck();
       if (result.warning) {
-        this.database.setMetadata(STARTUP_WARNING_METADATA_KEY, result.warning);
+        await this.database.setMetadata(STARTUP_WARNING_METADATA_KEY, result.warning);
       } else {
-        this.database.deleteMetadata(STARTUP_WARNING_METADATA_KEY);
+        await this.database.deleteMetadata(STARTUP_WARNING_METADATA_KEY);
       }
-      this.database.setMetadata("lastGcTimestamp", now.toString());
+      await this.database.setMetadata("lastGcTimestamp", now.toString());
     }
   }
 
@@ -2686,7 +2686,7 @@ export class Indexer {
         }
         throw error;
       }
-      this.database.setMetadata("lastGcTimestamp", Date.now().toString());
+      await this.database.setMetadata("lastGcTimestamp", Date.now().toString());
     }
 
     return null;
@@ -3291,10 +3291,10 @@ export class Indexer {
     });
 
     if (pendingChunks.length === 0 && removedCount === 0) {
-      database.clearBranch(branchCatalogKey);
-      database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
-      database.clearBranchSymbols(branchCatalogKey);
-      database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
+      await database.clearBranch(branchCatalogKey);
+      await database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
+      await database.clearBranchSymbols(branchCatalogKey);
+      await database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
       if (scopedRoots) {
         this.replaceScopedFileHashCache(currentFileHashes, scopedRoots);
         this.clearScopedFailedBatches(scopedRoots);
@@ -3303,7 +3303,7 @@ export class Indexer {
         this.saveFileHashCache();
         this.saveFailedBatches([]);
       }
-      this.saveIndexMetadata(configuredProviderInfo);
+      await this.saveIndexMetadata(configuredProviderInfo);
       this.indexCompatibility = { compatible: true };
       stats.durationMs = Date.now() - startTime;
       onProgress?.({
@@ -3318,10 +3318,10 @@ export class Indexer {
     }
 
     if (pendingChunks.length === 0) {
-      database.clearBranch(branchCatalogKey);
-      database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
-      database.clearBranchSymbols(branchCatalogKey);
-      database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
+      await database.clearBranch(branchCatalogKey);
+      await database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
+      await database.clearBranchSymbols(branchCatalogKey);
+      await database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
       store.save();
       invertedIndex.save();
       if (scopedRoots) {
@@ -3332,7 +3332,7 @@ export class Indexer {
         this.saveFileHashCache();
         this.saveFailedBatches([]);
       }
-      this.saveIndexMetadata(configuredProviderInfo);
+      await this.saveIndexMetadata(configuredProviderInfo);
       this.indexCompatibility = { compatible: true };
       stats.durationMs = Date.now() - startTime;
       onProgress?.({
@@ -3355,7 +3355,7 @@ export class Indexer {
     });
 
     const allContentHashes = pendingChunks.map((c) => c.contentHash);
-    const missingHashes = new Set(database.getMissingEmbeddings(allContentHashes));
+    const missingHashes = new Set(await database.getMissingEmbeddings(allContentHashes));
     const forcedReembedChunkIds = forceScopedReembed
       ? new Set(pendingChunks.map((chunk) => chunk.id))
       : new Set<string>();
@@ -3491,7 +3491,7 @@ export class Indexer {
               metadata: chunk.metadata,
             }));
 
-            store.addBatch(items);
+            await store.addBatch(items);
 
             const embeddingBatchItems = pooledResults.map(({ chunk, vector }) => ({
               contentHash: chunk.contentHash,
@@ -3501,7 +3501,7 @@ export class Indexer {
             }));
 
             try {
-              database.upsertEmbeddingsBatch(embeddingBatchItems);
+              await database.upsertEmbeddingsBatch(embeddingBatchItems);
             } catch (dbError) {
               // Rollback vectors added to store if DB write fails
               for (const { chunk } of pooledResults) {
@@ -3607,10 +3607,10 @@ export class Indexer {
         return !isNewlyFailed && !isForcedFailed;
       }
     );
-    database.clearBranch(branchCatalogKey);
-    database.addChunksToBranchBatch(branchCatalogKey, branchChunkIds);
-    database.clearBranchSymbols(branchCatalogKey);
-    database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
+    await database.clearBranch(branchCatalogKey);
+    await database.addChunksToBranchBatch(branchCatalogKey, branchChunkIds);
+    await database.clearBranchSymbols(branchCatalogKey);
+    await database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
 
     store.save();
     invertedIndex.save();
@@ -3647,9 +3647,9 @@ export class Indexer {
     stats.durationMs = Date.now() - startTime;
 
     if (forceScopedReembed && failedForcedChunkIds.size === 0) {
-      database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+      await database.deleteMetadata(this.getProjectForceReembedMetadataKey());
     }
-    this.saveIndexMetadata(configuredProviderInfo);
+    await this.saveIndexMetadata(configuredProviderInfo);
     this.indexCompatibility = { compatible: true };
 
     this.logger.recordIndexingEnd();
@@ -4076,17 +4076,17 @@ export class Indexer {
       const allMetadata = store.getAllMetadata();
       const hasForeignData =
         allMetadata.some(({ metadata }) => !this.isFileInCurrentScope(metadata.filePath, roots)) ||
-        this.hasForeignScopedBranchData() ||
-        this.hasForeignScopedFileHashData(roots) ||
+  await this.hasForeignScopedBranchData() ||
+  await this.hasForeignScopedFileHashData(roots) ||
         this.hasForeignScopedFailedBatches(roots);
 
       if (!compatibility.compatible && hasForeignData) {
         if (compatibility.code === IncompatibilityCode.EMBEDDING_STRATEGY_MISMATCH) {
-          this.clearSharedIndexProjectData(store, invertedIndex, database, roots);
-          this.clearScopedFileHashCache(roots);
+          await this.clearSharedIndexProjectData(store, invertedIndex, database, roots);
+          await this.clearScopedFileHashCache(roots);
           this.clearScopedFailedBatches(roots);
-          database.setMetadata(this.getProjectForceReembedMetadataKey(), "true");
-          database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+          await database.setMetadata(this.getProjectForceReembedMetadataKey(), "true");
+          await database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
           this.indexCompatibility = { compatible: true };
           return;
         }
@@ -4110,18 +4110,18 @@ export class Indexer {
         database.clearAllIndexedData();
         this.saveFailedBatches([]);
 
-        database.deleteMetadata("index.version");
-        database.deleteMetadata("index.embeddingProvider");
-        database.deleteMetadata("index.embeddingModel");
-        database.deleteMetadata("index.embeddingDimensions");
-        database.deleteMetadata("index.embeddingStrategyVersion");
-        database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
-        database.deleteMetadata(this.getProjectForceReembedMetadataKey());
-        database.deleteMetadata(this.getLegacyMigrationMetadataKey());
-        database.deleteMetadata("index.createdAt");
-        database.deleteMetadata("index.updatedAt");
+        await database.deleteMetadata("index.version");
+        await database.deleteMetadata("index.embeddingProvider");
+        await database.deleteMetadata("index.embeddingModel");
+        await database.deleteMetadata("index.embeddingDimensions");
+        await database.deleteMetadata("index.embeddingStrategyVersion");
+        await database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+        await database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+        await database.deleteMetadata(this.getLegacyMigrationMetadataKey());
+        await database.deleteMetadata("index.createdAt");
+        await database.deleteMetadata("index.updatedAt");
 
-        this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo!);
+        this.indexCompatibility = await this.validateIndexCompatibility(this.configuredProviderInfo!);
         return;
       }
 
@@ -4155,19 +4155,19 @@ export class Indexer {
     this.saveFailedBatches([]);
 
     // Clear index metadata so compatibility is re-evaluated from scratch
-    database.deleteMetadata("index.version");
-    database.deleteMetadata("index.embeddingProvider");
-    database.deleteMetadata("index.embeddingModel");
-    database.deleteMetadata("index.embeddingDimensions");
-    database.deleteMetadata("index.embeddingStrategyVersion");
-    database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
-    database.deleteMetadata(this.getProjectForceReembedMetadataKey());
-    database.deleteMetadata(this.getLegacyMigrationMetadataKey());
-    database.deleteMetadata("index.createdAt");
-    database.deleteMetadata("index.updatedAt");
+    await database.deleteMetadata("index.version");
+    await database.deleteMetadata("index.embeddingProvider");
+    await database.deleteMetadata("index.embeddingModel");
+    await database.deleteMetadata("index.embeddingDimensions");
+    await database.deleteMetadata("index.embeddingStrategyVersion");
+    await database.deleteMetadata(this.getProjectEmbeddingStrategyMetadataKey());
+    await database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+    await database.deleteMetadata(this.getLegacyMigrationMetadataKey());
+    await database.deleteMetadata("index.createdAt");
+    await database.deleteMetadata("index.updatedAt");
 
     // Re-validate compatibility (no stored metadata = compatible)
-    this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo!);
+    this.indexCompatibility = await this.validateIndexCompatibility(this.configuredProviderInfo!);
   }
 
   async healthCheck(): Promise<HealthCheckResult> {
@@ -4370,12 +4370,12 @@ export class Indexer {
         }));
 
         if (items.length > 0) {
-          store.addBatch(items);
+          await store.addBatch(items);
         }
 
         if (successfulResults.length > 0) {
           try {
-            database.upsertEmbeddingsBatch(
+            await database.upsertEmbeddingsBatch(
               successfulResults.map(({ chunk, vector }) => ({
                 contentHash: chunk.contentHash,
                 embedding: float32ArrayToBuffer(vector),
@@ -4399,7 +4399,7 @@ export class Indexer {
           embeddingPartsByChunk.delete(chunk.id);
         }
 
-        database.addChunksToBranchBatch(
+        await database.addChunksToBranchBatch(
           this.getBranchCatalogKey(),
           successfulResults.map(({ chunk }) => chunk.id)
         );
@@ -4444,8 +4444,8 @@ export class Indexer {
     }
 
     if (roots && succeeded > 0 && persistedStillFailing.length === 0 && this.hasProjectForceReembedPending()) {
-      database.deleteMetadata(this.getProjectForceReembedMetadataKey());
-      this.saveIndexMetadata(configuredProviderInfo);
+      await database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+      await this.saveIndexMetadata(configuredProviderInfo);
       this.indexCompatibility = { compatible: true };
     }
 
@@ -4495,7 +4495,7 @@ export class Indexer {
     }
   ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
-    
+
     const compatibility = this.checkCompatibility();
     if (!compatibility.compatible) {
       throw new Error(

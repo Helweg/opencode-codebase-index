@@ -14,12 +14,21 @@ Use this when you just want the shortest path to a good PR:
 
 ## Table of Contents
 
-- [Getting Started](#getting-started)
-- [Development Setup](#development-setup)
-- [Making Changes](#making-changes)
-- [Pull Request Guidelines](#pull-request-guidelines)
-- [Project Structure](#project-structure)
-- [Release Labels and Notes](#release-labels-and-notes)
+- [Contributing to opencode-codebase-index](#contributing-to-opencode-codebase-index)
+  - [Quick Contribution Checklist](#quick-contribution-checklist)
+  - [Table of Contents](#table-of-contents)
+  - [Getting Started](#getting-started)
+  - [Development Setup](#development-setup)
+    - [Prerequisites](#prerequisites)
+    - [Building](#building)
+    - [Testing](#testing)
+    - [Linting](#linting)
+  - [Making Changes](#making-changes)
+    - [Adding a new language?](#adding-a-new-language)
+  - [Pull Request Guidelines](#pull-request-guidelines)
+  - [Project Structure](#project-structure)
+  - [Release Labels and Notes](#release-labels-and-notes)
+  - [Questions?](#questions)
 
 ## Getting Started
 
@@ -100,7 +109,7 @@ cd native && cargo clippy
    ```bash
    git commit -m "feat: add my feature"
    ```
-   
+
    We follow [Conventional Commits](https://www.conventionalcommits.org/):
    - `feat:` - New feature
    - `fix:` - Bug fix
@@ -129,7 +138,7 @@ If you're contributing parser or call-graph support for a new language, use [`do
 
 ## Project Structure
 
-```
+```text
 src/                  # TypeScript source
   ├── indexer/        # Core indexing logic
   ├── embeddings/     # Embedding providers

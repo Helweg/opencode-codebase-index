@@ -20,6 +20,7 @@
 - [📚 Knowledge Base](#-knowledge-base)
 - [🔄 Reranking](#-reranking)
 - [⚙️ Configuration](#️-configuration)
+- [🗄️ Remote Database (pgvector)](#️-remote-database-pgvector)
 - [🤝 Contributing](#-contributing)
 
 ## 👋 Choose Your Path
@@ -42,11 +43,13 @@
 ## ⚡ Quick Start
 
 1. **Install the plugin**
+
    ```bash
    npm install opencode-codebase-index
    ```
 
 2. **Add to `opencode.json`**
+
    ```json
    {
      "plugin": ["opencode-codebase-index"]
@@ -54,11 +57,13 @@
    ```
 
 3. **Index your codebase**
+
    Run `/index` or ask the agent to index your codebase. This only needs to be done once — subsequent updates are incremental.
 
    **Recommended check:** run `/status` after the first index so you can confirm the detected provider/model before you start searching.
 
 4. **Start Searching**
+
    Ask:
    > "Find the function that handles credit card validation errors"
 
@@ -87,6 +92,7 @@
 Use the same semantic search from any MCP-compatible client. Index once, search from anywhere.
 
 1. **Install dependencies**
+
    ```bash
    npm install opencode-codebase-index @modelcontextprotocol/sdk zod
    ```
@@ -94,6 +100,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
 2. **Configure your MCP client**
 
    **Cursor** (`.cursor/mcp.json`):
+
    ```json
    {
      "mcpServers": {
@@ -106,6 +113,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
    ```
 
    **Claude Code** (`claude_desktop_config.json`):
+
    ```json
    {
      "mcpServers": {
@@ -118,6 +126,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
    ```
 
 3. **CLI options**
+
    ```bash
    npx opencode-codebase-index-mcp --project /path/to/repo    # specify project root
    npx opencode-codebase-index-mcp --config /path/to/config   # custom config file
@@ -133,6 +142,7 @@ The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) are optional peer depe
 **Scenario**: You're new to a codebase and need to fix a bug in the payment flow.
 
 **Without Plugin (grep)**:
+
 - `grep "payment" .` → 500 results (too many)
 - `grep "card" .` → 200 results (mostly UI)
 - `grep "stripe" .` → 50 results (maybe?)
@@ -141,6 +151,7 @@ The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) are optional peer depe
 You ask: *"Where is the payment validation logic?"*
 
 Plugin returns:
+
 ```text
 src/services/billing.ts:45  (Class PaymentValidator)
 src/utils/stripe.ts:12      (Function validateCardToken)
@@ -150,7 +161,7 @@ src/api/checkout.ts:89      (Route handler for /pay)
 ## 🎯 When to Use What
 
 | Scenario | Tool | Why |
-|----------|------|-----|
+| --- | --- | --- |
 | Don't know the function name | `codebase_search` | Semantic search finds by meaning |
 | Exploring unfamiliar codebase | `codebase_search` | Discovers related code across files |
 | Just need to find locations | `codebase_peek` | Returns metadata only, saves ~90% tokens |
@@ -216,7 +227,8 @@ graph TD
 **Additional Supported Formats (line-based chunking)**: TXT, HTML, HTM, Markdown, Shell scripts
 
 **Default File Patterns**:
-```
+
+```text
 **/*.{ts,tsx,js,jsx,mjs,cjs}    **/*.{py,pyi}
 **/*.{go,rs,java,kt,scala}      **/*.{c,cpp,cc,h,hpp}
 **/*.{rb,php,inc,swift}         **/*.{vue,svelte,astro}
@@ -234,6 +246,7 @@ Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*
 5. **Hybrid Search**: Combines semantic similarity (vectors) with BM25 keyword matching, fuses (`rrf` default, `weighted` fallback), applies deterministic rerank, then filters by current branch/metadata.
 
 **Performance characteristics:**
+
 - **Incremental indexing**: ~50ms check time — only re-embeds changed files
 - **Smart chunking**: Understands code structure to keep functions whole, with overlap for context
 - **Native speed**: Core logic written in Rust for maximum performance
@@ -256,7 +269,7 @@ When you switch branches, code changes but embeddings for unchanged content rema
 ### Benefits
 
 | Scenario | Without Branch Awareness | With Branch Awareness |
-|----------|-------------------------|----------------------|
+| --- | --- | --- |
 | Switch to feature branch | Re-index everything | Instant — reuse existing embeddings |
 | Return to main | Re-index everything | Instant — catalog already exists |
 | Search on branch | May return stale results | Only returns current branch's code |
@@ -270,13 +283,19 @@ When you switch branches, code changes but embeddings for unchanged content rema
 
 ### Storage Structure
 
-```
+### SQLite (default)
+
+```text
 .opencode/index/
 ├── codebase.db           # SQLite: embeddings, chunks, branch catalog, symbols, call edges
 ├── vectors.usearch       # Vector index (uSearch)
 ├── inverted-index.json   # BM25 keyword index
 └── file-hashes.json      # File change detection
 ```
+
+### pgvector
+
+All data lives in the remote PostgreSQL database; no local index files are written.
 
 ### File Exclusions
 
@@ -291,7 +310,9 @@ The following files/folders are excluded from indexing by default:
 The plugin exposes these tools to the OpenCode agent:
 
 ### `codebase_search`
+
 **The primary tool.** Searches code by describing behavior.
+
 - **Use for**: Discovery, understanding flows, finding logic when you don't know the names.
 - **Example**: `"find the middleware that sanitizes input"`
 - **Ranking path**: hybrid retrieval → fusion (`search.fusionStrategy`) → deterministic rerank (`search.rerankTopN`) → filters
@@ -299,7 +320,7 @@ The plugin exposes these tools to the OpenCode agent:
 **Writing good queries:**
 
 | ✅ Good queries (describe behavior) | ❌ Bad queries (too vague) |
-|-------------------------------------|---------------------------|
+| --- | --- |
 | "function that validates email format" | "email" |
 | "error handling for failed API calls" | "error" |
 | "middleware that checks authentication" | "auth middleware" |
@@ -307,66 +328,90 @@ The plugin exposes these tools to the OpenCode agent:
 | "where user permissions are checked" | "permissions" |
 
 ### `codebase_peek`
+
 **Token-efficient discovery.** Returns only metadata (file, line, name, type) without code content.
+
 - **Use for**: Finding WHERE code is before deciding what to read. Saves ~90% tokens vs `codebase_search`.
 - **Ranking path**: same hybrid ranking path as `codebase_search` (metadata-only output)
 - **Example output**:
-  ```
+
+  ```text
   [1] function "validatePayment" at src/billing.ts:45-67 (score: 0.92)
   [2] class "PaymentProcessor" at src/processor.ts:12-89 (score: 0.87)
-  
+
   Use Read tool to examine specific files.
   ```
+
 - **Workflow**: `codebase_peek` → find locations → `Read` specific files
 
 ### `implementation_lookup`
+
 **Definition-first lookup.** Jumps to the authoritative definition site for a symbol or natural-language definition query.
+
 - **Use for**: "Where is X defined?", symbol-definition requests, and cases where you want the implementation site rather than all usages.
 - **Behavior**: Prefers real implementation files over tests, docs, examples, and fixtures.
 - **Fallback**: If nothing authoritative is found, use `codebase_search` for broader discovery.
 
 ### `find_similar`
+
 Find code similar to a provided snippet.
+
 - **Use for**: Duplicate detection, refactor prep, pattern mining.
 - **Ranking path**: semantic retrieval only + deterministic rerank (no BM25, no RRF).
 
 ### `index_codebase`
+
 Manually trigger indexing.
+
 - **Use for**: Forcing a re-index or checking stats.
 - **Parameters**: `force` (rebuild all), `estimateOnly` (check costs), `verbose` (show skipped files and parse failures).
 
 ### `index_status`
+
 Checks if the index is ready and healthy.
+
 - **Recommended workflow**: run this after `/index` to confirm the detected provider/model and whether the index is ready to search.
 
 ### `index_health_check`
+
 Maintenance tool to remove stale entries from deleted files and orphaned embeddings/chunks from the database.
 
 ### `index_metrics`
+
 Returns collected metrics about indexing and search performance. Requires `debug.enabled` and `debug.metrics` to be `true`.
+
 - **Metrics include**: Files indexed, chunks created, cache hit rate, search timing breakdown, GC stats, embedding API call stats.
 
 ### `index_logs`
+
 Returns recent debug logs with optional filtering.
+
 - **Parameters**: `category` (optional: `search`, `embedding`, `cache`, `gc`, `branch`), `level` (optional: `error`, `warn`, `info`, `debug`), `limit` (default: 50).
 
 ### `call_graph`
+
 Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, and Rust.
+
 - **Use for**: Understanding code flow, tracing dependencies, impact analysis.
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).
 - **Example**: Find who calls `validateToken` → `call_graph(name="validateToken", direction="callers")`
 
 ### `add_knowledge_base`
+
 Add a folder as a knowledge base to be indexed alongside project code.
+
 - **Use for**: Indexing external documentation, API references, example programs.
 - **Parameters**: `path` (folder path, absolute or relative), `reindex` (optional, default `true`).
 - **Example**: `add_knowledge_base(path="/path/to/docs")`
 
 ### `list_knowledge_bases`
+
 List all configured knowledge base folders and their status.
 
 ### `remove_knowledge_base`
+
 Remove a knowledge base folder from the index.
+
 - **Parameters**: `path` (folder path to remove), `reindex` (optional, default `false`).
 - **Example**: `remove_knowledge_base(path="/path/to/docs")`
 
@@ -395,7 +440,7 @@ The plugin can index **external documentation** alongside your project code. The
 
 Use the built-in tools to add documentation folders:
 
-```
+```text
 add_knowledge_base(path="/path/to/api-docs")
 add_knowledge_base(path="/path/to/examples")
 ```
@@ -404,7 +449,7 @@ The folder will be indexed into the **same database** as your project code. All 
 
 ### Managing Knowledge Bases
 
-```
+```text
 list_knowledge_bases          # Show configured knowledge bases
 remove_knowledge_base(path="/path/to/api-docs")  # Remove a knowledge base
 ```
@@ -412,6 +457,7 @@ remove_knowledge_base(path="/path/to/api-docs")  # Remove a knowledge base
 ### Configuration Example
 
 Project-level config (`.opencode/codebase-index.json`):
+
 ```json
 {
   "knowledgeBases": [
@@ -422,6 +468,7 @@ Project-level config (`.opencode/codebase-index.json`):
 ```
 
 Global-level config (`~/.config/opencode/codebase-index.json`):
+
 ```json
 {
   "embeddingProvider": "custom",
@@ -434,7 +481,7 @@ Global-level config (`~/.config/opencode/codebase-index.json`):
 }
 ```
 
-Config merging: Global config is the base, project config overrides. Knowledge bases from both levels are merged.
+Config merging: Global config is the base, project config deep-merges on top. Object fields (`indexing`, `search`, `debug`, `database.pgvector`) are deep-merged key-by-key so you can override a single sub-field without losing global defaults. Knowledge bases and `additionalInclude` arrays are union-merged from both levels.
 
 ### Syncing Changes
 
@@ -461,10 +508,8 @@ Add to your config (`.opencode/codebase-index.json` or global config):
 }
 ```
 
-### Reranker Options
-
 | Option | Default | Description |
-|--------|---------|-------------|
+| --- | --- | --- |
 | `enabled` | `false` | Enable reranking |
 | `baseUrl` | - | Rerank API endpoint |
 | `model` | - | Reranking model name |
@@ -472,9 +517,9 @@ Add to your config (`.opencode/codebase-index.json` or global config):
 | `topN` | `20` | Number of top results to rerank |
 | `timeoutMs` | `30000` | Request timeout |
 
-### How It Works
+### Search Pipeline
 
-```
+```text
 Query → Embedding Search → BM25 Search → Fusion → Reranking → Results
 ```
 
@@ -487,6 +532,7 @@ Query → Embedding Search → BM25 Search → Fusion → Reranking → Results
 ### Supported Reranking APIs
 
 Any OpenAI-compatible reranking endpoint. Examples:
+
 - **SiliconFlow**: `BAAI/bge-reranker-v2-m3`
 - **Cohere**: `rerank-english-v3.0`
 - **Local models**: Any server implementing `/v1/rerank` format
@@ -537,6 +583,7 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
   // === Indexing ===
   "indexing": {
     "autoIndex": false,                       // Auto-index on plugin load
+    "skipAutoIndexOnLoad": false,             // Skip auto-index on startup (useful for MCP servers)
     "watchFiles": true,                       // Re-index on file changes
     "maxFileSize": 1048576,                   // Max file size in bytes (default: 1MB)
     "maxChunksPerFile": 100,                  // Max chunks per file
@@ -571,6 +618,23 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "topN": 15,
     "timeoutMs": 10000
   },
+  // === Database Engine ===
+  "database": {
+    "engine": "sqlite",                       // sqlite (default) | pgvector
+    "pgvector": {                             // Required when engine = "pgvector"
+      "connectionString": "",                // Full postgres:// URI (overrides individual fields)
+      "host": "localhost",
+      "port": 5432,
+      "database": "postgres",
+      "user": "postgres",
+      "password": "{env:PG_PASSWORD}",
+      "poolSize": 10,
+      "tablePrefix": "ci",                   // Prefix for all codebase-index tables
+      "connectionTimeoutMs": 5000,
+      "ssl": "disable"                       // disable | require | verify-full
+    }
+  },
+
   "debug": {
     "enabled": false,                         // Enable debug logging
     "logLevel": "info",                       // error | warn | info | debug
@@ -598,10 +662,8 @@ String values in `codebase-index.json` can reference environment variables with 
 }
 ```
 
-### Options Reference
-
 | Option | Default | Description |
-|--------|---------|-------------|
+| --- | --- | --- |
 | `embeddingProvider` | `"auto"` | Which AI to use: `auto`, `github-copilot`, `openai`, `google`, `ollama`, `custom` |
 | `scope` | `"project"` | `project` = index per repo, `global` = shared index across repos |
 | `include` | (defaults) | Override the default include patterns (replaces defaults) |
@@ -610,6 +672,7 @@ String values in `codebase-index.json` can reference environment variables with 
 | `knowledgeBases` | `[]` | External directories to index as knowledge bases (absolute or relative paths) |
 | **indexing** | | |
 | `autoIndex` | `false` | Automatically index on plugin load |
+| `skipAutoIndexOnLoad` | `false` | When `true`, skips calling `indexer.index()` on plugin load even if `autoIndex` is `true`. Useful for MCP servers or environments where you want explicit control over indexing |
 | `watchFiles` | `true` | Re-index when files change |
 | `maxFileSize` | `1048576` | Skip files larger than this (bytes). Default: 1MB |
 | `maxChunksPerFile` | `100` | Maximum chunks to index per file (controls token costs for large files) |
@@ -649,6 +712,46 @@ String values in `codebase-index.json` can reference environment variables with 
 | `logGc` | `true` | Log garbage collection operations |
 | `logBranch` | `true` | Log branch detection and switches |
 | `metrics` | `false` | Enable metrics collection (indexing stats, search timing, cache performance) |
+
+**Debug Logging Details**:
+
+When `debug.enabled` is `true`, the plugin logs:
+
+- **Final merged configuration**: Shows aggregated global + project config with embedding provider, database settings, indexing options, and search settings
+- **Database connection info**: Shows which database backend is being used:
+  - SQLite: `[codebase-index] Debug: Using local SQLite database at: /path/to/.opencode/index/`
+  - pgvector: `[codebase-index] Debug: Connecting to pgvector database: user@host:5432/database` + table prefix if configured
+- **Skip auto-index**: If `autoIndex: true` but `skipAutoIndexOnLoad: true`, logs `[codebase-index] Debug: Skipping auto-index on load (skipAutoIndexOnLoad is true)`
+
+Example debug output:
+
+```text
+[codebase-index] Debug: Final merged configuration: {
+  "embeddingProvider": "ollama",
+  "database": {
+    "engine": "sqlite"
+  },
+  "indexing": {
+    "autoIndex": true,
+    "skipAutoIndexOnLoad": false,
+    "watchFiles": true
+  }
+}
+[codebase-index] Debug: Using local SQLite database at: /project/.opencode/index/
+```
+
+| **database** | | |
+| `engine` | `"sqlite"` | Storage backend: `"sqlite"` (local, default) or `"pgvector"` (remote PostgreSQL) |
+| `pgvector.connectionString` | — | Full PostgreSQL URI, e.g. `postgresql://user:pass@host:5432/dbname`. When set, individual host/port/… fields are ignored |
+| `pgvector.host` | `"localhost"` | PostgreSQL server hostname |
+| `pgvector.port` | `5432` | PostgreSQL server port |
+| `pgvector.database` | `"postgres"` | Database name |
+| `pgvector.user` | `"postgres"` | PostgreSQL user |
+| `pgvector.password` | — | PostgreSQL password (use `{env:VAR}` to avoid committing credentials) |
+| `pgvector.poolSize` | `10` | Maximum number of connections in the pool |
+| `pgvector.tablePrefix` | `"ci"` | Prefix applied to all table names. Change this to run multiple independent indexes in the same database |
+| `pgvector.connectionTimeoutMs` | `5000` | Connection timeout in milliseconds |
+| `pgvector.ssl` | `"disable"` | SSL mode: `"disable"`, `"require"`, or `"verify-full"` |
 
 ### Retrieval ranking behavior
 
@@ -690,7 +793,7 @@ Optional override secrets for another OpenAI-compatible endpoint:
 - `EVAL_EMBED_MODEL` (optional, default `text-embedding-3-small`)
 - `EVAL_EMBED_DIMENSIONS` (optional, default `1536`)
 
-If you override the provider, set both `EVAL_EMBED_BASE_URL` and `EVAL_EMBED_API_KEY`. Otherwise the workflow falls back to GitHub Models automatically. Override providers continue to use the baseline-driven budget in `benchmarks/budgets/default.json`.
+If you override the provider, set both `EVAL_EMBED_BASE_URL` and `EVAL_EMBED_API_KEY`. Otherwise, the workflow falls back to GitHub Models automatically. Override providers continue to use the baseline-driven budget in `benchmarks/budgets/default.json`.
 
 No OpenAI API access? Use Ollama quality gate locally:
 
@@ -759,7 +862,7 @@ Methodology for the snapshot below:
 #### Without reindex (`--no-reindex`, default)
 
 | Metric | Plugin | ripgrep | ast-grep (5/10 queries) |
-|---|---:|---:|---:|
+| --- | ---: | ---: | ---: |
 | Hit@5 | 50% | 5% | 100% |
 | MRR@10 | 0.48 | 0.04 | 0.90 |
 | nDCG@10 | 0.48 | 0.08 | 0.93 |
@@ -769,7 +872,7 @@ Methodology for the snapshot below:
 #### With reindex (`--reindex`)
 
 | Metric | Plugin | ripgrep | ast-grep (5/10 queries) |
-|---|---:|---:|---:|
+| --- | ---: | ---: | ---: |
 | Hit@5 | 50% | 5% | 100% |
 | MRR@10 | 0.48 | 0.04 | 0.98 |
 | nDCG@10 | 0.48 | 0.07 | 0.98 |
@@ -791,7 +894,9 @@ For reproducible setup and commands (including with/without reindex), see:
 - `docs/benchmarking-cross-repo.md`
 
 ### Embedding Providers
+
 The plugin automatically detects available credentials in this order:
+
 1. **GitHub Copilot** (Free if you have it)
 2. **OpenAI** (Standard Embeddings)
 3. **Google** (Gemini Embeddings)
@@ -804,7 +909,7 @@ You can also use **Custom** to connect any OpenAI-compatible embedding endpoint 
 Each provider has different rate limits. The plugin automatically adjusts concurrency and delays:
 
 | Provider | Concurrency | Delay | Best For |
-|----------|-------------|-------|----------|
+| --- | --- | --- | --- |
 | **GitHub Copilot** | 1 | 4s | Small codebases (<1k files) |
 | **OpenAI** | 3 | 500ms | Medium codebases |
 | **Google** | 5 | 200ms | Medium-large codebases |
@@ -853,7 +958,7 @@ Quick recommendation:
 ### Provider Comparison
 
 | Provider | Speed | Cost | Privacy | Best For |
-|----------|-------|------|---------|----------|
+| --- | --- | --- | --- | --- |
 | **Ollama** | Fastest | Free | Full | Large codebases, privacy-sensitive |
 | **GitHub Copilot** | Slow (rate limited) | Free* | Cloud | Small codebases, existing subscribers |
 | **OpenAI** | Medium | ~$0.0001/1K tokens | Cloud | General use |
@@ -874,6 +979,7 @@ Credentials (if required) are read from environment variables (for example `OPEN
 
 **Custom (OpenAI-compatible)**
 Works with any server that implements the OpenAI `/v1/embeddings` API format (llama.cpp, vLLM, text-embeddings-inference, LiteLLM, etc.).
+
 ```json
 {
   "embeddingProvider": "custom",
@@ -888,9 +994,11 @@ Works with any server that implements the OpenAI `/v1/embeddings` API format (ll
   }
 }
 ```
+
 Required fields: `baseUrl`, `model`, `dimensions` (positive integer). Optional: `apiKey`, `maxTokens`, `timeoutMs` (default: 30000), `maxBatchSize` (or `max_batch_size`) to cap inputs per `/embeddings` request for servers like text-embeddings-inference. `{env:VAR_NAME}` placeholders are resolved before config validation for fields that are actually used and throw if the referenced environment variable is missing or malformed.
 
-**Custom Ollama models via OpenAI-compatible API**
+### Custom Ollama models via OpenAI-compatible API
+
 If you are running Ollama locally and want to use an embedding model other than the built-in `ollama` setup, point the custom provider at Ollama's OpenAI-compatible base URL with the `/v1` suffix:
 
 ```json
@@ -906,6 +1014,7 @@ If you are running Ollama locally and want to use an embedding model other than 
 ```
 
 Notes:
+
 - The plugin appends `/embeddings`, so `baseUrl` should be `http://127.0.0.1:11434/v1`, not just `http://127.0.0.1:11434`.
 - Ollama ignores the API key, but some OpenAI-compatible clients expect one, so a placeholder like `"ollama"` is fine.
 - Make sure `dimensions` matches the actual output size of the model you pulled locally.
@@ -915,8 +1024,7 @@ Notes:
 Be aware of these characteristics:
 
 | Aspect | Reality |
-|--------|---------|
-| **Search latency** | ~800-1000ms per query (embedding API call) |
+| --- | --- |
 | **First index** | Takes time depending on codebase size (e.g., ~30s for 500 chunks) |
 | **Requires API** | Needs an embedding provider (Copilot, OpenAI, Google, or local Ollama) |
 | **Token costs** | Uses embedding tokens (free with Copilot, minimal with others) |
@@ -925,11 +1033,13 @@ Be aware of these characteristics:
 ## 💻 Local Development
 
 1. **Build**:
+
    ```bash
    npm run build
    ```
 
 2. **Register in Test Project** (use `file://` URL in `opencode.json`):
+
    ```json
    {
      "plugin": [
@@ -937,8 +1047,134 @@ Be aware of these characteristics:
      ]
    }
    ```
-   
+
    This loads directly from your source directory, so changes take effect after rebuilding.
+
+## 🗄️ Remote Database (pgvector)
+
+By default, the plugin stores everything locally in SQLite + usearch files
+inside `.opencode/index/`. For shared or cloud deployments you can point the
+plugin at a remote PostgreSQL database with the
+[pgvector](https://github.com/pgvector/pgvector) extension instead.
+
+### Prerequisites
+
+- PostgreSQL 14+ with the `pgvector` extension installed:
+
+  ```sql
+  CREATE EXTENSION IF NOT EXISTS vector;
+  ```
+
+- The database user must have `CREATE TABLE` / `CREATE INDEX` privileges (the
+  plugin creates its schema on first run).
+
+### Configuration
+
+Add a `database` block to `.opencode/codebase-index.json`:
+
+### Using a connection string
+
+```json
+{
+  "database": {
+    "engine": "pgvector",
+    "pgvector": {
+      "connectionString": "{env:DATABASE_URL}"
+    }
+  }
+}
+```
+
+### Using individual fields
+
+```json
+{
+  "database": {
+    "engine": "pgvector",
+    "pgvector": {
+      "host": "db.example.com",
+      "port": 5432,
+      "database": "myapp",
+      "user": "indexer",
+      "password": "{env:PG_PASSWORD}",
+      "ssl": "require"
+    }
+  }
+}
+```
+
+### Running Multiple Indexes in One Database
+
+If several projects share the same PostgreSQL instance, give each one a unique `tablePrefix` so that their tables do not collide:
+
+```json
+{
+  "database": {
+    "engine": "pgvector",
+    "pgvector": {
+      "connectionString": "{env:DATABASE_URL}",
+      "tablePrefix": "myproject"
+    }
+  }
+}
+```
+
+This creates tables like `myproject_embeddings`, `myproject_chunks`, etc.
+
+### Config Merging with Global Defaults
+
+When using a shared global pgvector config, project-level configs can override specific fields without repeating everything:
+
+**Global config** (`~/.config/opencode/codebase-index.json`):
+
+```json
+{
+  "database": {
+    "engine": "pgvector",
+    "pgvector": {
+      "connectionString": "{env:DATABASE_URL}",
+      "poolSize": 20,
+      "ssl": "require"
+    }
+  }
+}
+```
+
+**Project config** (`.opencode/codebase-index.json`) - override table prefix only:
+
+```json
+{
+  "database": {
+    "pgvector": {
+      "tablePrefix": "my_project"
+    }
+  }
+}
+```
+
+**Result**: The project inherits `connectionString`, `poolSize`, and `ssl` from
+global config, but uses `tablePrefix: "my_project"` for its tables. No need to
+repeat the connection settings.
+
+### SSL
+
+| Value | Behavior |
+| --- | --- |
+| `"disable"` | No SSL (default, local/private networks) |
+| `"require"` | SSL required, certificate not verified |
+| `"verify-full"` | SSL required, full certificate verification |
+
+### Tradeoffs vs SQLite
+
+| | SQLite (default) | pgvector |
+| --- | --- | --- |
+| **Setup** | Zero-config | PostgreSQL + pgvector |
+| **Storage** | Local `.opencode/index/` | Remote database |
+| **Sharing** | Per-machine | Multiple machines / CI |
+| **Performance** | In-process (fast) | Network round-trips |
+| **Best for** | Local development | Teams / cloud deploys |
+
+---
 
 ## 🤝 Contributing
 
@@ -972,7 +1208,7 @@ PRs labeled `skip-changelog` are intentionally excluded from release notes.
 
 ### Project Structure
 
-```
+```text
 ├── src/
 │   ├── index.ts              # Plugin entry point
 │   ├── mcp-server.ts         # MCP server (Cursor, Claude Code, Windsurf)
@@ -996,6 +1232,7 @@ PRs labeled `skip-changelog` are intentionally excluded from release notes.
 ### Native Module
 
 The Rust native module handles performance-critical operations:
+
 - **tree-sitter**: Language-aware code parsing with JSDoc/docstring extraction
 - **usearch**: High-performance vector similarity search with F16 quantization
 - **SQLite**: Persistent storage for embeddings, chunks, branch catalog, symbols, and call edges
@@ -1010,7 +1247,7 @@ Rebuild with: `npm run build:native` (requires Rust toolchain)
 Pre-built native binaries are published for:
 
 | Platform | Architecture | SIMD Acceleration |
-|----------|-------------|--------------------|
+| --- | --- | --- ||
 | macOS | x86_64 | ✅ simsimd |
 | macOS | ARM64 (Apple Silicon) | ✅ simsimd |
 | Linux | x86_64 (GNU) | ✅ simsimd |

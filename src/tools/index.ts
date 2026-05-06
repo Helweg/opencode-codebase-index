@@ -16,7 +16,7 @@ import {
   formatLogs,
   formatSearchResults,
 } from "./utils.js";
-import { existsSync, writeFileSync, mkdirSync, statSync } from "fs";
+import { existsSync, writeFileSync, readFileSync, mkdirSync, statSync } from "fs";
 import * as path from "path";
 import { loadMergedConfig, loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
 import { resolveWritableProjectConfigPath } from "../config/paths.js";
@@ -36,7 +36,7 @@ export function getSharedIndexer(): Indexer {
   return getIndexer();
 }
 
-function refreshIndexerFromConfig(): void {
+export function refreshIndexerFromConfig(): void {
   if (!sharedProjectRoot) {
     throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");
   }
@@ -139,23 +139,34 @@ function loadEditableConfig(): Record<string, unknown> {
   return normalizeKnowledgeBasePaths(config);
 }
 
-function saveConfig(config: Record<string, unknown>): void {
+/**
+ * Reads the raw project config JSON file, updates ONLY the `knowledgeBases`
+ * field, and writes it back. Every other key in the file is left exactly
+ * as-is — no normalization, no reordering, no risk of freezing inherited
+ * global settings into the project config.
+ *
+ * @param normalizedKbs Absolute paths as returned by loadEditableConfig().
+ */
+function patchKnowledgeBasesConfig(normalizedKbs: string[]): void {
   const configPath = getConfigPath();
   const configDir = path.dirname(configPath);
   const configBaseDir = path.dirname(configDir);
-  if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true });
+
+  let raw: Record<string, unknown> = {};
+  if (existsSync(configPath)) {
+    try {
+      raw = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    } catch {
+      raw = {};
+    }
+  } else {
+    raw = loadProjectConfigLayer(sharedProjectRoot);
   }
 
-  const serializableConfig: Record<string, unknown> = { ...config };
+  raw.knowledgeBases = normalizedKbs.map(kb => serializeConfigPathValue(kb, configBaseDir));
 
-  if (Array.isArray(serializableConfig.knowledgeBases)) {
-    serializableConfig.knowledgeBases = (serializableConfig.knowledgeBases as string[]).map(kb =>
-      serializeConfigPathValue(kb, configBaseDir)
-    );
-  }
-
-  writeFileSync(configPath, JSON.stringify(serializableConfig, null, 2) + "\n", "utf-8");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(configPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
 }
 
 export const codebase_peek: ToolDefinition = tool({
@@ -438,10 +449,10 @@ export const add_knowledge_base: ToolDefinition = tool({
       return `Error: Cannot access directory: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`;
     }
 
-    // Load current config
-    const config = loadEditableConfig();
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
+    // Load only the project-layer KBs (not merged) for comparison and mutation.
+    const editableConfig = loadEditableConfig();
+    const knowledgeBases: string[] = Array.isArray(editableConfig.knowledgeBases)
+      ? editableConfig.knowledgeBases as string[]
       : [];
 
     // Check if already added (normalize paths for comparison)
@@ -454,10 +465,9 @@ export const add_knowledge_base: ToolDefinition = tool({
       return `Knowledge base already configured: ${resolvedPath}`;
     }
 
-    // Add the knowledge base
+    // Add the knowledge base — surgical write: only knowledgeBases changes.
     knowledgeBases.push(resolvedPath);
-    config.knowledgeBases = knowledgeBases;
-    saveConfig(config);
+    patchKnowledgeBasesConfig(knowledgeBases);
     refreshIndexerFromConfig();
 
     let result = `${resolvedPath}\n`;
@@ -516,10 +526,10 @@ export const remove_knowledge_base: ToolDefinition = tool({
   async execute(args) {
     const inputPath = args.path.trim();
 
-    // Load current config
-    const config = loadEditableConfig();
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
+    // Load only the project-layer KBs (not merged) for mutation.
+    const editableConfig = loadEditableConfig();
+    const knowledgeBases: string[] = Array.isArray(editableConfig.knowledgeBases)
+      ? editableConfig.knowledgeBases as string[]
       : [];
 
     if (knowledgeBases.length === 0) {
@@ -543,8 +553,8 @@ export const remove_knowledge_base: ToolDefinition = tool({
     }
 
     const removed = knowledgeBases.splice(index, 1)[0];
-    config.knowledgeBases = knowledgeBases;
-    saveConfig(config);
+    // Surgical write: only knowledgeBases changes.
+    patchKnowledgeBasesConfig(knowledgeBases);
     refreshIndexerFromConfig();
 
     let result = `Removed: ${removed}\n\n`;

@@ -391,7 +391,7 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
   );
 
   server.prompt(
-    "status",
+    "index_status",
     "Check if the codebase is indexed and ready",
     {},
     () => ({

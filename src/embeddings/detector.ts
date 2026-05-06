@@ -46,7 +46,8 @@ interface OpenCodeAuthAPI {
 type OpenCodeAuth = OpenCodeAuthOAuth | OpenCodeAuthAPI;
 
 function getOpenCodeAuthPath(): string {
-  return path.join(os.homedir(), ".local", "share", "opencode", "auth.json");
+  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? os.homedir();
+  return path.join(home, ".local", "share", "opencode", "auth.json");
 }
 
 function loadOpenCodeAuth(): Record<string, OpenCodeAuth> {
