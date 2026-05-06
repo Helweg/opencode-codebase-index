@@ -450,9 +450,28 @@ export class SqliteDatabaseBackend implements IDatabaseBackend {
     return this.readFileHashesFromDisk();
   }
 
-  async setFileHashesBatch(hashes: Map<string, string>, _sourceId?: string): Promise<void> {
+  private sourceScopedFileHashKey(filePath: string, sourceId?: string): string {
+    return sourceId ? `${sourceId}::${filePath}` : filePath;
+  }
+
+  private parseSourceScopedFileHashKey(key: string): { sourceId?: string; filePath: string } {
+    const delimiter = key.indexOf("::");
+    if (delimiter === -1) {
+      return { filePath: key };
+    }
+
+    return {
+      sourceId: key.slice(0, delimiter),
+      filePath: key.slice(delimiter + 2),
+    };
+  }
+
+  async setFileHashesBatch(hashes: Map<string, string>, sourceId?: string): Promise<void> {
     const existing = this.readFileHashesFromDisk();
-    for (const [k, v] of hashes) existing.set(k, v);
+    for (const [filePath, hash] of hashes) {
+      existing.set(this.sourceScopedFileHashKey(filePath, sourceId), hash);
+      existing.set(filePath, hash);
+    }
     this.writeFileHashesToDisk(existing);
   }
 
@@ -462,31 +481,108 @@ export class SqliteDatabaseBackend implements IDatabaseBackend {
     this.writeFileHashesToDisk(hashes);
   }
 
-  async replaceAllFileHashes(hashes: Map<string, string>, _sourceId?: string): Promise<void> {
-    this.writeFileHashesToDisk(hashes);
+  async replaceAllFileHashes(hashes: Map<string, string>, sourceId?: string): Promise<void> {
+    if (!sourceId) {
+      this.writeFileHashesToDisk(hashes);
+      return;
+    }
+
+    const existing = this.readFileHashesFromDisk();
+    const removedFilePaths = new Set<string>();
+    for (const key of Array.from(existing.keys())) {
+      const parsed = this.parseSourceScopedFileHashKey(key);
+      if (parsed.sourceId === sourceId) {
+        existing.delete(key);
+        removedFilePaths.add(parsed.filePath);
+      }
+    }
+
+    for (const filePath of removedFilePaths) {
+      existing.delete(filePath);
+    }
+
+    for (const [filePath, hash] of hashes) {
+      existing.set(this.sourceScopedFileHashKey(filePath, sourceId), hash);
+      existing.set(filePath, hash);
+    }
+
+    this.writeFileHashesToDisk(existing);
   }
 
-  async getFileHashBatch(filePaths: string[], _sourceId?: string): Promise<Map<string, string>> {
+  async getFileHashBatch(filePaths: string[], sourceId?: string): Promise<Map<string, string>> {
     if (filePaths.length === 0) return new Map();
     const all = this.readFileHashesFromDisk();
     const result = new Map<string, string>();
     for (const fp of filePaths) {
-      const h = all.get(fp);
+      const scopedKey = this.sourceScopedFileHashKey(fp, sourceId);
+      const h = all.get(scopedKey) ?? all.get(fp);
       if (h !== undefined) result.set(fp, h);
     }
     return result;
   }
 
-  async hasSourcesOtherThan(_sourceIds: string[]): Promise<boolean> {
-    return false; // SQLite is single-source by design
+  async hasSourcesOtherThan(sourceIds: string[]): Promise<boolean> {
+    const scopedIds = new Set<string>();
+    for (const key of this.readFileHashesFromDisk().keys()) {
+      const parsed = this.parseSourceScopedFileHashKey(key);
+      if (parsed.sourceId) {
+        scopedIds.add(parsed.sourceId);
+      }
+    }
+
+    if (scopedIds.size === 0) {
+      return false;
+    }
+
+    for (const sourceId of scopedIds) {
+      if (!sourceIds.includes(sourceId)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
-  async getFilePathsBySource(_sourceId: string): Promise<string[]> {
-    return Array.from(this.readFileHashesFromDisk().keys());
+  async getFilePathsBySource(sourceId: string): Promise<string[]> {
+    const all = this.readFileHashesFromDisk();
+    const scopedPaths = new Set<string>();
+    for (const key of all.keys()) {
+      const parsed = this.parseSourceScopedFileHashKey(key);
+      if (parsed.sourceId === sourceId) {
+        scopedPaths.add(parsed.filePath);
+      }
+    }
+
+    if (scopedPaths.size > 0) {
+      return Array.from(scopedPaths);
+    }
+
+    const legacyPaths = new Set<string>();
+    for (const key of all.keys()) {
+      const parsed = this.parseSourceScopedFileHashKey(key);
+      if (!parsed.sourceId) {
+        legacyPaths.add(parsed.filePath);
+      }
+    }
+    return Array.from(legacyPaths);
   }
 
-  async deleteFileHashesBySource(_sourceId: string): Promise<void> {
-    this.writeFileHashesToDisk(new Map());
+  async deleteFileHashesBySource(sourceId: string): Promise<void> {
+    const existing = this.readFileHashesFromDisk();
+    const removedFilePaths = new Set<string>();
+    for (const key of Array.from(existing.keys())) {
+      const parsed = this.parseSourceScopedFileHashKey(key);
+      if (parsed.sourceId === sourceId) {
+        existing.delete(key);
+        removedFilePaths.add(parsed.filePath);
+      }
+    }
+
+    for (const filePath of removedFilePaths) {
+      existing.delete(filePath);
+    }
+
+    this.writeFileHashesToDisk(existing);
   }
 
   // ── Inverted index (inverted-index.json) ──────────────────────────

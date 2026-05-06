@@ -721,16 +721,15 @@ export class PgDatabaseBackend implements IDatabaseBackend {
         CREATE INDEX IF NOT EXISTS ${this.t("call_edges_source_idx")}
           ON ${this.t("call_edges")} (source_id)
       `);
-      // Drop and recreate composite branch indexes: old definition was (branch)
-      // only; new definition is (source_id, branch) to support source filtering.
-      await client.query(`DROP INDEX IF EXISTS ${this.t("branch_chunks_branch_idx")}`);
+      // Add source-aware composite branch indexes. We intentionally use new
+      // names to avoid collisions with legacy branch-only indexes on existing
+      // databases and to keep migration idempotent across concurrent initializers.
       await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.t("branch_chunks_branch_idx")}
+        CREATE INDEX IF NOT EXISTS ${this.t("branch_chunks_source_branch_idx")}
           ON ${this.t("branch_chunks")} (source_id, branch)
       `);
-      await client.query(`DROP INDEX IF EXISTS ${this.t("branch_symbols_branch_idx")}`);
       await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.t("branch_symbols_branch_idx")}
+        CREATE INDEX IF NOT EXISTS ${this.t("branch_symbols_source_branch_idx")}
           ON ${this.t("branch_symbols")} (source_id, branch)
       `);
     });

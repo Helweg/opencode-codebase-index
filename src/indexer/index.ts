@@ -3036,26 +3036,26 @@ export class Indexer {
     const existingCreatedAt = await this.database.getMetadata("index.createdAt");
     const completeProjectEmbeddingStrategyReset = !(await this.hasProjectForceReembedPending());
 
-    this.database.setMetadata("index.version", INDEX_METADATA_VERSION);
-    this.database.setMetadata("index.embeddingProvider", provider.provider);
-    this.database.setMetadata("index.embeddingModel", provider.modelInfo.model);
-    this.database.setMetadata("index.embeddingDimensions", provider.modelInfo.dimensions.toString());
+    await this.database.setMetadata("index.version", INDEX_METADATA_VERSION);
+    await this.database.setMetadata("index.embeddingProvider", provider.provider);
+    await this.database.setMetadata("index.embeddingModel", provider.modelInfo.model);
+    await this.database.setMetadata("index.embeddingDimensions", provider.modelInfo.dimensions.toString());
     if (this.config.scope === "global") {
       if (completeProjectEmbeddingStrategyReset) {
-        this.database.setMetadata(this.getProjectEmbeddingStrategyMetadataKey(), EMBEDDING_STRATEGY_VERSION);
+        await this.database.setMetadata(this.getProjectEmbeddingStrategyMetadataKey(), EMBEDDING_STRATEGY_VERSION);
       }
-      this.database.setMetadata(this.getLegacyMigrationMetadataKey(), "done");
+      await this.database.setMetadata(this.getLegacyMigrationMetadataKey(), "done");
       if (completeProjectEmbeddingStrategyReset) {
-        this.database.deleteMetadata(this.getProjectForceReembedMetadataKey());
+        await this.database.deleteMetadata(this.getProjectForceReembedMetadataKey());
       }
       this.branchMigrationDone = true;
     } else {
-      this.database.setMetadata("index.embeddingStrategyVersion", EMBEDDING_STRATEGY_VERSION);
+      await this.database.setMetadata("index.embeddingStrategyVersion", EMBEDDING_STRATEGY_VERSION);
     }
-    this.database.setMetadata("index.updatedAt", now);
+    await this.database.setMetadata("index.updatedAt", now);
 
     if (!existingCreatedAt) {
-      this.database.setMetadata("index.createdAt", now);
+      await this.database.setMetadata("index.createdAt", now);
     }
   }
 
@@ -3110,13 +3110,13 @@ export class Indexer {
     };
   }
 
-  checkCompatibility(): IndexCompatibility {
+  async checkCompatibility(): Promise<IndexCompatibility> {
     if (!this.indexCompatibility) {
       if (!this.configuredProviderInfo) {
         throw new Error('No embedding provider info, you must initialize the indexer first.');
       }
 
-      this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
+      this.indexCompatibility = await this.validateIndexCompatibility(this.configuredProviderInfo);
     }
     return this.indexCompatibility;
   }
@@ -3195,6 +3195,9 @@ export class Indexer {
       parseFailures: [],
     };
     const failedBatchesForCurrentRun: FailedBatch[] = [];
+    const failedChunkIdsThisRun = new Set<string>();
+    const failedAttemptCountByChunk = new Map<string, number>();
+    const retryableChunksWithExistingData = new Set<string>();
 
     this.updateProgress({
       phase: "scanning",
@@ -3238,9 +3241,14 @@ export class Indexer {
       const currentHash = hashFile(f.path);
       currentFileHashes.set(f.path, currentHash);
       if (storedHashes.get(f.path) === currentHash) {
-        unchangedFilePaths.push(f.path);
-        unchangedFilePathSet.add(f.path);
-        this.logger.recordCacheHit();
+        if (forceScopedReembed) {
+          changedFileMeta.push({ path: f.path, hash: currentHash });
+          this.logger.recordCacheMiss();
+        } else {
+          unchangedFilePaths.push(f.path);
+          unchangedFilePathSet.add(f.path);
+          this.logger.recordCacheHit();
+        }
       } else {
         changedFileMeta.push({ path: f.path, hash: currentHash });
         this.logger.recordCacheMiss();
@@ -3302,8 +3310,12 @@ export class Indexer {
 
       const allContentHashes = batchPendingChunks.map(c => c.contentHash);
       const missingHashes = new Set(await database.getMissingEmbeddings(allContentHashes));
-      const chunksNeedingEmbedding = batchPendingChunks.filter(c => missingHashes.has(c.contentHash));
-      const chunksWithExistingEmbedding = batchPendingChunks.filter(c => !missingHashes.has(c.contentHash));
+      const chunksNeedingEmbedding = forceScopedReembed
+        ? batchPendingChunks
+        : batchPendingChunks.filter(c => missingHashes.has(c.contentHash));
+      const chunksWithExistingEmbedding = forceScopedReembed
+        ? []
+        : batchPendingChunks.filter(c => !missingHashes.has(c.contentHash));
 
       this.logger.cache("info", "Embedding cache lookup", {
         needsEmbedding: chunksNeedingEmbedding.length,
@@ -3411,7 +3423,15 @@ export class Indexer {
                 chunkText: chunk.storageText,
                 model: configuredProviderInfo.modelInfo.model,
               }));
-              await database.upsertEmbeddingsBatch(embeddingBatchItems);
+              try {
+                await database.upsertEmbeddingsBatch(embeddingBatchItems);
+              } catch (dbError) {
+                // Roll back vectors that were inserted before DB persistence failed.
+                for (const { chunk } of pooledResults) {
+                  await store.remove(chunk.id);
+                }
+                throw dbError;
+              }
 
               for (const { chunk } of pooledResults) {
                 invertedIndex.removeChunk(chunk.id);
@@ -3440,17 +3460,44 @@ export class Indexer {
             }, onProgress);
           } catch (error) {
             const failedChunks = getUniquePendingChunksFromRequests(requestBatch);
-            stats.failedChunks += failedChunks.length;
-            failedBatchesForCurrentRun.push({
-              chunks: failedChunks,
-              error: getErrorMessage(error),
-              attemptCount: 1,
-              lastAttempt: new Date().toISOString(),
-            });
+            const failureMessage = getErrorMessage(error);
+            const failureTimestamp = new Date().toISOString();
+
+            for (const chunk of failedChunks) {
+              const previousAttemptCount = failedAttemptCountByChunk.get(chunk.id) ?? 0;
+              const nextAttemptCount = previousAttemptCount + 1;
+              failedAttemptCountByChunk.set(chunk.id, nextAttemptCount);
+
+              if (!failedChunkIdsThisRun.has(chunk.id)) {
+                if (!retryableChunksWithExistingData.has(chunk.id)) {
+                  failedChunkIdsThisRun.add(chunk.id);
+                }
+                stats.failedChunks += 1;
+              }
+              if (forceScopedReembed) {
+                failedForcedChunkIds.add(chunk.id);
+              }
+
+              const existingFailedBatchIndex = failedBatchesForCurrentRun.findIndex(
+                (failedBatch) => failedBatch.chunks[0]?.id === chunk.id
+              );
+              const failedBatch = {
+                chunks: [chunk],
+                error: failureMessage,
+                attemptCount: nextAttemptCount,
+                lastAttempt: failureTimestamp,
+              } satisfies FailedBatch;
+
+              if (existingFailedBatchIndex === -1) {
+                failedBatchesForCurrentRun.push(failedBatch);
+              } else {
+                failedBatchesForCurrentRun[existingFailedBatchIndex] = failedBatch;
+              }
+            }
             this.logger.recordEmbeddingError();
             this.logger.embedding("error", `Failed to embed batch after retries`, {
               batchSize: requestBatch.length,
-              error: getErrorMessage(error),
+              error: failureMessage,
             });
           }
         });
@@ -3541,7 +3588,7 @@ export class Indexer {
             language: chunk.language,
           });
 
-          if (existingChunkHashes.get(id) === contentHash) {
+          if (!forceScopedReembed && existingChunkHashes.get(id) === contentHash) {
             stats.existingChunks++;
           } else {
             const texts = createEmbeddingTexts(chunk, parsed.path, getSafeEmbeddingChunkTokenLimit(configuredProviderInfo)).map((text) => ({
@@ -3699,6 +3746,12 @@ export class Indexer {
     // Phase 6: Retryable failed chunks from previous incomplete runs
     const retryableFailedChunks = this.collectRetryableFailedChunks(currentFileHashes, unchangedFilePathSet);
     if (retryableFailedChunks.length > 0) {
+      const sourceBranchChunkIds = new Set(await database.getBranchChunkIds(branchCatalogKey, [sourceId]));
+      for (const retryable of retryableFailedChunks) {
+        if (sourceBranchChunkIds.has(retryable.chunk.id)) {
+          retryableChunksWithExistingData.add(retryable.chunk.id);
+        }
+      }
       stats.totalChunks += retryableFailedChunks.length;
       await embedPendingChunks(retryableFailedChunks.map((r) => r.chunk));
     }
@@ -3714,10 +3767,23 @@ export class Indexer {
     // Phase 7: Finalization
     stats.removedChunks = removedCount;
 
+    const coalescedFailedBatches = coalesceFailedBatches(failedBatchesForCurrentRun);
     if (scopedRoots) {
-      this.saveScopedFailedBatches(coalesceFailedBatches(failedBatchesForCurrentRun), scopedRoots);
+      this.saveScopedFailedBatches(coalescedFailedBatches, scopedRoots);
     } else {
-      this.saveFailedBatches(coalesceFailedBatches(failedBatchesForCurrentRun));
+      this.saveFailedBatches(coalescedFailedBatches);
+    }
+
+    // Remove chunks that failed embedding from the current source's branch catalog.
+    if (failedChunkIdsThisRun.size > 0) {
+      const sourceBranchChunkIds = new Set(await database.getBranchChunkIds(branchCatalogKey, [sourceId]));
+      for (const failedChunkId of failedChunkIdsThisRun) {
+        sourceBranchChunkIds.delete(failedChunkId);
+      }
+      await database.clearBranch(branchCatalogKey, sourceId);
+      if (sourceBranchChunkIds.size > 0) {
+        await database.addChunksToBranchBatch(branchCatalogKey, Array.from(sourceBranchChunkIds), sourceId);
+      }
     }
 
     this.updateProgress({
@@ -3907,7 +3973,7 @@ export class Indexer {
   ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
 
-    const compatibility = this.checkCompatibility();
+    const compatibility = await this.checkCompatibility();
     if (!compatibility.compatible) {
       throw new Error(
         `${compatibility.reason ?? "Index is incompatible with current embedding provider."} ` +
@@ -4233,7 +4299,7 @@ export class Indexer {
     if (this.config.scope === "global") {
       await store.load();
       const roots = this.getScopedRoots();
-      const compatibility = this.checkCompatibility();
+      const compatibility = await this.checkCompatibility();
       const allMetadata = await store.getAllMetadata();
       const hasForeignData =
         allMetadata.some(({ metadata }) => !this.isFileInCurrentScope(metadata.filePath, roots)) ||
@@ -4655,7 +4721,7 @@ export class Indexer {
   ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
 
-    const compatibility = this.checkCompatibility();
+    const compatibility = await this.checkCompatibility();
     if (!compatibility.compatible) {
       throw new Error(
         `${compatibility.reason ?? "Index is incompatible with current embedding provider."} ` +

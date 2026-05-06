@@ -167,8 +167,7 @@ export function formatProgressTitle(progress: IndexProgress): string {
       return "Scanning files...";
     case "parsing":
       if (progress.currentFiles?.length) {
-        const label = progress.batchStarting ? "Parsing batch" : "Parsed batch";
-        return `${label} (${progress.filesProcessed}/${progress.totalFiles} files)\n${progress.currentFiles.join("\n")}`;
+        return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files [${progress.currentFiles.join(", ")}]`;
       }
       return `Parsing: ${progress.filesProcessed}/${progress.totalFiles} files`;
     case "embedding": {
