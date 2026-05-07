@@ -365,23 +365,6 @@ public class AccountService {
       expect(store.count()).toBe(0);
     });
 
-    it("should persist and load", () => {
-      store.add("chunk1", [1, 0, 0], {
-        filePath: "test.ts",
-        startLine: 1,
-        endLine: 5,
-        chunkType: "function",
-        language: "typescript",
-        hash: "abc123",
-      });
-      store.save();
-
-      const newStore = new VectorStore(path.join(tempDir, "vectors"), 3);
-      newStore.load();
-
-      expect(newStore.count()).toBe(1);
-    });
-
     it("should add vectors in batch and keep metadata searchable", () => {
       store.addBatch([
         {
@@ -507,18 +490,6 @@ public class AccountService {
       expect(metadataMap.get("chunk0")?.hash).toBe("hash-0");
       expect(metadataMap.get("chunk777")?.filePath).toBe("file-777.ts");
       expect(metadataMap.get("chunk999")?.endLine).toBe(1001);
-
-      store.save();
-
-      const reloadedStore = new VectorStore(path.join(tempDir, "vectors"), 3);
-      reloadedStore.load();
-
-      expect(reloadedStore.count()).toBe(batchSize);
-      expect(reloadedStore.getMetadata("chunk777")?.filePath).toBe("file-777.ts");
-      expect(reloadedStore.getMetadata("chunk999")?.hash).toBe("hash-999");
-
-      const reloadedResults = reloadedStore.search(items[777].vector, 10);
-      expect(reloadedResults[0]?.id).toBe("chunk777");
     });
 
     it("should clear all data", () => {

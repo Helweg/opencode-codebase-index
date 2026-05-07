@@ -6,8 +6,9 @@ import { existsSync } from "fs";
 import { Indexer } from "./indexer/index.js";
 import type { ParsedCodebaseIndexConfig, LogLevel } from "./config/schema.js";
 import { loadProjectConfigLayer, materializeLocalProjectConfig } from "./config/merger.js";
-import { formatDefinitionLookup, formatHealthCheck, formatIndexStats, formatStatus } from "./tools/utils.js";
+import { formatDefinitionLookup, formatHealthCheck, formatIndexStats, formatProgressTitle, formatStatus } from "./tools/utils.js";
 import { formatCostEstimate } from "./utils/cost.js";
+import { writeProgressLog } from "./utils/progress-log.js";
 import type { LogEntry } from "./utils/logger.js";
 import { resolveWorktreeMainRepoRoot } from "./git/index.js";
 
@@ -42,6 +43,10 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
     initialized = false;
   }
 
+  function normalizeFsPath(targetPath: string): string {
+    return path.normalize(targetPath).replace(/\\/g, "/");
+  }
+
   function shouldForceLocalizeProjectIndex(): boolean {
     if (runtimeConfig.scope !== "project") {
       return false;
@@ -54,7 +59,7 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
     }
 
     const inheritedIndexPath = path.join(mainRepoRoot, ".opencode", "index");
-    return !existsSync(localIndexPath) && existsSync(inheritedIndexPath);
+    return !existsSync(normalizeFsPath(localIndexPath)) && existsSync(normalizeFsPath(inheritedIndexPath));
   }
 
   async function ensureInitialized(): Promise<void> {
@@ -142,7 +147,7 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
       estimateOnly: z.boolean().optional().default(false).describe("Only show cost estimate without indexing"),
       verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
     },
-    async (args) => {
+    async (args, extra) => {
       if (args.estimateOnly) {
         await ensureInitialized();
         const estimate = await indexer.estimateCost();
@@ -162,8 +167,63 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
         await ensureInitialized();
       }
 
-      const stats = await indexer.index();
-      return { content: [{ type: "text", text: formatIndexStats(stats, args.verbose ?? false) }] };
+      const progressToken = extra._meta?.progressToken;
+      const progressUpdates: string[] = [];
+      let lastSnapshot = "";
+      let chunksTotal = 0;
+
+      const rawProgressLogFile = runtimeConfig.debug.progressLogFile;
+      const progressLogFile = rawProgressLogFile
+        ? path.isAbsolute(rawProgressLogFile)
+          ? rawProgressLogFile
+          : path.resolve(projectRoot, rawProgressLogFile)
+        : undefined;
+
+      const stats = await indexer.index((progress) => {
+        const snapshot = `${progress.phase}:${progress.filesProcessed}/${progress.totalFiles}:${progress.chunksProcessed}/${progress.totalChunks}:${progress.currentFiles?.join(",\n") ?? ""}`;
+        if (snapshot === lastSnapshot) {
+          return;
+        }
+        lastSnapshot = snapshot;
+        if (progress.totalChunks > 0) chunksTotal = progress.totalChunks;
+
+        const message = formatProgressTitle(progress);
+        progressUpdates.push(message);
+
+        if (progressLogFile) {
+          writeProgressLog(progressLogFile, message);
+        }
+
+        if (progressToken != null) {
+          const progressValue = progress.phase === "complete"
+            ? (chunksTotal || 1)
+            : progress.chunksProcessed;
+          void extra.sendNotification({
+            method: "notifications/progress",
+            params: {
+              progressToken,
+              progress: progressValue,
+              total: chunksTotal || undefined,
+              message,
+            },
+          }).catch(() => { /* best-effort */ });
+        }
+      });
+
+      const verbose = args.verbose ?? false;
+      let text = formatIndexStats(stats, verbose);
+
+      // If the client didn't supply a progressToken, append progress lines to
+      // the final result so they are visible in the chat.
+      if (progressToken == null && progressUpdates.length > 0) {
+        const updatesToShow = verbose ? progressUpdates : progressUpdates.slice(-6);
+        text += `\n\nProgress updates:\n${updatesToShow.map((line) => `- ${line}`).join("\n")}`;
+        if (!verbose && progressUpdates.length > updatesToShow.length) {
+          text += `\n- ... ${progressUpdates.length - updatesToShow.length} earlier updates omitted (use verbose=true for all)`;
+        }
+      }
+
+      return { content: [{ type: "text", text }] };
     },
   );
 
@@ -391,7 +451,7 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
   );
 
   server.prompt(
-    "status",
+    "index_status",
     "Check if the codebase is indexed and ready",
     {},
     () => ({

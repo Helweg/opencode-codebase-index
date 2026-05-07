@@ -1,6 +1,6 @@
 {
   "name": "codebase-index-native",
-  "version": "0.1.0",
+  "version": "0.7.1",
   "napi": {
     "binaryName": "codebase-index-native",
     "targets": [
