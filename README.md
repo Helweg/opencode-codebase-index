@@ -379,6 +379,7 @@ The plugin automatically registers these slash commands:
 
 | Command | Description |
 | ------- | ----------- |
+| `/definition <query>` | **Definition Lookup**. Finds the authoritative implementation site for a symbol or concept. |
 | `/peek <query>` | **Quick Semantic Lookup**. Returns likely locations only, without full code content. |
 | `/reindex` | **Full Rebuild**. Rebuilds the codebase index from scratch. |
 | `/search <query>` | **Pure Semantic Search**. Best for "How does X work?" |
