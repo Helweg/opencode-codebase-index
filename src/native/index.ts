@@ -689,7 +689,9 @@ export class Database {
   }
 
   close(): void {
-    this.inner.close();
+    if (typeof this.inner.close === "function") {
+      this.inner.close();
+    }
   }
 
   embeddingExists(contentHash: string): boolean {
