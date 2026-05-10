@@ -178,6 +178,39 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
     expect(topPaths[0]).toContain(path.join("app", "indexer", "index.ts"));
   });
 
+  it("keeps plain identifier queries discoverable without definitionIntent", async () => {
+    const config = parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-embedding-model",
+        dimensions: 8,
+      },
+      indexing: {
+        watchFiles: false,
+      },
+      search: {
+        maxResults: 10,
+        minScore: 0,
+        fusionStrategy: "rrf",
+        rrfK: 60,
+        rerankTopN: 20,
+      },
+    });
+
+    const indexer = _indexers[_indexers.push(new Indexer(tempDir, config)) - 1];
+    await indexer.index();
+
+    const results = await indexer.search("rankHybridResults", 5, {
+      metadataOnly: true,
+      filterByBranch: false,
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    const topPaths = results.slice(0, 3).map((r) => r.filePath);
+    expect(topPaths[0]).toContain(path.join("app", "indexer", "index.ts"));
+  });
+
   it("forces definition lanes for doc-leaning queries when definitionIntent is true", async () => {
     const config = parseConfig({
       embeddingProvider: "custom",

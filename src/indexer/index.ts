@@ -716,13 +716,26 @@ function classifyExternalRerankBand(
   return "other";
 }
 
-function classifyQueryIntent(tokens: string[]): "source" | "doc_test" {
+function classifyQueryIntent(tokens: string[]): "source" | "doc_test" | "neutral" {
   const sourceIntentHits = tokens.filter((t) => SOURCE_INTENT_HINTS.has(t)).length;
   const docTestIntentHits = tokens.filter((t) => DOC_TEST_INTENT_HINTS.has(t)).length;
-  return sourceIntentHits >= docTestIntentHits ? "source" : "doc_test";
+
+  if (sourceIntentHits === 0 && docTestIntentHits === 0) {
+    return "neutral";
+  }
+
+  if (sourceIntentHits > docTestIntentHits) {
+    return "source";
+  }
+
+  if (docTestIntentHits > sourceIntentHits) {
+    return "doc_test";
+  }
+
+  return "neutral";
 }
 
-function classifyQueryIntentRaw(query: string): "source" | "doc_test" {
+function classifyQueryIntentRaw(query: string): "source" | "doc_test" | "neutral" {
   const lowerQuery = query.toLowerCase();
   const docTestRawHits = Array.from(DOC_TEST_INTENT_HINTS).filter((hint) =>
     new RegExp(`\\b${hint}\\b`).test(lowerQuery)
@@ -744,7 +757,7 @@ function classifyQueryIntentRaw(query: string): "source" | "doc_test" {
     return "doc_test";
   }
 
-  if (sourceRawHits > docTestRawHits) {
+  if (sourceRawHits > docTestRawHits && sourceRawHits > 0) {
     return "source";
   }
 
@@ -1714,6 +1727,35 @@ export function mergeTieredResults(
   }
 
   return out;
+}
+
+function matchesSearchFilters(
+  candidate: RankedCandidate,
+  options: {
+    fileType?: string;
+    directory?: string;
+    chunkType?: string;
+  } | undefined,
+  minScore: number
+): boolean {
+  if (candidate.score < minScore) return false;
+
+  if (options?.fileType) {
+    const ext = candidate.metadata.filePath.split(".").pop()?.toLowerCase();
+    if (ext !== options.fileType.toLowerCase().replace(/^\./, "")) return false;
+  }
+
+  if (options?.directory) {
+    const normalizedDir = options.directory.replace(/^\/|\/$/g, "");
+    if (!candidate.metadata.filePath.includes(`/${normalizedDir}/`) &&
+      !candidate.metadata.filePath.includes(`${normalizedDir}/`)) return false;
+  }
+
+  if (options?.chunkType && candidate.metadata.chunkType !== options.chunkType) {
+    return false;
+  }
+
+  return true;
 }
 
 function unionCandidates(
@@ -3959,26 +4001,7 @@ export class Indexer {
     const tiered = mergeTieredResults(primaryLane, rescued, maxResults * 4);
     const hasCodeHints = extractCodeTermHints(query).length > 0 || identifierHints.length > 0;
 
-    const baseFiltered = tiered.filter((r) => {
-      if (r.score < this.config.search.minScore) return false;
-
-      if (options?.fileType) {
-        const ext = r.metadata.filePath.split(".").pop()?.toLowerCase();
-        if (ext !== options.fileType.toLowerCase().replace(/^\./, "")) return false;
-      }
-
-      if (options?.directory) {
-        const normalizedDir = options.directory.replace(/^\/|\/$/g, "");
-        if (!r.metadata.filePath.includes(`/${normalizedDir}/`) &&
-          !r.metadata.filePath.includes(`${normalizedDir}/`)) return false;
-      }
-
-      if (options?.chunkType) {
-        if (r.metadata.chunkType !== options.chunkType) return false;
-      }
-
-      return true;
-    });
+    const baseFiltered = tiered.filter((r) => matchesSearchFilters(r, options, this.config.search.minScore));
 
     const implementationOnly = baseFiltered.filter((r) =>
       isLikelyImplementationPath(r.metadata.filePath) &&
@@ -3990,7 +4013,13 @@ export class Indexer {
       : baseFiltered
     ).slice(0, maxResults);
 
-    const finalResults = filtered;
+    const identifierFallback = (!options?.definitionIntent && filtered.length === 0 && identifierHints.length > 0)
+      ? buildSymbolDefinitionLane(query, database, branchChunkIds, maxResults, union, true)
+        .filter((r) => matchesSearchFilters(r, options, this.config.search.minScore))
+        .slice(0, maxResults)
+      : [];
+
+    const finalResults = filtered.length > 0 ? filtered : identifierFallback;
 
     const totalSearchMs = performance.now() - searchStartTime;
     this.logger.recordSearch(totalSearchMs, {
