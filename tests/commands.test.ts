@@ -176,12 +176,15 @@ Final line.`;
 
       const commands = loadCommandsFromDirectory(commandsDir);
 
-      expect(commands.size).toBeGreaterThanOrEqual(3);
+      expect(commands.size).toBeGreaterThanOrEqual(7);
       expect(commands.has("definition")).toBe(true);
+      expect(commands.has("peek")).toBe(true);
       expect(commands.has("search")).toBe(true);
       expect(commands.has("index")).toBe(true);
+      expect(commands.has("reindex")).toBe(true);
       expect(commands.has("find")).toBe(true);
       expect(commands.has("call-graph")).toBe(true);
+      expect(commands.has("status")).toBe(true);
 
       const definitionCmd = commands.get("definition")!;
       expect(definitionCmd.description).toBe("Find where a symbol is defined in the codebase");
@@ -191,6 +194,14 @@ Final line.`;
       const indexCmd = commands.get("index")!;
       expect(indexCmd.description).toBe("Index the codebase for semantic search");
       expect(indexCmd.template).toContain("index_codebase");
+
+      const peekCmd = commands.get("peek")!;
+      expect(peekCmd.description).toBe("Quickly find likely code locations without returning full code");
+      expect(peekCmd.template).toContain("codebase_peek");
+
+      const reindexCmd = commands.get("reindex")!;
+      expect(reindexCmd.description).toBe("Fully rebuild the codebase index from scratch");
+      expect(reindexCmd.template).toContain("force=true");
 
       const callGraphCmd = commands.get("call-graph")!;
       expect(callGraphCmd.description).toBe("Trace callers or callees using the call graph");
