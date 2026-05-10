@@ -379,10 +379,12 @@ The plugin automatically registers these slash commands:
 
 | Command | Description |
 | ------- | ----------- |
+| `/peek <query>` | **Quick Semantic Lookup**. Returns likely locations only, without full code content. |
+| `/reindex` | **Full Rebuild**. Rebuilds the codebase index from scratch. |
 | `/search <query>` | **Pure Semantic Search**. Best for "How does X work?" |
 | `/find <query>` | **Hybrid Search**. Combines semantic search + grep. Best for "Find usage of X". |
 | `/call-graph <query>` | **Call Graph Trace**. Find callers/callees to understand execution flow. |
-| `/index` | **Update Index**. Forces a refresh of the codebase index. |
+| `/index` | **Update Index**. Runs incremental indexing by default; use `/index force` for a full rebuild. |
 | `/status` | **Check Status**. Shows if indexed, chunk count, and provider info. |
 
 ## 📚 Knowledge Base

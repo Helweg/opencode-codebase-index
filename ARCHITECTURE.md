@@ -24,7 +24,7 @@ This document explains the architecture of opencode-codebase-index, including da
 │         index_codebase, index_status, index_health_check, index_metrics,    │
 │         index_logs, add_knowledge_base, list_knowledge_bases,               │
 │         remove_knowledge_base                                               │
-│  Commands: /search, /find, /call-graph, /index, /status                     │
+│  Commands: /peek, /search, /find, /call-graph, /index, /reindex, /status   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
