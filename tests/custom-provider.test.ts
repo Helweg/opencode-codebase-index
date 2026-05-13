@@ -476,6 +476,73 @@ describe("OllamaEmbeddingProvider", () => {
     expect(result.embeddings).toHaveLength(1);
   });
 
+  it("backs off on context errors even when the prompt is below the estimated char limit", async () => {
+    const prompts: string[] = [];
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string; truncate?: boolean };
+      prompts.push(body.prompt ?? "");
+
+      if (prompts.length === 1) {
+        return new Response(JSON.stringify({ error: "the input length exceeds the context length" }), { status: 500 });
+      }
+
+      return new Response(JSON.stringify({ embedding: new Array(768).fill(0.1) }), { status: 200 });
+    });
+
+    const provider = createOllamaProvider();
+    const nearLimit = "x".repeat(7000);
+    const result = await provider.embedBatch([nearLimit]);
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1].length).toBeLessThan(prompts[0].length);
+    expect(result.embeddings).toHaveLength(1);
+  });
+
+  it("keeps shrinking ollama prompts until a context-length retry succeeds", async () => {
+    const prompts: string[] = [];
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string; truncate?: boolean };
+      prompts.push(body.prompt ?? "");
+
+      if (prompts.length < 3) {
+        return new Response(JSON.stringify({ error: "the input length exceeds the context length" }), { status: 500 });
+      }
+
+      return new Response(JSON.stringify({ embedding: new Array(768).fill(0.1) }), { status: 200 });
+    });
+
+    const provider = createOllamaProvider();
+    const oversized = "x".repeat(9000);
+    const result = await provider.embedBatch([oversized]);
+
+    expect(prompts).toHaveLength(3);
+    expect(prompts[1].length).toBeLessThan(prompts[0].length);
+    expect(prompts[2].length).toBeLessThan(prompts[1].length);
+    expect(result.embeddings).toHaveLength(1);
+  });
+
+  it("matches alternate Ollama context-length error wording", async () => {
+    const prompts: string[] = [];
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string; truncate?: boolean };
+      prompts.push(body.prompt ?? "");
+
+      if (prompts.length === 1) {
+        return new Response(JSON.stringify({ error: "Context length exceeded for this embedding request" }), { status: 500 });
+      }
+
+      return new Response(JSON.stringify({ embedding: new Array(768).fill(0.1) }), { status: 200 });
+    });
+
+    const provider = createOllamaProvider();
+    const oversized = "x".repeat(9000);
+    const result = await provider.embedBatch([oversized]);
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1].length).toBeLessThan(prompts[0].length);
+    expect(result.embeddings).toHaveLength(1);
+  });
+
   it("processes ollama embedBatch requests sequentially", async () => {
     let activeRequests = 0;
     let maxActiveRequests = 0;

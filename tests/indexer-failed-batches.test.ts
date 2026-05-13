@@ -304,6 +304,53 @@ describe("indexer failed batch recovery", () => {
     expect(status.failedBatchesCount).toBe(0);
   });
 
+  it("recovers split ollama chunks when provider retries need extra truncation below the estimated limit", async () => {
+    const embedPrompts: string[] = [];
+    fetchSpy.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith("/api/tags")) {
+        return new Response(JSON.stringify({
+          models: [{ name: "nomic-embed-text" }],
+        }), { status: 200 });
+      }
+
+      const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string };
+      const prompt = body.prompt ?? "";
+      embedPrompts.push(prompt);
+
+      if (prompt.length > 6000) {
+        return new Response(JSON.stringify({ error: "the input length exceeds the context length" }), { status: 500 });
+      }
+
+      const seed = prompt.length % 19;
+      return new Response(JSON.stringify({
+        embedding: Array.from({ length: 768 }, (_, idx) => seed + idx / 1000),
+      }), { status: 200 });
+    });
+
+    fs.writeFileSync(
+      sourceFile,
+      [
+        "export function denseOversizedChunk() {",
+        `  const blob = ${JSON.stringify("dense<>symbols{}[]() ".repeat(1400))};`,
+        "  return blob.length;",
+        "}",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const indexer = createOllamaIndexer();
+    const stats = await indexer.index();
+
+    expect(stats.failedChunks).toBe(0);
+    expect(stats.indexedChunks).toBeGreaterThan(0);
+    expect(embedPrompts.length).toBeGreaterThan(1);
+    expect(embedPrompts.some((prompt) => prompt.includes("Part 1/"))).toBe(true);
+    expect(embedPrompts.some((prompt, idx) => idx > 0 && prompt.length < embedPrompts[0]!.length)).toBe(true);
+
+    const status = await indexer.getStatus();
+    expect(status.failedBatchesCount).toBe(0);
+  });
+
   it("rebuilds legacy failed-batch prompts with the current split strategy", async () => {
     const indexer = createOllamaIndexer();
     await indexer.initialize();
