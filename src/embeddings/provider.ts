@@ -306,8 +306,10 @@ class OllamaEmbeddingProvider implements EmbeddingProviderInterface {
   }
 
   private isContextLengthError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.includes("input length exceeds the context length");
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return (message.includes("context length") && (message.includes("exceed") || message.includes("exceeded") || message.includes("too long")))
+      || message.includes("input length exceeds the context length")
+      || message.includes("context length exceeded");
   }
 
   private buildTruncationCandidates(text: string): string[] {
