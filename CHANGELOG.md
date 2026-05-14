@@ -10,8 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.8.0] - 2026-05-14
 
 ### Added
+- **Git worktree fallback and reuse**: Fresh git worktrees now inherit the main repository's project-scoped `.opencode` config and index when no local worktree state exists, including matching eval-path and knowledge-base handling.
 - **Apex semantic parsing**: Added tree-sitter-based semantic chunking for Salesforce Apex source files (`.cls` and `.trigger`) via the [`tree-sitter-sfapex`](https://github.com/aheber/tree-sitter-sfapex) grammar. Recognizes class, interface, enum, method, constructor, and trigger declarations with leading JavaDoc-style block comments attached to their target chunks. Anonymous Apex (`.apex`), SOQL, and SOSL standalone files are out of scope.
 - **Apex call graph extraction**: Method invocations, constructor calls (`new MyClass(...)`), and instance/static method calls are extracted for the `call_graph` tool. Apex is case-insensitive at the language level, so callee names are normalized to lowercase during extraction (matching the existing PHP behavior). Apex has no imports — namespaces are referenced via fully qualified names — so no `Import` edges are produced.
+- **Zig language support**: Added tree-sitter semantic parsing, file discovery, and call-graph extraction for `.zig` files.
+- **New slash commands**: Added `/peek` for lightweight location-first discovery and `/reindex` as a full rebuild shortcut.
+
+### Changed
+- **Ollama oversized-input handling**: Built-in Ollama embeddings now use pooled multi-part requests, broader context-length detection, and progressive retry/backoff behavior for oversized inputs.
+- **Release documentation and support guidance**: Aligned maintainer guidance, support policy, and release workflow docs with the protected-branch release process used for `v0.8.0`.
+
+### Fixed
+- **Index reset and cleanup hardening**: Fixed shared/global rebuild flows, SQLite corruption recovery, stale chunk ownership cleanup, and related rebuild-state edge cases across project and worktree setups.
+- **Windows build and test reliability**: Fixed Windows-native build/test failures with explicit database/indexer cleanup, portable path handling, and cross-platform native pretest scripting.
+- **Database close lifecycle**: Hardened `Database.close()` so use-after-close fails fast instead of silently swapping to an in-memory SQLite connection.
+- **Semantic search and rebuild cleanup**: Restored identifier fallback in semantic search and rebuilt cleanup paths from SQLite-backed state without relying on unsafe native remove flows.
 
 ## [0.7.0] - 2026-04-14
 
