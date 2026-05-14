@@ -1,6 +1,6 @@
 # AGENTS.md - AI Agent Guidelines for opencode-codebase-index
 
-**Generated:** 2025-01-16 | **Commit:** 9f94822 | **Branch:** main
+**Generated:** 2026-05-14 | **Commit:** 929083b | **Branch:** release/v0.8.0
 
 Semantic codebase indexing plugin for OpenCode. Hybrid TypeScript/Rust architecture:
 - **TypeScript** (`src/`): Plugin logic, embedding providers, OpenCode tools
@@ -49,11 +49,11 @@ src/
 
 native/src/
 ├── lib.rs                # NAPI exports: parse_file, VectorStore, Database, InvertedIndex
-├── parser.rs             # Tree-sitter parsing (14 languages: TS, JS, Python, Rust, Go, Java, C#, Ruby, Bash, C, C++, JSON, TOML, YAML)
+├── parser.rs             # Tree-sitter parsing (17 languages: TS, JS, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig)
 ├── chunker.rs            # Semantic chunking with overlap
 ├── store.rs              # usearch vector store (F16 quantization)
 ├── db.rs                 # SQLite: embeddings, chunks, branch catalog, symbols, call edges
-├── call_extractor.rs     # Tree-sitter query-based call extraction (TS/JS, Python, Go, Rust)
+├── call_extractor.rs     # Tree-sitter query-based call extraction (TS/JS, Python, Go, Rust, PHP, Zig, Apex)
 ├── inverted_index.rs     # BM25 keyword search
 ├── hasher.rs             # xxhash content hashing
 └── types.rs              # Shared types (Language enum with from_string)
@@ -256,20 +256,25 @@ When creating a new release:
 1. **Update `CHANGELOG.md`** - Add new version section with Added/Changed/Fixed entries
 2. **Bump version in `package.json`** - Follow semver (patch for fixes, minor for features)
 3. **Commit changes** - `git commit -m "chore: bump version to X.Y.Z"`
-4. **Push to origin** - `git push origin main`
-5. **Create git tag** - `git tag vX.Y.Z`
-6. **Push tag** - `git push origin vX.Y.Z`
-7. **Create GitHub release** - `gh release create vX.Y.Z --title "vX.Y.Z - Title" --notes "..."`
+4. **Push the release branch** - `git push -u origin release/vX.Y.Z`
+5. **Open and merge a PR into `main`**
+6. **Create git tag** - `git tag vX.Y.Z`
+7. **Push tag** - `git push origin vX.Y.Z`
+8. **Create GitHub release** - `gh release create vX.Y.Z --title "vX.Y.Z - Title" --notes "..."`
+
+Follow the repository workflow: prepare the release on a `release/vX.Y.Z` branch, open a PR into `main`, merge the PR, then tag and publish from the merged commit.
 
 Example:
 ```bash
-# After updating CHANGELOG.md and package.json
-git add CHANGELOG.md package.json
-git commit -m "chore: bump version to 0.3.1"
-git push origin main
-git tag v0.3.1
-git push origin v0.3.1
-gh release create v0.3.1 --title "v0.3.1 - Search Performance Optimizations" --notes "$(cat <<'EOF'
+# After updating CHANGELOG.md, package.json, and package-lock.json on release/v0.8.0
+git checkout -b release/v0.8.0
+git add CHANGELOG.md package.json package-lock.json
+git commit -m "chore: prepare v0.8.0 release metadata"
+git push -u origin release/v0.8.0
+# Open and merge the PR into main, then tag the merged commit on main
+git tag v0.8.0
+git push origin v0.8.0
+gh release create v0.8.0 --title "v0.8.0 - Apex semantic parsing" --notes "$(cat <<'EOF'
 ## What's New
 ...
 EOF
