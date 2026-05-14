@@ -969,6 +969,7 @@ To ensure release notes reflect all merged work, this repo uses a draft-release 
    - PRs are validated by CI (`Release Label Check`) and fail if no release category label is present
 2. **Let Release Drafter build the draft notes** automatically from merged PRs on `main`.
 3. **Before publishing**:
+   - compare `git log --oneline vX.Y.Z..HEAD` (or the previous release tag range) against the draft release notes so the release summary covers the full shipped delta, not just the current `CHANGELOG.md` `Unreleased` section
    - copy/finalize relevant highlights into `CHANGELOG.md`
    - bump `package.json` version
    - run: `npm run build && npm run typecheck && npm run lint && npm run test:run`

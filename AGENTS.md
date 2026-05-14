@@ -254,13 +254,14 @@ npm run build && npm run typecheck && npm run lint && npm run test:run
 When creating a new release:
 
 1. **Update `CHANGELOG.md`** - Add new version section with Added/Changed/Fixed entries
-2. **Bump version in `package.json`** - Follow semver (patch for fixes, minor for features)
-3. **Commit changes** - `git commit -m "chore: bump version to X.Y.Z"`
-4. **Push the release branch** - `git push -u origin release/vX.Y.Z`
-5. **Open and merge a PR into `main`**
-6. **Create git tag** - `git tag vX.Y.Z`
-7. **Push tag** - `git push origin vX.Y.Z`
-8. **Create GitHub release** - `gh release create vX.Y.Z --title "vX.Y.Z - Title" --notes "..."`
+2. **Reconcile the full previous-tag delta** - Compare `git log --oneline <previous-tag>..HEAD` with the Release Drafter draft so `CHANGELOG.md` and release notes reflect everything shipped since the last release, not only the current `Unreleased` bullets
+3. **Bump version in `package.json`** - Follow semver (patch for fixes, minor for features)
+4. **Commit changes** - `git commit -m "chore: bump version to X.Y.Z"`
+5. **Push the release branch** - `git push -u origin release/vX.Y.Z`
+6. **Open and merge a PR into `main`**
+7. **Create git tag** - `git tag vX.Y.Z`
+8. **Push tag** - `git push origin vX.Y.Z`
+9. **Create GitHub release** - `gh release create vX.Y.Z --title "vX.Y.Z - Title" --notes "..."`
 
 Follow the repository workflow: prepare the release on a `release/vX.Y.Z` branch, open a PR into `main`, merge the PR, then tag and publish from the merged commit.
 

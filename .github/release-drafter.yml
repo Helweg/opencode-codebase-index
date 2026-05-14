@@ -67,6 +67,7 @@ template: |
 
   ## Release checks
 
+  - [ ] Draft notes reconciled against the full previous release tag diff (for example `git log --oneline <previous-tag>..HEAD`)
   - [ ] `CHANGELOG.md` updated
   - [ ] `package.json` version bumped
   - [ ] `npm run build && npm run typecheck && npm run lint && npm run test:run` passed
