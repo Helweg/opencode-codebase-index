@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-14
+
 ### Added
 - **Apex semantic parsing**: Added tree-sitter-based semantic chunking for Salesforce Apex source files (`.cls` and `.trigger`) via the [`tree-sitter-sfapex`](https://github.com/aheber/tree-sitter-sfapex) grammar. Recognizes class, interface, enum, method, constructor, and trigger declarations with leading JavaDoc-style block comments attached to their target chunks. Anonymous Apex (`.apex`), SOQL, and SOSL standalone files are out of scope.
 - **Apex call graph extraction**: Method invocations, constructor calls (`new MyClass(...)`), and instance/static method calls are extracted for the `call_graph` tool. Apex is case-insensitive at the language level, so callee names are normalized to lowercase during extraction (matching the existing PHP behavior). Apex has no imports — namespaces are referenced via fully qualified names — so no `Import` edges are produced.
@@ -265,7 +267,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
-[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.5.2...v0.6.0
