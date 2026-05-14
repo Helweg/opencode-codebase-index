@@ -383,7 +383,9 @@ impl Database {
     }
 
     fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Option<rusqlite::Connection>>> {
-        self.conn.lock().map_err(|e| Error::from_reason(e.to_string()))
+        self.conn
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     fn with_conn<T, F>(&self, f: F) -> Result<T>
@@ -406,6 +408,9 @@ impl Database {
 
     #[napi]
     pub fn close(&self) -> Result<()> {
+        // Best-effort, idempotent shutdown: once the connection is taken, all
+        // future calls fail fast with `Database is closed` and repeated close()
+        // calls are harmless.
         let mut conn = self.lock_conn()?;
         let old = conn.take();
         drop(old);
@@ -471,7 +476,8 @@ impl Database {
     #[napi]
     pub fn get_chunk(&self, chunk_id: String) -> Result<Option<ChunkData>> {
         self.with_conn(|conn| {
-            let result = db::get_chunk(conn, &chunk_id).map_err(|e| Error::from_reason(e.to_string()))?;
+            let result =
+                db::get_chunk(conn, &chunk_id).map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(result.map(|row| ChunkData {
                 chunk_id: row.chunk_id,
                 content_hash: row.content_hash,
@@ -588,8 +594,7 @@ impl Database {
             })
             .collect();
         self.with_conn_mut(|conn| {
-            db::upsert_embeddings_batch(conn, &batch)
-                .map_err(|e| Error::from_reason(e.to_string()))
+            db::upsert_embeddings_batch(conn, &batch).map_err(|e| Error::from_reason(e.to_string()))
         })
     }
 
@@ -624,7 +629,8 @@ impl Database {
     #[napi]
     pub fn clear_branch(&self, branch: String) -> Result<u32> {
         self.with_conn(|conn| {
-            let count = db::clear_branch(conn, &branch).map_err(|e| Error::from_reason(e.to_string()))?;
+            let count =
+                db::clear_branch(conn, &branch).map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(count as u32)
         })
     }
@@ -688,12 +694,16 @@ impl Database {
 
     #[napi]
     pub fn get_all_branches(&self) -> Result<Vec<String>> {
-        self.with_conn(|conn| db::get_all_branches(conn).map_err(|e| Error::from_reason(e.to_string())))
+        self.with_conn(|conn| {
+            db::get_all_branches(conn).map_err(|e| Error::from_reason(e.to_string()))
+        })
     }
 
     #[napi]
     pub fn get_metadata(&self, key: String) -> Result<Option<String>> {
-        self.with_conn(|conn| db::get_metadata(conn, &key).map_err(|e| Error::from_reason(e.to_string())))
+        self.with_conn(|conn| {
+            db::get_metadata(conn, &key).map_err(|e| Error::from_reason(e.to_string()))
+        })
     }
 
     #[napi]
@@ -705,7 +715,9 @@ impl Database {
 
     #[napi]
     pub fn delete_metadata(&self, key: String) -> Result<bool> {
-        self.with_conn(|conn| db::delete_metadata(conn, &key).map_err(|e| Error::from_reason(e.to_string())))
+        self.with_conn(|conn| {
+            db::delete_metadata(conn, &key).map_err(|e| Error::from_reason(e.to_string()))
+        })
     }
 
     #[napi]
@@ -727,7 +739,8 @@ impl Database {
     #[napi]
     pub fn gc_orphan_embeddings(&self) -> Result<u32> {
         self.with_conn(|conn| {
-            let count = db::gc_orphan_embeddings(conn).map_err(|e| Error::from_reason(e.to_string()))?;
+            let count =
+                db::gc_orphan_embeddings(conn).map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(count as u32)
         })
     }
@@ -735,7 +748,8 @@ impl Database {
     #[napi]
     pub fn gc_orphan_chunks(&self) -> Result<u32> {
         self.with_conn(|conn| {
-            let count = db::gc_orphan_chunks(conn).map_err(|e| Error::from_reason(e.to_string()))?;
+            let count =
+                db::gc_orphan_chunks(conn).map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(count as u32)
         })
     }
@@ -770,7 +784,9 @@ impl Database {
             end_col: symbol.end_col,
             language: symbol.language,
         };
-        self.with_conn(|conn| db::upsert_symbol(conn, &row).map_err(|e| Error::from_reason(e.to_string())))
+        self.with_conn(|conn| {
+            db::upsert_symbol(conn, &row).map_err(|e| Error::from_reason(e.to_string()))
+        })
     }
 
     #[napi]
@@ -906,7 +922,9 @@ impl Database {
             col: edge.col,
             is_resolved: edge.is_resolved,
         };
-        self.with_conn(|conn| db::upsert_call_edge(conn, &row).map_err(|e| Error::from_reason(e.to_string())))
+        self.with_conn(|conn| {
+            db::upsert_call_edge(conn, &row).map_err(|e| Error::from_reason(e.to_string()))
+        })
     }
 
     #[napi]
@@ -1092,7 +1110,8 @@ impl Database {
     #[napi]
     pub fn gc_orphan_symbols(&self) -> Result<u32> {
         self.with_conn(|conn| {
-            let count = db::gc_orphan_symbols(conn).map_err(|e| Error::from_reason(e.to_string()))?;
+            let count =
+                db::gc_orphan_symbols(conn).map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(count as u32)
         })
     }
@@ -1100,8 +1119,8 @@ impl Database {
     #[napi]
     pub fn gc_orphan_call_edges(&self) -> Result<u32> {
         self.with_conn(|conn| {
-            let count = db::gc_orphan_call_edges(conn)
-                .map_err(|e| Error::from_reason(e.to_string()))?;
+            let count =
+                db::gc_orphan_call_edges(conn).map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(count as u32)
         })
     }

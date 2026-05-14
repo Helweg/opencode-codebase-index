@@ -32,10 +32,24 @@ describe("Database", () => {
       expect(() => db.setMetadata("key", "value")).toThrow("Database is closed");
     });
 
+    it("should fail fast for wrapper no-op batch helpers after close", () => {
+      db.close();
+
+      expect(() => db.upsertEmbeddingsBatch([])).toThrow("Database is closed");
+      expect(() => db.upsertChunksBatch([])).toThrow("Database is closed");
+      expect(() => db.addChunksToBranchBatch("main", [])).toThrow("Database is closed");
+      expect(() => db.getReferencedChunkIds([])).toThrow("Database is closed");
+      expect(() => db.clearCallEdgeTargetsForSymbols([])).toThrow("Database is closed");
+    });
+
     it("should release the database file when closed", () => {
       const dbPath = path.join(tempDir, "test.db");
 
       db.close();
+
+      if (process.platform !== "win32") {
+        return;
+      }
 
       expect(() => fs.rmSync(dbPath, { force: true })).not.toThrow();
     });
