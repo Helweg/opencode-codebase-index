@@ -99,7 +99,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
      "mcpServers": {
        "codebase-index": {
          "command": "npx",
-         "args": ["opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
+         "args": ["opencode-codebase-index", "--mcp", "--project", "/path/to/your/project"]
        }
      }
    }
@@ -111,7 +111,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
      "mcpServers": {
        "codebase-index": {
          "command": "npx",
-         "args": ["opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
+         "args": ["opencode-codebase-index", "--mcp", "--project", "/path/to/your/project"]
        }
      }
    }
@@ -119,9 +119,9 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
 
 3. **CLI options**
    ```bash
-   npx opencode-codebase-index-mcp --project /path/to/repo    # specify project root
-   npx opencode-codebase-index-mcp --config /path/to/config   # custom config file
-   npx opencode-codebase-index-mcp                            # uses current directory
+   npx opencode-codebase-index --mcp --project /path/to/repo    # specify project root
+   npx opencode-codebase-index --mcp --config /path/to/config   # custom config file
+   npx opencode-codebase-index --mcp                            # uses current directory
    ```
 
 The MCP server exposes all 9 tools (`codebase_search`, `codebase_peek`, `find_similar`, `call_graph`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 4 prompts (`search`, `find`, `index`, `status`).
