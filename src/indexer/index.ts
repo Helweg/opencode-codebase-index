@@ -708,6 +708,52 @@ function isTestOrDocPath(filePath: string): boolean {
   return TEST_PATH_SEGMENTS.some((segment) => filePath.includes(segment));
 }
 
+function normalizeSupportPath(filePath: string): string {
+  return filePath.replace(/\\/g, "/").toLowerCase();
+}
+
+function isFixturePath(filePath: string): boolean {
+  return normalizeSupportPath(filePath).includes("fixtures/");
+}
+
+function isBenchmarkPath(filePath: string): boolean {
+  const normalized = normalizeSupportPath(filePath);
+  return normalized.includes("/benchmarks/") ||
+    normalized.startsWith("benchmarks/") ||
+    normalized.includes("/benchmark/") ||
+    normalized.startsWith("benchmark/") ||
+    /(?:^|\/)[^/]*\.bench\.[^/]+$/i.test(normalized);
+}
+
+function isActualTestPath(filePath: string): boolean {
+  const lowered = normalizeSupportPath(filePath);
+  if (isFixturePath(lowered) || isBenchmarkPath(lowered) || isDocumentationPath(lowered)) {
+    return false;
+  }
+
+  return lowered.includes("tests/") ||
+    lowered.includes("__tests__/") ||
+    lowered.includes("/test/") ||
+    /\.(?:test|spec)\.[a-z0-9]+$/i.test(lowered);
+}
+
+function matchesSupportingTestIntentPath(filePath: string, query: string): boolean {
+  if (isActualTestPath(filePath)) {
+    return true;
+  }
+
+  const loweredQuery = query.toLowerCase();
+  if (/\bfixtures?\b/.test(loweredQuery) && isFixturePath(filePath)) {
+    return true;
+  }
+
+  if (/\bbenchmarks?\b/.test(loweredQuery) && isBenchmarkPath(filePath)) {
+    return true;
+  }
+
+  return false;
+}
+
 function isLikelyImplementationPath(filePath: string): boolean {
   const lowered = filePath.toLowerCase();
   if (IMPLEMENTATION_EXCLUDE_PATH_SEGMENTS.some((segment) => lowered.includes(segment))) {
@@ -4370,7 +4416,7 @@ export class Indexer {
 
       const candidateById = new Map<string, RankedCandidate>();
       for (const candidate of baseFiltered) {
-        if (isTestOrDocPath(candidate.metadata.filePath)) {
+        if (matchesSupportingTestIntentPath(candidate.metadata.filePath, query)) {
           candidateById.set(candidate.id, candidate);
         }
       }
@@ -4403,7 +4449,7 @@ export class Indexer {
             hash: chunk.contentHash,
           };
 
-          if (!isTestOrDocPath(metadata.filePath)) {
+          if (!matchesSupportingTestIntentPath(metadata.filePath, query)) {
             continue;
           }
 
@@ -4418,7 +4464,7 @@ export class Indexer {
 
       return Array.from(candidateById.values())
         .filter((candidate) => matchesSearchFilters(candidate, options, this.config.search.minScore))
-        .filter((candidate) => isTestOrDocPath(candidate.metadata.filePath))
+        .filter((candidate) => matchesSupportingTestIntentPath(candidate.metadata.filePath, query))
         .map((candidate) => ({
           candidate,
           identifierMatchScore: identifierHints.length > 0
