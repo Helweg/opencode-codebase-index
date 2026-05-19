@@ -629,6 +629,61 @@ describe("retrieval ranking", () => {
     globalThis.fetch = fetchSpy;
   });
 
+  it("skips external reranker for lowercase explicit implementation lookups with primary hints", async () => {
+    const config = parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-embed",
+        dimensions: 8,
+      },
+      reranker: {
+        enabled: true,
+        provider: "custom",
+        model: "mock-reranker",
+        baseUrl: "https://rerank.example/v1",
+        topN: 3,
+      },
+    });
+    const indexer = new Indexer("/repo", config);
+
+    const fetchSpy = globalThis.fetch;
+    let rerankCalled = false;
+    globalThis.fetch = (async (input) => {
+      if (String(input).includes("/rerank")) {
+        rerankCalled = true;
+        return new Response(JSON.stringify({
+          results: [
+            { index: 2, relevance_score: 0.99 },
+            { index: 0, relevance_score: 0.72 },
+            { index: 1, relevance_score: 0.4 },
+          ],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [{ embedding: Array.from({ length: 8 }, () => 0.1) }], usage: { total_tokens: 1 } }), { status: 200 });
+    }) as typeof fetch;
+
+    const candidates: Candidate[] = [
+      { id: "docs", score: 0.92, metadata: meta({ filePath: "/repo/README.md", name: "validate docs", chunkType: "other", startLine: 1, endLine: 3 }) },
+      { id: "tests", score: 0.91, metadata: meta({ filePath: "/repo/tests/validate.test.ts", name: "validate", chunkType: "function", startLine: 1, endLine: 3 }) },
+      { id: "impl", score: 0.85, metadata: meta({ filePath: "/repo/src/validation.ts", name: "validate", chunkType: "function", startLine: 1, endLine: 3 }) },
+    ];
+
+    const reranked = await (indexer as unknown as {
+      rerankCandidatesWithApi(
+        query: string,
+        items: Candidate[],
+        options?: { definitionIntent?: boolean; hasIdentifierHints?: boolean; hasExplicitLookupHint?: boolean }
+      ): Promise<Candidate[]>;
+    }).rerankCandidatesWithApi("where is validate implementation", candidates, {
+      hasExplicitLookupHint: true,
+    });
+
+    expect(rerankCalled).toBe(false);
+    expect(reranked.map((candidate) => candidate.id)).toEqual(["docs", "tests", "impl"]);
+    globalThis.fetch = fetchSpy;
+  });
+
   it("allows external reranker for documentation intent even when identifier hints are present", async () => {
     const config = parseConfig({
       embeddingProvider: "custom",

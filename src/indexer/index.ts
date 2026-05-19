@@ -2616,6 +2616,7 @@ export class Indexer {
     options?: {
       definitionIntent?: boolean;
       hasIdentifierHints?: boolean;
+      hasExplicitLookupHint?: boolean;
     }
   ): Promise<RankedCandidate[]> {
     const reranker = this.config.reranker;
@@ -2631,7 +2632,11 @@ export class Indexer {
       return candidates;
     }
 
-    if (options?.hasIdentifierHints === true && preferSourcePaths && !docIntent) {
+    if (
+      preferSourcePaths &&
+      !docIntent &&
+      (options?.hasIdentifierHints === true || options?.hasExplicitLookupHint === true)
+    ) {
       return candidates;
     }
 
@@ -4277,9 +4282,14 @@ export class Indexer {
       hybridWeight,
       prioritizeSourcePaths: sourceIntent,
     });
+    const primaryIdentifierHint = extractPrimaryIdentifierQueryHint(query);
+    const hasSpecificPrimaryLookupHint = primaryIdentifierHint !== null && !GENERIC_LOOKUP_TERMS.has(primaryIdentifierHint);
+    const hasExplicitLookupPhrase = hasPatternMatch(query.toLowerCase(), STRONG_DEFINITION_PATTERNS) ||
+      hasPatternMatch(query.toLowerCase(), IMPLEMENTATION_LOOKUP_PATTERNS);
     const rerankedCombined = await this.rerankCandidatesWithApi(query, combined, {
       definitionIntent: options?.definitionIntent === true,
       hasIdentifierHints: identifierHints.length > 0,
+      hasExplicitLookupHint: hasSpecificPrimaryLookupHint && hasExplicitLookupPhrase,
     });
     const fusionMs = performance.now() - fusionStartTime;
 
@@ -4318,10 +4328,6 @@ export class Indexer {
       sourceIntent
     );
 
-    const primaryIdentifierHint = extractPrimaryIdentifierQueryHint(query);
-    const hasSpecificPrimaryLookupHint = primaryIdentifierHint !== null && !GENERIC_LOOKUP_TERMS.has(primaryIdentifierHint);
-    const hasExplicitLookupPhrase = hasPatternMatch(query.toLowerCase(), STRONG_DEFINITION_PATTERNS) ||
-      hasPatternMatch(query.toLowerCase(), IMPLEMENTATION_LOOKUP_PATTERNS);
     const prePrimaryLane = mergeTieredResults(deterministicIdentifierLane, identifierLane, maxResults * 4);
     const primaryLane = hasSpecificPrimaryLookupHint
       ? mergeTieredResults(symbolLane, prePrimaryLane, maxResults * 4)
