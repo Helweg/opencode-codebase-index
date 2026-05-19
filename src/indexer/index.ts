@@ -547,6 +547,17 @@ const SOURCE_INTENT_HINTS = new Set([
   "where",
 ]);
 
+const GENERIC_LOOKUP_TERMS = new Set([
+  ...SOURCE_INTENT_HINTS,
+  "code",
+  "source",
+  "actual",
+  "defined",
+  "definition",
+  "located",
+  "path",
+]);
+
 const DOC_TEST_INTENT_HINTS = new Set([
   "test",
   "tests",
@@ -565,6 +576,37 @@ const DOC_INTENT_HINTS = new Set([
   "guide",
   "usage",
 ]);
+
+type QueryIntentKind = "definition" | "implementation" | "doc_test" | "exploratory" | "neutral";
+
+interface QueryIntentProfile {
+  kind: QueryIntentKind;
+  preferSourcePaths: boolean;
+  definitionFirst: boolean;
+  hasIdentifierHints: boolean;
+  hasCodeHints: boolean;
+  docIntent: "docs" | "test" | "mixed" | "none";
+}
+
+const STRONG_DEFINITION_PATTERNS = [
+  /\bwhere\s+is\b/,
+  /\bwhere\s+does\b/,
+  /\bdefinition\s+of\b/,
+  /\bdefined\s+in\b/,
+  /\bimplementation\s+of\b/,
+  /\bsource\s+(?:for|of)\b/,
+  /\bpath\s+to\b/,
+  /\blocated?\s+in\b/,
+];
+
+const IMPLEMENTATION_LOOKUP_PATTERNS = [
+  /\bimplement(?:ation|ed|s)?\b/,
+  /\bsource\s+code\b/,
+  /\bactual\s+code\b/,
+  /\bfunction\b/,
+  /\bmethod\b/,
+  /\bclass\b/,
+];
 
 function setBoundedCache(
   cache: Map<string, Set<string>>,
@@ -735,8 +777,18 @@ function classifyQueryIntent(tokens: string[]): "source" | "doc_test" | "neutral
   return "neutral";
 }
 
-function classifyQueryIntentRaw(query: string): "source" | "doc_test" | "neutral" {
+function hasPatternMatch(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function classifyQueryIntentProfile(query: string, forceDefinitionIntent: boolean = false): QueryIntentProfile {
   const lowerQuery = query.toLowerCase();
+  const identifierHints = extractIdentifierHints(query);
+  const codeTermHints = extractCodeTermHints(query);
+  const filePathHint = extractFilePathHint(query);
+  const queryTokens = Array.from(tokenizeTextForRanking(query));
+  const docIntent = classifyDocIntent(queryTokens);
+  const tokenIntent = classifyQueryIntent(queryTokens);
   const docTestRawHits = Array.from(DOC_TEST_INTENT_HINTS).filter((hint) =>
     new RegExp(`\\b${hint}\\b`).test(lowerQuery)
   ).length;
@@ -752,23 +804,65 @@ function classifyQueryIntentRaw(query: string): "source" | "doc_test" | "neutral
     "pipeline",
     "indexer",
   ].filter((hint) => new RegExp(`\\b${hint}\\b`).test(lowerQuery)).length;
+  const shortMixedTestLookupBonus = hasPatternMatch(lowerQuery, STRONG_DEFINITION_PATTERNS) &&
+    /\btests?\b/.test(lowerQuery) &&
+    !/\b(?:benchmark|benchmarks|fixture|fixtures|readme|docs|documentation)\b/.test(lowerQuery)
+      ? 1
+      : 0;
+  const hasStrongDefinitionPhrase = hasPatternMatch(lowerQuery, STRONG_DEFINITION_PATTERNS);
+  const hasImplementationLookupPhrase = hasPatternMatch(lowerQuery, IMPLEMENTATION_LOOKUP_PATTERNS);
+  const hasExactLookupTarget = identifierHints.length > 0 || filePathHint !== null;
+  const hasStrongLookupTarget = hasExactLookupTarget;
+  const hasCodeHints = identifierHints.length > 0 || codeTermHints.length > 0;
 
-  if (docTestRawHits > sourceRawHits) {
+  const docTestDominant = !forceDefinitionIntent && docIntent !== "none" && docTestRawHits > (sourceRawHits + shortMixedTestLookupBonus);
+  const preferSourcePaths = forceDefinitionIntent || (
+    !docTestDominant && (
+      ((docIntent === "none" || docIntent === "test" || docIntent === "mixed") && hasImplementationLookupPhrase && hasCodeHints) ||
+      ((docIntent === "none" || docIntent === "test" || docIntent === "mixed") && hasStrongDefinitionPhrase && hasStrongLookupTarget) ||
+      ((docIntent === "none" || docIntent === "test" || docIntent === "mixed") && tokenIntent === "source" && hasCodeHints)
+    )
+  );
+  const definitionFirst = forceDefinitionIntent || (
+    preferSourcePaths &&
+    !docTestDominant &&
+    hasStrongLookupTarget &&
+    ((docIntent === "none" && hasStrongDefinitionPhrase) ||
+      (docIntent === "none" && hasImplementationLookupPhrase))
+  );
+
+  let kind: QueryIntentKind = "neutral";
+  if (docTestDominant || tokenIntent === "doc_test") {
+    kind = "doc_test";
+  } else if (definitionFirst) {
+    kind = "definition";
+  } else if (preferSourcePaths) {
+    kind = "implementation";
+  } else if (hasCodeHints) {
+    kind = "exploratory";
+  }
+
+  return {
+    kind,
+    preferSourcePaths,
+    definitionFirst,
+    hasIdentifierHints: identifierHints.length > 0,
+    hasCodeHints,
+    docIntent,
+  };
+}
+
+function classifyQueryIntentRaw(query: string): "source" | "doc_test" | "neutral" {
+  const intent = classifyQueryIntentProfile(query);
+  if (intent.kind === "doc_test") {
     return "doc_test";
   }
 
-  if (sourceRawHits > docTestRawHits && sourceRawHits > 0) {
+  if (intent.preferSourcePaths) {
     return "source";
   }
 
-  const hasWhereIsPattern = /\bwhere\s+is\b/.test(lowerQuery);
-  const hasIdentifierHints = extractIdentifierHints(query).length > 0;
-  if (hasWhereIsPattern && hasIdentifierHints && docTestRawHits === 0) {
-    return "source";
-  }
-
-  const queryTokens = Array.from(tokenizeTextForRanking(query));
-  return classifyQueryIntent(queryTokens);
+  return "neutral";
 }
 
 function classifyDocIntent(tokens: string[]): "docs" | "test" | "mixed" | "none" {
@@ -1081,10 +1175,19 @@ export function rerankResults(
     return candidates;
   }
 
+  const intentProfile = classifyQueryIntentProfile(query);
   const queryTokenList = Array.from(queryTokens);
-  const docIntent = classifyDocIntent(queryTokenList);
-  const preferSourcePaths = options?.prioritizeSourcePaths ?? classifyQueryIntentRaw(query) === "source";
+  const docIntent = intentProfile.docIntent;
+  const preferSourcePaths = options?.prioritizeSourcePaths ?? intentProfile.preferSourcePaths;
+  const definitionFirst = preferSourcePaths && intentProfile.definitionFirst;
   const identifierHints = extractIdentifierHints(query);
+  const primaryHint = extractPrimaryIdentifierQueryHint(query);
+  const primaryVariants = primaryHint ? normalizeIdentifierVariants(primaryHint) : [];
+  const hasRealImplementationCandidate = candidates.some((candidate) =>
+    isLikelyImplementationPath(candidate.metadata.filePath) &&
+    isImplementationChunkType(candidate.metadata.chunkType) &&
+    !isTestOrDocPath(candidate.metadata.filePath)
+  );
 
   const head = candidates.slice(0, topN).map((candidate, idx) => {
     const pathTokens = splitPathTokens(candidate.metadata.filePath);
@@ -1119,12 +1222,57 @@ export function rerankResults(
     const lowerPath = candidate.metadata.filePath.toLowerCase();
     const lowerName = (candidate.metadata.name ?? "").toLowerCase();
     const hasIdentifierMatch = identifierHints.some((id) => lowerPath.includes(id) || lowerName.includes(id));
+    const identifierMatchScore = identifierHints.length > 0
+      ? scoreIdentifierMatch(candidate.metadata.name, candidate.metadata.filePath, identifierHints)
+      : 0;
+    const compactName = lowerName.replace(/[^a-z0-9]/g, "");
+    const exactPrimaryNameMatch = primaryVariants.some((variant) =>
+      lowerName === variant || compactName === variant.replace(/[^a-z0-9]/g, "")
+    );
+    const isDocumentationCandidate = isDocumentationPath(candidate.metadata.filePath);
+    const isFixtureOrExamplePath = lowerPath.includes("fixture") || lowerPath.includes("example");
+    const isBenchmarkPath = lowerPath.includes("benchmark");
+    const implementationChunk = isImplementationChunkType(candidate.metadata.chunkType);
+    const likelyImplementationPath = isLikelyImplementationPath(candidate.metadata.filePath);
+    const exactNameTokenMatch = queryTokenList.some((token) => lowerName === token);
 
-    const implementationPathBoost = preferSourcePaths && isLikelyImplementationPath(candidate.metadata.filePath) ? 0.08 : 0;
+    const implementationPathBoost = preferSourcePaths && likelyImplementationPath
+      ? (definitionFirst ? 0.14 : 0.08)
+      : likelyImplementationPath
+        ? 0.02
+        : 0;
+    const implementationChunkBoost = preferSourcePaths && implementationChunk
+      ? (definitionFirst ? 0.12 : 0.06)
+      : implementationChunk
+        ? 0.04
+        : 0;
     const isReadmePath = candidate.metadata.filePath.toLowerCase().includes("readme");
-    const testDocPenalty = preferSourcePaths && likelyTestOrDoc ? 0.12 : 0;
+    const sourcePenalty = preferSourcePaths && hasRealImplementationCandidate
+      ? isBenchmarkPath
+        ? 0.28
+        : isFixtureOrExamplePath
+          ? 0.24
+          : isDocumentationCandidate
+            ? (docIntent === "test" || docIntent === "mixed" ? 0.08 : 0.2)
+            : likelyTestOrDoc
+              ? (docIntent === "test" || docIntent === "mixed" ? 0.04 : 0.18)
+              : 0
+      : 0;
     const readmeDocBoost = !preferSourcePaths && isReadmePath ? 0.08 : 0;
-    const identifierBoost = hasIdentifierMatch ? 0.12 : 0;
+    const exactNameBoost = exactNameTokenMatch
+      ? implementationChunk
+        ? 0.12
+        : 0.03
+      : 0;
+    const identifierBoost = exactPrimaryNameMatch
+      ? (definitionFirst ? 0.3 : 0.18)
+      : identifierMatchScore >= 1
+        ? (definitionFirst ? 0.26 : 0.16)
+        : identifierMatchScore >= 0.8
+          ? (definitionFirst ? 0.18 : 0.12)
+          : hasIdentifierMatch
+            ? 0.08
+            : 0;
     const tokenCoverage = queryTokenList.length > 0
       ? (exactOrPrefixNameHits + pathOverlap + chunkTypeHits) / queryTokenList.length
       : 0;
@@ -1135,10 +1283,12 @@ export function rerankResults(
       pathOverlap * 0.03 +
       chunkTypeHits * 0.02 +
       coverageBoost +
+      exactNameBoost +
       identifierBoost +
       implementationPathBoost -
-      testDocPenalty +
+      sourcePenalty +
       readmeDocBoost +
+      implementationChunkBoost +
       chunkTypeBoost(candidate.metadata.chunkType);
 
     return {
@@ -1146,9 +1296,14 @@ export function rerankResults(
       boostedScore: candidate.score + deterministicBoost,
       originalIndex: idx,
       hasIdentifierMatch,
-      implementationChunk: isImplementationChunkType(candidate.metadata.chunkType),
-      isLikelyImplementationPath: isLikelyImplementationPath(candidate.metadata.filePath),
+      identifierMatchScore,
+      exactPrimaryNameMatch,
+      implementationChunk,
+      isLikelyImplementationPath: likelyImplementationPath,
       isTestOrDocPath: likelyTestOrDoc,
+      isDocumentationCandidate,
+      isBenchmarkPath,
+      isFixtureOrExamplePath,
       isReadmePath,
     };
   });
@@ -1162,6 +1317,12 @@ export function rerankResults(
 
   if (preferSourcePaths) {
     head.sort((a, b) => {
+      const aExactPrimary = a.exactPrimaryNameMatch ? 1 : 0;
+      const bExactPrimary = b.exactPrimaryNameMatch ? 1 : 0;
+      if (aExactPrimary !== bExactPrimary) return bExactPrimary - aExactPrimary;
+
+      if (b.identifierMatchScore !== a.identifierMatchScore) return b.identifierMatchScore - a.identifierMatchScore;
+
       const aId = a.hasIdentifierMatch ? 1 : 0;
       const bId = b.hasIdentifierMatch ? 1 : 0;
       if (aId !== bId) return bId - aId;
@@ -1174,9 +1335,23 @@ export function rerankResults(
       const bImplementationPath = b.isLikelyImplementationPath ? 1 : 0;
       if (aImplementationPath !== bImplementationPath) return bImplementationPath - aImplementationPath;
 
-      const aTestDoc = a.isTestOrDocPath ? 1 : 0;
-      const bTestDoc = b.isTestOrDocPath ? 1 : 0;
-      if (aTestDoc !== bTestDoc) return aTestDoc - bTestDoc;
+      if (docIntent !== "test" && docIntent !== "mixed") {
+        const aTestDoc = a.isTestOrDocPath ? 1 : 0;
+        const bTestDoc = b.isTestOrDocPath ? 1 : 0;
+        if (aTestDoc !== bTestDoc) return aTestDoc - bTestDoc;
+      }
+
+      const aBenchmark = a.isBenchmarkPath ? 1 : 0;
+      const bBenchmark = b.isBenchmarkPath ? 1 : 0;
+      if (aBenchmark !== bBenchmark) return aBenchmark - bBenchmark;
+
+      const aFixture = a.isFixtureOrExamplePath ? 1 : 0;
+      const bFixture = b.isFixtureOrExamplePath ? 1 : 0;
+      if (aFixture !== bFixture) return aFixture - bFixture;
+
+      const aDocs = a.isDocumentationCandidate ? 1 : 0;
+      const bDocs = b.isDocumentationCandidate ? 1 : 0;
+      if (aDocs !== bDocs) return aDocs - bDocs;
 
       return 0;
     });
@@ -1185,6 +1360,22 @@ export function rerankResults(
       const aReadme = a.isReadmePath ? 1 : 0;
       const bReadme = b.isReadmePath ? 1 : 0;
       if (aReadme !== bReadme) return bReadme - aReadme;
+      return 0;
+    });
+  } else if (docIntent === "test" || docIntent === "mixed") {
+    head.sort((a, b) => {
+      const aDocTest = a.isTestOrDocPath ? 1 : 0;
+      const bDocTest = b.isTestOrDocPath ? 1 : 0;
+      if (aDocTest !== bDocTest) return bDocTest - aDocTest;
+
+      const aDocs = a.isDocumentationCandidate ? 1 : 0;
+      const bDocs = b.isDocumentationCandidate ? 1 : 0;
+      if (aDocs !== bDocs) return bDocs - aDocs;
+
+      const aReadme = a.isReadmePath ? 1 : 0;
+      const bReadme = b.isReadmePath ? 1 : 0;
+      if (aReadme !== bReadme) return bReadme - aReadme;
+
       return 0;
     });
   }
@@ -1285,7 +1476,8 @@ export function rankHybridResults(
   keywordResults: RankedCandidate[],
   options: HybridRankOptions & { prioritizeSourcePaths?: boolean }
 ): RankedCandidate[] {
-  const prioritizeSourcePaths = options.prioritizeSourcePaths ?? classifyQueryIntentRaw(query) === "source";
+  const intentProfile = classifyQueryIntentProfile(query);
+  const prioritizeSourcePaths = options.prioritizeSourcePaths ?? intentProfile.preferSourcePaths;
   const cacheKey = `${query}\u0001${options.fusionStrategy}|${options.rrfK}|${options.hybridWeight}|${options.rerankTopN}|${options.limit}|${prioritizeSourcePaths ? 1 : 0}`;
 
   let byKeyword = rankHybridResultsCache.get(semanticResults);
@@ -1305,12 +1497,16 @@ export function rankHybridResults(
     }
   }
 
-  const overfetchLimit = Math.max(options.limit * 4, options.limit);
+  const overfetchLimit = prioritizeSourcePaths
+    ? Math.max(options.limit * 6, options.limit)
+    : Math.max(options.limit * 4, options.limit);
   const fused = options.fusionStrategy === "rrf"
     ? fuseResultsRrf(semanticResults, keywordResults, options.rrfK, overfetchLimit)
     : fuseResultsWeighted(semanticResults, keywordResults, options.hybridWeight, overfetchLimit);
 
-  const rerankPoolLimit = Math.max(overfetchLimit, options.rerankTopN * 3, options.limit * 6);
+  const rerankPoolLimit = prioritizeSourcePaths
+    ? Math.max(overfetchLimit, options.rerankTopN * 4, options.limit * 8)
+    : Math.max(overfetchLimit, options.rerankTopN * 3, options.limit * 6);
   const rerankPool = fused.slice(0, rerankPoolLimit);
   const ranked = rerankResults(query, rerankPool, options.rerankTopN, {
     prioritizeSourcePaths,
@@ -1533,8 +1729,16 @@ function buildSymbolDefinitionLane(
     ])
     .filter((hint, idx, arr) => hint.length >= 3 && arr.indexOf(hint) === idx)
     .slice(0, 6);
+  const lookupHints = primaryHint && !GENERIC_LOOKUP_TERMS.has(primaryHint)
+    ? Array.from(new Set([
+      primaryHint,
+      primaryHint.replace(/_/g, ""),
+      primaryHint.replace(/_/g, "-"),
+      ...normalizedHints,
+    ])).slice(0, 6)
+    : normalizedHints;
 
-  for (const identifier of normalizedHints) {
+  for (const identifier of lookupHints) {
     const symbols = [
       ...database.getSymbolsByName(identifier),
       ...database.getSymbolsByNameCi(identifier),
@@ -1603,7 +1807,7 @@ function buildSymbolDefinitionLane(
       const nameLower = (candidate.metadata.name ?? "").toLowerCase();
       const pathLower = candidate.metadata.filePath.toLowerCase();
 
-      const exactHintMatch = normalizedHints.some((hint) => nameLower === hint || nameLower.replace(/_/g, "") === hint.replace(/_/g, ""));
+      const exactHintMatch = lookupHints.some((hint) => nameLower === hint || nameLower.replace(/_/g, "") === hint.replace(/_/g, ""));
       const tokenizedName = tokenizeTextForRanking(nameLower);
       const tokenHits = codeTermHints.filter((term) => tokenizedName.has(term) || pathLower.includes(term)).length;
 
@@ -3993,7 +4197,9 @@ export class Indexer {
     const rrfK = this.config.search.rrfK;
     const rerankTopN = this.config.search.rerankTopN;
     const filterByBranch = options?.filterByBranch ?? true;
-    const sourceIntent = options?.definitionIntent === true || classifyQueryIntentRaw(query) === "source";
+    const intentProfile = classifyQueryIntentProfile(query, options?.definitionIntent === true);
+    const sourceIntent = intentProfile.preferSourcePaths;
+    const definitionFirst = intentProfile.definitionFirst;
     const identifierHints = extractIdentifierHints(query);
 
     this.logger.search("debug", "Starting search", {
@@ -4112,10 +4318,27 @@ export class Indexer {
       sourceIntent
     );
 
+    const primaryIdentifierHint = extractPrimaryIdentifierQueryHint(query);
+    const hasSpecificPrimaryLookupHint = primaryIdentifierHint !== null && !GENERIC_LOOKUP_TERMS.has(primaryIdentifierHint);
+    const hasExplicitLookupPhrase = hasPatternMatch(query.toLowerCase(), STRONG_DEFINITION_PATTERNS) ||
+      hasPatternMatch(query.toLowerCase(), IMPLEMENTATION_LOOKUP_PATTERNS);
     const prePrimaryLane = mergeTieredResults(deterministicIdentifierLane, identifierLane, maxResults * 4);
-    const primaryLane = mergeTieredResults(prePrimaryLane, symbolLane, maxResults * 4);
-    const tiered = mergeTieredResults(primaryLane, rescued, maxResults * 4);
-    const hasCodeHints = extractCodeTermHints(query).length > 0 || identifierHints.length > 0;
+    const primaryLane = hasSpecificPrimaryLookupHint
+      ? mergeTieredResults(symbolLane, prePrimaryLane, maxResults * 4)
+      : mergeTieredResults(prePrimaryLane, symbolLane, maxResults * 4);
+    const usePrimaryLane = definitionFirst || (
+      sourceIntent &&
+      intentProfile.docIntent !== "docs" &&
+      (identifierHints.length > 0 || (
+        hasSpecificPrimaryLookupHint &&
+        hasExplicitLookupPhrase
+      ))
+    );
+    const tiered = usePrimaryLane
+      ? mergeTieredResults(primaryLane, rescued, maxResults * 4)
+      : rescued;
+    const hasCodeHints = intentProfile.hasCodeHints;
+    const testIntentSupport = sourceIntent && !definitionFirst && (intentProfile.docIntent === "test" || intentProfile.docIntent === "mixed");
 
     const baseFiltered = tiered.filter((r) => matchesSearchFilters(r, options, this.config.search.minScore));
 
@@ -4123,10 +4346,117 @@ export class Indexer {
       isLikelyImplementationPath(r.metadata.filePath) &&
       isImplementationChunkType(r.metadata.chunkType)
     );
+    const explicitPrimarySourceMatches = sourceIntent && intentProfile.docIntent === "none" && hasSpecificPrimaryLookupHint && hasExplicitLookupPhrase
+      ? baseFiltered.filter((candidate) =>
+        isLikelyImplementationPath(candidate.metadata.filePath) &&
+        scoreIdentifierMatch(
+          candidate.metadata.name,
+          candidate.metadata.filePath,
+          [primaryIdentifierHint]
+        ) >= 0.6
+      )
+      : [];
 
-    const filtered = (sourceIntent && hasCodeHints && implementationOnly.length > 0
+    const supportingTestResults = (() => {
+      if (!testIntentSupport) {
+        return [];
+      }
+
+      const candidateById = new Map<string, RankedCandidate>();
+      for (const candidate of baseFiltered) {
+        if (isTestOrDocPath(candidate.metadata.filePath)) {
+          candidateById.set(candidate.id, candidate);
+        }
+      }
+
+      for (const candidate of union) {
+        if (candidateById.has(candidate.id)) {
+          continue;
+        }
+        candidateById.set(candidate.id, candidate);
+      }
+
+      for (const identifier of identifierHints) {
+        const chunks = [
+          ...database.getChunksByName(identifier),
+          ...database.getChunksByNameCi(identifier),
+        ];
+
+        for (const chunk of chunks) {
+          if (branchChunkIds && !branchChunkIds.has(chunk.chunkId)) {
+            continue;
+          }
+
+          const metadata: ChunkMetadata = {
+            filePath: chunk.filePath,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            chunkType: (chunk.nodeType ?? "other") as ChunkMetadata["chunkType"],
+            name: chunk.name ?? undefined,
+            language: chunk.language,
+            hash: chunk.contentHash,
+          };
+
+          if (!isTestOrDocPath(metadata.filePath)) {
+            continue;
+          }
+
+          const existing = candidateById.get(chunk.chunkId);
+          candidateById.set(chunk.chunkId, {
+            id: chunk.chunkId,
+            score: existing?.score ?? 0.65,
+            metadata: existing?.metadata ?? metadata,
+          });
+        }
+      }
+
+      return Array.from(candidateById.values())
+        .filter((candidate) => matchesSearchFilters(candidate, options, this.config.search.minScore))
+        .filter((candidate) => isTestOrDocPath(candidate.metadata.filePath))
+        .map((candidate) => ({
+          candidate,
+          identifierMatchScore: identifierHints.length > 0
+            ? scoreIdentifierMatch(candidate.metadata.name, candidate.metadata.filePath, identifierHints)
+            : 0,
+          tokenOverlap: (() => {
+            const nameTokens = splitNameTokens(candidate.metadata.name ?? "");
+            const pathTokens = splitPathTokens(candidate.metadata.filePath);
+            const queryTokens = tokenizeTextForRanking(query);
+            let overlap = 0;
+            for (const token of queryTokens) {
+              if (nameTokens.has(token) || pathTokens.has(token)) {
+                overlap += 1;
+              }
+            }
+            return overlap;
+          })(),
+        }))
+        .filter((entry) => entry.identifierMatchScore > 0 || entry.tokenOverlap > 0)
+        .sort((a, b) => {
+          if (b.identifierMatchScore !== a.identifierMatchScore) return b.identifierMatchScore - a.identifierMatchScore;
+          if (b.tokenOverlap !== a.tokenOverlap) return b.tokenOverlap - a.tokenOverlap;
+          if (b.candidate.score !== a.candidate.score) return b.candidate.score - a.candidate.score;
+          return a.candidate.id.localeCompare(b.candidate.id);
+        })
+        .map((entry) => ({
+          id: entry.candidate.id,
+          score: Math.min(1, Math.max(entry.candidate.score, 0.7 + entry.identifierMatchScore * 0.15 + entry.tokenOverlap * 0.03)),
+          metadata: entry.candidate.metadata,
+        }));
+    })();
+
+    const filteredBase = definitionFirst && sourceIntent && hasCodeHints && implementationOnly.length > 0
       ? implementationOnly
-      : baseFiltered
+      : explicitPrimarySourceMatches.length > 0
+        ? mergeTieredResults(explicitPrimarySourceMatches, baseFiltered, maxResults * 4)
+        : baseFiltered;
+    const filtered = (testIntentSupport && implementationOnly.length > 0 && supportingTestResults.length > 0
+      ? mergeTieredResults(
+        implementationOnly.slice(0, 1),
+        mergeTieredResults(supportingTestResults, baseFiltered, maxResults * 4),
+        maxResults * 4
+      )
+      : filteredBase
     ).slice(0, maxResults);
 
     const identifierFallback = (!options?.definitionIntent && filtered.length === 0 && identifierHints.length > 0)
