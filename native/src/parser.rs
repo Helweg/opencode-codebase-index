@@ -47,6 +47,7 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         Language::Zig => tree_sitter_zig::LANGUAGE.into(),
+        Language::Gdscript => tree_sitter_gdscript::LANGUAGE.into(),
         Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(chunk_by_lines(content, &language)),
     };
@@ -258,6 +259,7 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::Yaml => matches!(node_type, "comment"),
         Language::Php => matches!(node_type, "comment"),
         Language::Zig => matches!(node_type, "comment"),
+        Language::Gdscript => matches!(node_type, "comment"),
         Language::Apex => matches!(node_type, "line_comment" | "block_comment"),
         _ => false,
     }
@@ -460,6 +462,21 @@ lazy_static! {
         set.insert("error_set_declaration");
         set
     };
+    // GDScript grammar (PrestonKnopp/tree-sitter-gdscript). Declaration-like
+    // nodes only — variable_statement is intentionally excluded because
+    // module-level `var foo = ...` lines would generate one chunk per
+    // variable and drown out real declarations.
+    static ref GDSCRIPT_SEMANTIC_NODES: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("function_definition");
+        set.insert("constructor_definition");
+        set.insert("class_definition");
+        set.insert("enum_definition");
+        set.insert("signal_statement");
+        set.insert("const_statement");
+        set.insert("class_name_statement");
+        set
+    };
     // Apex grammar (tree-sitter-sfapex) is Java-derived: the declaration node
     // kinds match Java exactly, plus `trigger_declaration` which is unique to
     // Apex (Salesforce database triggers). Verified against tree-sitter-sfapex
@@ -502,6 +519,7 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
         Language::Yaml => YAML_SEMANTIC_NODES.contains(node_type),
         Language::Php => PHP_SEMANTIC_NODES.contains(node_type),
         Language::Zig => ZIG_SEMANTIC_NODES.contains(node_type),
+        Language::Gdscript => GDSCRIPT_SEMANTIC_NODES.contains(node_type),
         Language::Apex => APEX_SEMANTIC_NODES.contains(node_type),
         _ => false,
     };
@@ -1194,6 +1212,62 @@ trigger AccountTrigger on Account (before insert, before update, after delete) {
 
         let has_trigger = chunks.iter().any(|c| c.chunk_type == "trigger_declaration");
         assert!(has_trigger, "Should find trigger_declaration");
+    }
+
+    #[test]
+    fn test_parse_gdscript() {
+        let content = r#"
+extends Node
+
+class_name Player
+
+signal health_changed(new_health)
+
+const MAX_HEALTH := 100
+
+enum State { IDLE, RUNNING, JUMPING }
+
+# Initialises the player on scene-enter.
+func _ready() -> void:
+    print("ready")
+
+func take_damage(amount: int) -> void:
+    health -= amount
+    health_changed.emit(health)
+
+class InnerThing:
+    func do_thing() -> void:
+        pass
+"#;
+
+        let chunks = parse_file_internal("player.gd", content).unwrap();
+        assert!(!chunks.is_empty(), "Should have chunks for GDScript");
+
+        let chunk_types: Vec<&str> = chunks.iter().map(|c| c.chunk_type.as_str()).collect();
+        assert!(
+            chunk_types.contains(&"function_definition"),
+            "Should find function_definition. Got: {:?}",
+            chunk_types
+        );
+        assert!(
+            chunk_types.contains(&"class_definition"),
+            "Should find class_definition (InnerThing). Got: {:?}",
+            chunk_types
+        );
+
+        // Leading `#` comment should attach to _ready.
+        let ready = chunks
+            .iter()
+            .find(|c| c.chunk_type == "function_definition" && c.content.contains("_ready"));
+        assert!(ready.is_some(), "Should find _ready chunk");
+        assert!(
+            ready.unwrap().content.contains("Initialises the player"),
+            "GDScript leading # comment should attach to its function: {}",
+            ready.unwrap().content
+        );
+
+        // Language label is consistent.
+        assert!(chunks.iter().all(|c| c.language == "gdscript"));
     }
 
     #[test]

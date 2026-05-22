@@ -36,7 +36,7 @@ import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
 
-export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig"]);
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript"]);
 // Languages whose identifiers are case-insensitive at the language level.
 // The Rust call_extractor lowercases callee names for these languages (except
 // constructors and imports), so same-file resolution in this file must use
@@ -69,6 +69,14 @@ export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "test_declaration",
   "struct_declaration",
   "union_declaration",
+  // GDScript declarations whose names participate in the call graph.
+  // `function_definition` and `class_definition` are already in the set
+  // above (shared with Python/C/Bash and Python, respectively).
+  "constructor_definition",
+  "enum_definition",
+  "signal_statement",
+  "const_statement",
+  "class_name_statement",
 ]);
 
 function float32ArrayToBuffer(arr: number[]): Buffer {

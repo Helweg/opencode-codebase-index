@@ -508,6 +508,46 @@ describe("call-graph", () => {
     });
   });
 
+  describe("gdscript call extraction", () => {
+    it("should extract direct function calls", () => {
+      const content = `
+func main() -> void:
+    foo()
+    bar(1, 2)
+`;
+      const calls = extractCalls(content, "gdscript");
+      const callNames = calls.map((c) => c.calleeName);
+      expect(callNames).toContain("foo");
+      expect(callNames).toContain("bar");
+    });
+
+    it("should classify attribute calls as MethodCall", () => {
+      const content = `
+func _ready() -> void:
+    self.take_damage(5)
+    health_changed.emit(health)
+`;
+      const calls = extractCalls(content, "gdscript");
+      const takeDamage = calls.find((c) => c.calleeName === "take_damage");
+      expect(takeDamage).toBeDefined();
+      expect(takeDamage!.callType).toBe("MethodCall");
+
+      const emit = calls.find((c) => c.calleeName === "emit");
+      expect(emit).toBeDefined();
+      expect(emit!.callType).toBe("MethodCall");
+    });
+
+    it("should preserve case (GDScript is case-sensitive)", () => {
+      const content = `
+func main() -> void:
+    DoThing()
+`;
+      const calls = extractCalls(content, "gdscript");
+      expect(calls.some((c) => c.calleeName === "DoThing")).toBe(true);
+      expect(calls.some((c) => c.calleeName === "dothing")).toBe(false);
+    });
+  });
+
   describe("zig call extraction", () => {
     it("should extract direct function calls", () => {
       const content = `

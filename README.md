@@ -211,7 +211,7 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig
+**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig, GDScript
 
 **Additional Supported Formats (line-based chunking)**: TXT, HTML, HTM, Markdown, Shell scripts
 
@@ -223,7 +223,7 @@ graph TD
 **/*.{sql,graphql,proto}        **/*.{yaml,yml,toml}
 **/*.{md,mdx}                   **/*.{sh,bash,zsh}
 **/*.{txt,html,htm}              **/*.{cls,trigger}
-**/*.zig
+**/*.zig                         **/*.gd
 ```
 
 Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*.pdf"`, `"**/*.csv"`).
@@ -353,7 +353,7 @@ Returns recent debug logs with optional filtering.
 
 ### `call_graph`
 
-Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, and Zig.
+Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, Zig, and GDScript.
 
 - **Use for**: Understanding code flow, tracing dependencies, impact analysis.
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).
@@ -1007,7 +1007,7 @@ The Rust native module handles performance-critical operations:
 - **usearch**: High-performance vector similarity search with F16 quantization
 - **SQLite**: Persistent storage for embeddings, chunks, branch catalog, symbols, and call edges
 - **BM25 inverted index**: Fast keyword search for hybrid retrieval
-- **Call graph extraction**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports (TypeScript/JavaScript, Python, Go, Rust, PHP, Zig)
+- **Call graph extraction**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports (TypeScript/JavaScript, Python, Go, Rust, PHP, Zig, GDScript)
 - **xxhash**: Fast content hashing for change detection
 
 Rebuild with: `npm run build:native` (requires Rust toolchain)
