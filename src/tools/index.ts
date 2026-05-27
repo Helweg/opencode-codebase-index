@@ -16,6 +16,13 @@ import {
   formatLogs,
   formatSearchResults,
 } from "./utils.js";
+import {
+  findKnowledgeBasePathIndex,
+  hasMatchingKnowledgeBasePath,
+  resolveConfigPathValue,
+  resolveKnowledgeBasePath,
+  serializeConfigPathValue,
+} from "./knowledge-base-paths.js";
 import { existsSync, writeFileSync, mkdirSync, statSync } from "fs";
 import * as path from "path";
 import { loadMergedConfig, loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
@@ -71,42 +78,12 @@ function getConfigPath(): string {
   return resolveWritableProjectConfigPath(sharedProjectRoot);
 }
 
-function normalizeConfigPathValue(value: string, baseDir: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-
-  const absolutePath = path.isAbsolute(trimmed) ? trimmed : path.resolve(baseDir, trimmed);
-  return path.normalize(absolutePath);
-}
-
-function serializeConfigPathValue(value: string, baseDir: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-
-  const normalizeRelativePath = (candidate: string): string => candidate.replace(/\\/g, "/");
-
-  if (!path.isAbsolute(trimmed)) {
-    return normalizeRelativePath(path.normalize(trimmed));
-  }
-
-  const relativePath = path.relative(baseDir, trimmed);
-  if (!relativePath || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))) {
-    return normalizeRelativePath(path.normalize(relativePath || "."));
-  }
-
-  return path.normalize(trimmed);
-}
-
 function normalizeKnowledgeBasePaths(config: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...config };
 
   if (Array.isArray(normalized.knowledgeBases)) {
     normalized.knowledgeBases = (normalized.knowledgeBases as string[]).map(kb => {
-      return normalizeConfigPathValue(kb, sharedProjectRoot);
+      return resolveConfigPathValue(kb, sharedProjectRoot);
     });
   }
 
@@ -422,7 +399,7 @@ export const add_knowledge_base: ToolDefinition = tool({
     // Resolve the path
     const resolvedPath = path.isAbsolute(inputPath)
       ? inputPath
-      : path.resolve(sharedProjectRoot, inputPath);
+      : resolveKnowledgeBasePath(inputPath, sharedProjectRoot);
 
     // Validate the directory exists
     if (!existsSync(resolvedPath)) {
@@ -445,10 +422,7 @@ export const add_knowledge_base: ToolDefinition = tool({
       : [];
 
     // Check if already added (normalize paths for comparison)
-    const normalizedPath = path.normalize(resolvedPath);
-    const alreadyExists = knowledgeBases.some(
-      kb => path.normalize(path.isAbsolute(kb) ? kb : path.resolve(sharedProjectRoot, kb)) === normalizedPath
-    );
+    const alreadyExists = hasMatchingKnowledgeBasePath(knowledgeBases, resolvedPath, sharedProjectRoot);
 
     if (alreadyExists) {
       return `Knowledge base already configured: ${resolvedPath}`;
@@ -487,7 +461,7 @@ export const list_knowledge_bases: ToolDefinition = tool({
 
     for (let i = 0; i < knowledgeBases.length; i++) {
       const kb = knowledgeBases[i];
-      const resolvedPath = path.isAbsolute(kb) ? kb : path.resolve(sharedProjectRoot, kb);
+      const resolvedPath = resolveKnowledgeBasePath(kb, sharedProjectRoot);
       const exists = existsSync(resolvedPath);
 
       result += `[${i + 1}] ${kb}\n`;
@@ -527,11 +501,7 @@ export const remove_knowledge_base: ToolDefinition = tool({
     }
 
     // Find and remove the knowledge base
-    const normalizedInput = path.normalize(inputPath);
-    const index = knowledgeBases.findIndex(
-      kb => path.normalize(kb) === normalizedInput ||
-           path.normalize(path.isAbsolute(kb) ? kb : path.resolve(sharedProjectRoot, kb)) === normalizedInput
-    );
+    const index = findKnowledgeBasePathIndex(knowledgeBases, inputPath, sharedProjectRoot);
 
     if (index === -1) {
       let result = `Knowledge base not found: ${inputPath}\n\n`;
