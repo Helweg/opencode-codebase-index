@@ -2,6 +2,8 @@ import ignore, { Ignore } from "ignore";
 import { existsSync, readFileSync, promises as fsPromises } from "fs";
 import * as path from "path";
 
+import { hasFilteredPathSegment, isBuildPathSegment, isHiddenPathSegment } from "./paths.js";
+
 const PROJECT_MARKERS = [
   ".git",
   "package.json",
@@ -79,16 +81,8 @@ export function shouldIncludeFile(
 ): boolean {
   const relativePath = path.relative(projectRoot, filePath);
 
-  // Exclude hidden files/folders (starting with .)
-  const pathParts = relativePath.split(path.sep);
-  for (const part of pathParts) {
-    if (part.startsWith(".") && part !== "." && part !== "..") {
-      return false;
-    }
-    // Exclude folders containing "build" in their name
-    if (part.toLowerCase().includes("build")) {
-      return false;
-    }
+  if (hasFilteredPathSegment(relativePath, path.sep)) {
+    return false;
   }
 
   if (ignoreFilter.ignores(relativePath)) {
@@ -161,16 +155,14 @@ export async function* walkDirectory(
     const fullPath = path.join(dir, entry.name);
     const relativePath = path.relative(projectRoot, fullPath);
 
-    // Skip hidden files/folders (starting with .)
-    if (entry.name.startsWith(".") && entry.name !== "." && entry.name !== "..") {
+    if (isHiddenPathSegment(entry.name)) {
       if (entry.isDirectory()) {
         skipped.push({ path: relativePath, reason: "excluded" });
       }
       continue;
     }
 
-    // Skip folders containing "build" in their name
-    if (entry.isDirectory() && entry.name.toLowerCase().includes("build")) {
+    if (entry.isDirectory() && isBuildPathSegment(entry.name)) {
       skipped.push({ path: relativePath, reason: "excluded" });
       continue;
     }
