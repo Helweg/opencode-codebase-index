@@ -7,7 +7,7 @@ import * as os from "os";
 import * as path from "path";
 import { performance } from "perf_hooks";
 
-import { rebasePathEntries, resolveInheritedKnowledgeBaseEntries } from "../config/merger.js";
+import { rebasePathEntries, resolveInheritedKnowledgeBaseEntries } from "../config/rebase.js";
 import { parseConfig } from "../config/schema.js";
 import type { SearchConfig as ConfigSearchConfig } from "../config/schema.js";
 import { getDefaultModelForProvider } from "../config/index.js";

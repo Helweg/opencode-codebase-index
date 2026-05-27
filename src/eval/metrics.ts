@@ -1,4 +1,5 @@
 import { estimateTokens } from "../utils/cost.js";
+import { normalizePathSeparators } from "../utils/paths.js";
 
 import type {
   EvalMetrics,
@@ -22,7 +23,7 @@ function percentile(values: number[], p: number): number {
 }
 
 function normalizePath(input: string): string {
-  return input.replace(/\\/g, "/");
+  return normalizePathSeparators(input);
 }
 
 function uniqueResultsByPath(results: PerQueryEvalResult["results"]): PerQueryEvalResult["results"] {
