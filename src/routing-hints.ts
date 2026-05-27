@@ -1,4 +1,16 @@
 import type { StatusResult } from "./indexer/index.js";
+import {
+  containsQuotedIdentifier,
+  countWords,
+  hasConceptualDiscoveryHint,
+  hasDefinitionHint,
+  hasExactMatchHint,
+  hasIdentifierShape,
+  hasNonDiscoveryHint,
+  isExternalLookup,
+  looksLikeDirectPath,
+  normalizeText,
+} from "./routing-hints-patterns.js";
 
 export type RoutingIntent =
   | "local_conceptual"
@@ -25,143 +37,6 @@ interface TextPartLike {
   text?: string;
 }
 
-const EXTERNAL_HINTS = [
-  "docs",
-  "documentation",
-  "official docs",
-  "github example",
-  "github examples",
-  "github repo",
-  "github repository",
-  "web search",
-  "website",
-  "url",
-  "npm",
-  "pypi",
-  "crate",
-  "library",
-  "package",
-  "framework",
-  "context7",
-  "stackoverflow",
-];
-
-const NON_DISCOVERY_HINTS = [
-  "commit",
-  "rebase",
-  "push",
-  "pull request",
-  "pr",
-  "lint",
-  "typecheck",
-  "build",
-  "test",
-  "release",
-  "deploy",
-  "screenshot",
-  "browser",
-  "open the website",
-];
-
-const CONCEPTUAL_DISCOVERY_HINTS = [
-  "where is",
-  "where are",
-  "which file",
-  "what file",
-  "how does",
-  "how do we",
-  "how is",
-  "find the code",
-  "find code",
-  "find where",
-  "find logic",
-  "implementation",
-  "implements",
-  "handler",
-  "flow",
-  "logic",
-  "middleware",
-  "parser",
-  "validation",
-  "rate limiting",
-  "error handling",
-  "auth flow",
-  "responsible for",
-  "similar code",
-  "pattern",
-  "code that",
-];
-
-const DEFINITION_HINTS = [
-  "defined",
-  "definition",
-  "jump to",
-  "definition site",
-  "authoritative definition",
-];
-
-const EXACT_MATCH_HINTS = [
-  "exact",
-  "all references",
-  "all occurrences",
-  "literal",
-  "regex",
-  "grep",
-  "identifier",
-  "symbol",
-  "named",
-  "definition of",
-];
-
-const FILE_PATH_PATTERN = /(?:^|\s)(?:\.?\.?\/)?[\w.-]+(?:\/[\w.-]+)+/;
-const URL_PATTERN = /https?:\/\//;
-const CAMEL_OR_PASCAL_PATTERN = /\b[A-Za-z_$][A-Za-z0-9_$]*\b/g;
-const SNAKE_PATTERN = /\b[a-z0-9]+_[a-z0-9_]+\b/g;
-const KEBAB_PATTERN = /\b[a-z0-9]+-[a-z0-9-]+\b/g;
-const BACKTICK_IDENTIFIER_PATTERN = /`([^`]+)`/g;
-const BACKTICK_IDENTIFIER_PRESENCE_PATTERN = /`([^`]+)`/;
-
-function normalizeText(text: string): string {
-  return text.trim().replace(/\s+/g, " ");
-}
-
-function includesHint(text: string, hints: string[]): boolean {
-  return hints.some((hint) => text.includes(hint));
-}
-
-function countWords(text: string): number {
-  if (!text) {
-    return 0;
-  }
-
-  return text.split(/\s+/).filter(Boolean).length;
-}
-
-function hasIdentifierShape(text: string): boolean {
-  const matches = [
-    ...(text.match(CAMEL_OR_PASCAL_PATTERN) ?? []),
-    ...(text.match(SNAKE_PATTERN) ?? []),
-    ...(text.match(KEBAB_PATTERN) ?? []),
-    ...Array.from(text.matchAll(BACKTICK_IDENTIFIER_PATTERN), (match) => match[1]),
-  ];
-
-  return matches.some((match) => {
-    if (match.length < 3) {
-      return false;
-    }
-
-    return /[A-Z]/.test(match) || match.includes("_") || match.includes("-") || /`/.test(match);
-  });
-}
-
-function containsQuotedIdentifier(text: string): boolean {
-  return BACKTICK_IDENTIFIER_PRESENCE_PATTERN.test(text) || /"[^"]+"/.test(text) || /'[^']+'/.test(text);
-}
-
-function looksLikeDirectPath(text: string): boolean {
-  return FILE_PATH_PATTERN.test(text) || /\b[a-z0-9_-]+\.(ts|tsx|js|jsx|rs|py|go|java|json|md|yaml|yml)\b/i.test(text);
-}
-
 export function extractUserText(parts: TextPartLike[]): string {
   return normalizeText(
     parts
@@ -183,7 +58,7 @@ export function assessRoutingIntent(text: string): RoutingAssessment {
     };
   }
 
-  if (URL_PATTERN.test(lowered) || includesHint(lowered, EXTERNAL_HINTS)) {
+  if (isExternalLookup(lowered)) {
     return {
       intent: "external",
       text: normalizedText,
@@ -191,15 +66,15 @@ export function assessRoutingIntent(text: string): RoutingAssessment {
     };
   }
 
-  const hasConceptualHint = includesHint(lowered, CONCEPTUAL_DISCOVERY_HINTS);
-  const hasDefinitionHint = includesHint(lowered, DEFINITION_HINTS);
-  const hasExactMatchHint = includesHint(lowered, EXACT_MATCH_HINTS);
-  const hasNonDiscoveryHint = includesHint(lowered, NON_DISCOVERY_HINTS);
+  const matchedConceptualHint = hasConceptualDiscoveryHint(lowered);
+  const matchedDefinitionHint = hasDefinitionHint(lowered);
+  const matchedExactMatchHint = hasExactMatchHint(lowered);
+  const matchedNonDiscoveryHint = hasNonDiscoveryHint(lowered);
   const hasIdentifier = hasIdentifierShape(normalizedText);
   const hasQuotedIdentifier = containsQuotedIdentifier(normalizedText);
   const shortQuery = countWords(lowered) <= 10;
 
-  if (hasNonDiscoveryHint && !hasConceptualHint) {
+  if (matchedNonDiscoveryHint && !matchedConceptualHint) {
     return {
       intent: "other",
       text: normalizedText,
@@ -215,7 +90,7 @@ export function assessRoutingIntent(text: string): RoutingAssessment {
     };
   }
 
-  if ((hasDefinitionHint || lowered.includes("where is") || lowered.includes("where are")) && (lowered.includes("defined") || lowered.includes("definition"))) {
+  if ((matchedDefinitionHint || lowered.includes("where is") || lowered.includes("where are")) && (lowered.includes("defined") || lowered.includes("definition"))) {
     return {
       intent: "definition_lookup",
       text: normalizedText,
@@ -223,15 +98,15 @@ export function assessRoutingIntent(text: string): RoutingAssessment {
     };
   }
 
-  if ((hasExactMatchHint || hasQuotedIdentifier || hasIdentifier) && !hasConceptualHint && shortQuery) {
+  if ((matchedExactMatchHint || hasQuotedIdentifier || hasIdentifier) && !matchedConceptualHint && shortQuery) {
     return {
       intent: "exact_identifier",
       text: normalizedText,
-      reason: hasExactMatchHint || hasQuotedIdentifier ? "exact_match_request" : "identifier_shaped_query",
+      reason: matchedExactMatchHint || hasQuotedIdentifier ? "exact_match_request" : "identifier_shaped_query",
     };
   }
 
-  if (hasConceptualHint) {
+  if (matchedConceptualHint) {
     return {
       intent: "local_conceptual",
       text: normalizedText,
