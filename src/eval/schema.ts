@@ -77,6 +77,9 @@ function parseExpected(input: unknown, path: string): GoldenExpected {
     throw new Error(`${path}.branch must be a string when provided`);
   }
 
+
+
+
   return {
     filePath,
     acceptableFiles,
@@ -165,6 +168,16 @@ export function loadGoldenDataset(datasetPath: string): GoldenDataset {
   return parseGoldenDataset(parsed, datasetPath);
 }
 
+function parseThresholdValue(
+  value: unknown,
+  fieldName: string,
+  sourceLabel: string
+): number | undefined {
+  return value === undefined
+    ? undefined
+    : asPositiveNumber(value, `${sourceLabel}.thresholds.${fieldName}`);
+}
+
 export function parseBudget(raw: unknown, sourceLabel: string): EvalBudget {
   if (!isRecord(raw)) {
     throw new Error(`${sourceLabel} must be a JSON object`);
@@ -193,50 +206,46 @@ export function parseBudget(raw: unknown, sourceLabel: string): EvalBudget {
     failOnMissingBaseline:
       typeof failOnMissingBaseline === "boolean" ? failOnMissingBaseline : true,
     thresholds: {
-      hitAt5MaxDrop:
-        thresholds.hitAt5MaxDrop === undefined
-          ? undefined
-          : asPositiveNumber(thresholds.hitAt5MaxDrop, `${sourceLabel}.thresholds.hitAt5MaxDrop`),
-      mrrAt10MaxDrop:
-        thresholds.mrrAt10MaxDrop === undefined
-          ? undefined
-          : asPositiveNumber(thresholds.mrrAt10MaxDrop, `${sourceLabel}.thresholds.mrrAt10MaxDrop`),
-      rawDistinctTop3RatioMaxDrop:
-        thresholds.rawDistinctTop3RatioMaxDrop === undefined
-          ? undefined
-          : asPositiveNumber(
-              thresholds.rawDistinctTop3RatioMaxDrop,
-              `${sourceLabel}.thresholds.rawDistinctTop3RatioMaxDrop`
-            ),
-      p95LatencyMaxMultiplier:
-        thresholds.p95LatencyMaxMultiplier === undefined
-          ? undefined
-          : asPositiveNumber(
-              thresholds.p95LatencyMaxMultiplier,
-              `${sourceLabel}.thresholds.p95LatencyMaxMultiplier`
-            ),
-      p95LatencyMaxAbsoluteMs:
-        thresholds.p95LatencyMaxAbsoluteMs === undefined
-          ? undefined
-          : asPositiveNumber(
-              thresholds.p95LatencyMaxAbsoluteMs,
-              `${sourceLabel}.thresholds.p95LatencyMaxAbsoluteMs`
-            ),
-      minHitAt5:
-        thresholds.minHitAt5 === undefined
-          ? undefined
-          : asPositiveNumber(thresholds.minHitAt5, `${sourceLabel}.thresholds.minHitAt5`),
-      minMrrAt10:
-        thresholds.minMrrAt10 === undefined
-          ? undefined
-          : asPositiveNumber(thresholds.minMrrAt10, `${sourceLabel}.thresholds.minMrrAt10`),
-      minRawDistinctTop3Ratio:
-        thresholds.minRawDistinctTop3Ratio === undefined
-          ? undefined
-          : asPositiveNumber(
-              thresholds.minRawDistinctTop3Ratio,
-              `${sourceLabel}.thresholds.minRawDistinctTop3Ratio`
-            ),
+      hitAt5MaxDrop: parseThresholdValue(
+        thresholds.hitAt5MaxDrop,
+        "hitAt5MaxDrop",
+        sourceLabel
+      ),
+      mrrAt10MaxDrop: parseThresholdValue(
+        thresholds.mrrAt10MaxDrop,
+        "mrrAt10MaxDrop",
+        sourceLabel
+      ),
+      rawDistinctTop3RatioMaxDrop: parseThresholdValue(
+        thresholds.rawDistinctTop3RatioMaxDrop,
+        "rawDistinctTop3RatioMaxDrop",
+        sourceLabel
+      ),
+      p95LatencyMaxMultiplier: parseThresholdValue(
+        thresholds.p95LatencyMaxMultiplier,
+        "p95LatencyMaxMultiplier",
+        sourceLabel
+      ),
+      p95LatencyMaxAbsoluteMs: parseThresholdValue(
+        thresholds.p95LatencyMaxAbsoluteMs,
+        "p95LatencyMaxAbsoluteMs",
+        sourceLabel
+      ),
+      minHitAt5: parseThresholdValue(
+        thresholds.minHitAt5,
+        "minHitAt5",
+        sourceLabel
+      ),
+      minMrrAt10: parseThresholdValue(
+        thresholds.minMrrAt10,
+        "minMrrAt10",
+        sourceLabel
+      ),
+      minRawDistinctTop3Ratio: parseThresholdValue(
+        thresholds.minRawDistinctTop3Ratio,
+        "minRawDistinctTop3Ratio",
+        sourceLabel
+      ),
     },
   };
 }

@@ -78,7 +78,7 @@ export async function runEvaluation(options: EvalRunOptions): Promise<EvalRunRes
     const start = performance.now();
     const result = await indexer.search(query.query, 10, {
       metadataOnly: true,
-      filterByBranch: query.expected.branch ? true : false,
+      filterByBranch: !!query.expected.branch,
     });
     const elapsed = performance.now() - start;
 
