@@ -34,6 +34,7 @@ tree-sitter-yaml = "0.7"
 tree-sitter-php = "0.23"
 tree-sitter-sfapex = "3.0"
 tree-sitter-zig = "1"
+tree-sitter-matlab = "1.3.0"
 tree-sitter-language = "0.1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

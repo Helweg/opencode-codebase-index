@@ -212,7 +212,10 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
 
   const rawAdditionalInclude = input.additionalInclude;
   const additionalInclude: string[] = isStringArray(rawAdditionalInclude)
-    ? rawAdditionalInclude.filter(p => typeof p === "string" && p.trim().length > 0).map(p => p.trim())
+    ? rawAdditionalInclude
+      .filter(p => typeof p === "string" && p.trim().length > 0)
+      .map(p => p.trim())
+      .filter(p => !DEFAULT_INCLUDE.includes(p))
     : [];
 
   let embeddingProvider: EmbeddingProvider | 'custom' | 'auto';

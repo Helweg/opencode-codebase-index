@@ -266,6 +266,54 @@ test "add works" {
       expect(addChunk).toBeDefined();
       expect(addChunk!.content).toContain("Adds two integers");
     });
+
+    it("should parse MATLAB functions", () => {
+      const content = `
+% Estimate a normalized signal score.
+function score = calculateSignal(prices)
+    returns = diff(log(prices));
+    score = mean(returns) / std(returns);
+end
+`;
+      const chunks = parseFile("calculateSignal.m", content);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(1);
+      expect(chunks.some((c) => c.chunkType === "function_definition")).toBe(true);
+      expect(chunks.some((c) => c.name === "calculateSignal")).toBe(true);
+      expect(chunks.every((c) => c.language === "matlab")).toBe(true);
+
+      const functionChunk = chunks.find((c) => c.chunkType === "function_definition");
+      expect(functionChunk?.content).toContain("Estimate a normalized signal score");
+    });
+
+    it("should parse MATLAB classes", () => {
+      const content = `
+% Trading signal model.
+classdef SignalModel
+    properties
+        Window
+    end
+
+    methods
+        function obj = SignalModel(window)
+            obj.Window = window;
+        end
+
+        function value = score(obj, prices)
+            value = mean(prices(end - obj.Window + 1:end));
+        end
+    end
+end
+`;
+      const chunks = parseFile("SignalModel.m", content);
+
+      const classChunk = chunks.find((c) => c.chunkType === "class_definition");
+      expect(classChunk).toBeDefined();
+      expect(classChunk?.name).toBe("SignalModel");
+      expect(classChunk?.content).toContain("Trading signal model");
+      expect(classChunk?.content).toContain("function value = score");
+      expect(classChunk?.language).toBe("matlab");
+    });
   });
 
   describe("parseFiles", () => {

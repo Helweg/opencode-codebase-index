@@ -47,6 +47,7 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         Language::Zig => tree_sitter_zig::LANGUAGE.into(),
+        Language::Matlab => tree_sitter_matlab::LANGUAGE.into(),
         Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(chunk_by_lines(content, &language)),
     };
@@ -220,7 +221,7 @@ fn find_leading_comment(
     }
 
     if comments.is_empty() {
-        return None;
+        return find_matlab_leading_comment(node, source, language);
     }
 
     comments.reverse();
@@ -236,6 +237,53 @@ fn find_leading_comment(
         let elapsed = start.elapsed().as_micros();
         PERF_STATS.lock().unwrap().find_leading_comment_time += elapsed;
     }
+
+    Some((first_start, combined))
+}
+
+fn find_matlab_leading_comment(
+    node: &tree_sitter::Node,
+    source: &str,
+    language: &Language,
+) -> Option<(usize, String)> {
+    if *language != Language::Matlab {
+        return None;
+    }
+
+    let prefix = &source[..node.start_byte()];
+    let mut line_start = 0;
+    let mut lines = Vec::new();
+
+    for segment in prefix.split_inclusive('\n') {
+        let line = segment.trim_end_matches(['\r', '\n']);
+        lines.push((line_start, line));
+        line_start += segment.len();
+    }
+
+    let mut comments = Vec::new();
+    for (start, line) in lines.into_iter().rev() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            break;
+        }
+        if trimmed.starts_with('%') {
+            comments.push((start, line));
+            continue;
+        }
+        break;
+    }
+
+    if comments.is_empty() {
+        return None;
+    }
+
+    comments.reverse();
+    let first_start = comments.first().map(|(start, _)| *start)?;
+    let combined = comments
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
 
     Some((first_start, combined))
 }
@@ -258,6 +306,7 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::Yaml => matches!(node_type, "comment"),
         Language::Php => matches!(node_type, "comment"),
         Language::Zig => matches!(node_type, "comment"),
+        Language::Matlab => matches!(node_type, "comment"),
         Language::Apex => matches!(node_type, "line_comment" | "block_comment"),
         _ => false,
     }
@@ -460,6 +509,12 @@ lazy_static! {
         set.insert("error_set_declaration");
         set
     };
+    static ref MATLAB_SEMANTIC_NODES: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("function_definition");
+        set.insert("class_definition");
+        set
+    };
     // Apex grammar (tree-sitter-sfapex) is Java-derived: the declaration node
     // kinds match Java exactly, plus `trigger_declaration` which is unique to
     // Apex (Salesforce database triggers). Verified against tree-sitter-sfapex
@@ -502,6 +557,7 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
         Language::Yaml => YAML_SEMANTIC_NODES.contains(node_type),
         Language::Php => PHP_SEMANTIC_NODES.contains(node_type),
         Language::Zig => ZIG_SEMANTIC_NODES.contains(node_type),
+        Language::Matlab => MATLAB_SEMANTIC_NODES.contains(node_type),
         Language::Apex => APEX_SEMANTIC_NODES.contains(node_type),
         _ => false,
     };
@@ -529,6 +585,7 @@ fn extract_name(cursor: &tree_sitter::TreeCursor, source: &str) -> Option<String
         let kind = n.kind();
         if kind == "identifier"
             || kind == "property_identifier"
+            || kind == "property_name"
             || kind == "type_identifier"
             || kind == "name"
         {
@@ -536,6 +593,17 @@ fn extract_name(cursor: &tree_sitter::TreeCursor, source: &str) -> Option<String
         }
         None
     };
+
+    if let Some(name_node) = node.child_by_field_name("name") {
+        if let Some(name) = extract_identifier(name_node) {
+            #[cfg(debug_assertions)]
+            {
+                let elapsed = start.elapsed().as_micros();
+                PERF_STATS.lock().unwrap().extract_name_time += elapsed;
+            }
+            return Some(name);
+        }
+    }
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i.try_into().unwrap()) {
