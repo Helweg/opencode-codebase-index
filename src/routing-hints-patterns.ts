@@ -93,6 +93,8 @@ const SNAKE_PATTERN = /\b[a-z0-9]+_[a-z0-9_]+\b/g;
 const KEBAB_PATTERN = /\b[a-z0-9]+-[a-z0-9-]+\b/g;
 const BACKTICK_IDENTIFIER_PATTERN = /`([^`]+)`/g;
 const BACKTICK_IDENTIFIER_PRESENCE_PATTERN = /`([^`]+)`/;
+const DOUBLE_QUOTED_PATTERN = /"[^"]+"/;
+const SINGLE_QUOTED_PATTERN = /'[^']+'/;
 
 export function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, " ");
@@ -148,7 +150,7 @@ export function hasIdentifierShape(text: string): boolean {
 }
 
 export function containsQuotedIdentifier(text: string): boolean {
-  return BACKTICK_IDENTIFIER_PRESENCE_PATTERN.test(text) || /"[^"]+"/.test(text) || /'[^']+'/.test(text);
+  return BACKTICK_IDENTIFIER_PRESENCE_PATTERN.test(text) || DOUBLE_QUOTED_PATTERN.test(text) || SINGLE_QUOTED_PATTERN.test(text);
 }
 
 export function looksLikeDirectPath(text: string): boolean {
