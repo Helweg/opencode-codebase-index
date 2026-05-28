@@ -134,8 +134,9 @@ function getGitHubCopilotCredentials(): ProviderCredentials | null {
 
   // Use GitHub Models API for embeddings (models.github.ai)
   // Enterprise uses different URL pattern
-  const baseUrl = (copilotAuth as OpenCodeAuthOAuth).enterpriseUrl
-    ? `https://copilot-api.${(copilotAuth as OpenCodeAuthOAuth).enterpriseUrl!.replace(/^https?:\/\//, "").replace(/\/$/, "")}`
+  const auth = copilotAuth as OpenCodeAuthOAuth;
+  const baseUrl = auth.enterpriseUrl
+    ? `https://copilot-api.${auth.enterpriseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}`
     : "https://models.github.ai";
 
   return {
