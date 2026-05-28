@@ -216,10 +216,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     : [];
 
   let embeddingProvider: EmbeddingProvider | 'custom' | 'auto';
-  let embeddingModel: EmbeddingModelName | undefined = undefined;
-  let customProvider: CustomProviderConfig | undefined = undefined;
-  let reranker: RerankerConfig | undefined = undefined;
-  
+  let embeddingModel: EmbeddingModelName | undefined;
+  let customProvider: CustomProviderConfig | undefined;
+  let reranker: RerankerConfig | undefined;
   if (embeddingProviderValue === 'custom') {
     embeddingProvider = 'custom';
     const rawCustom = (input.customProvider && typeof input.customProvider === 'object' ? input.customProvider : null) as Record<string, unknown> | null;
@@ -322,9 +321,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
 }
 
 export function getDefaultModelForProvider(provider: EmbeddingProvider): EmbeddingModelInfo {
-  const models = EMBEDDING_MODELS[provider]
-  const providerDefault = DEFAULT_PROVIDER_MODELS[provider]
-  return models[providerDefault as keyof typeof models]
+  const models = EMBEDDING_MODELS[provider];
+  const providerDefault = DEFAULT_PROVIDER_MODELS[provider];
+  return models[providerDefault as keyof typeof models];
 }
 
 /**
@@ -335,7 +334,7 @@ export function getDefaultModelForProvider(provider: EmbeddingProvider): Embeddi
  */
 export type EmbeddingProvider = keyof typeof EMBEDDING_MODELS;
 
-export const availableProviders: EmbeddingProvider[] = Object.keys(EMBEDDING_MODELS) as EmbeddingProvider[]
+export const availableProviders: EmbeddingProvider[] = Object.keys(EMBEDDING_MODELS) as EmbeddingProvider[];
 
 export const autoDetectProviders: EmbeddingProvider[] = AUTO_DETECT_PROVIDER_ORDER.filter(
   (provider): provider is EmbeddingProvider => provider in EMBEDDING_MODELS,
@@ -345,7 +344,7 @@ export type ProviderModels = {
   [P in keyof typeof EMBEDDING_MODELS]: keyof (typeof EMBEDDING_MODELS)[P]
 }
 
-export type EmbeddingModelName = ProviderModels[keyof ProviderModels]
+export type EmbeddingModelName = ProviderModels[keyof ProviderModels];
 
 export type EmbeddingProviderModelInfo = {
   [P in EmbeddingProvider]: (typeof EMBEDDING_MODELS)[P][keyof (typeof EMBEDDING_MODELS)[P]]
@@ -360,4 +359,4 @@ export interface BaseModelInfo {
   costPer1MTokens: number;
 }
 
-export type EmbeddingModelInfo = EmbeddingProviderModelInfo[EmbeddingProvider]
+export type EmbeddingModelInfo = EmbeddingProviderModelInfo[EmbeddingProvider];

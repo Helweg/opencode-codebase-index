@@ -2,9 +2,6 @@ import * as path from "path";
 
 import { normalizePathSeparators } from "../utils/paths.js";
 
-function normalizeRelativeConfigPath(candidate: string): string {
-  return normalizePathSeparators(candidate);
-}
 
 function isWithinRoot(rootDir: string, targetPath: string): boolean {
   const relativePath = path.relative(rootDir, targetPath);
@@ -28,7 +25,7 @@ export function rebasePathEntries(
         return trimmed;
       }
 
-      return normalizeRelativeConfigPath(path.normalize(path.relative(toDir, path.resolve(fromDir, trimmed))));
+      return normalizePathSeparators(path.normalize(path.relative(toDir, path.resolve(fromDir, trimmed))));
     })
     .filter(Boolean);
 }
@@ -52,7 +49,7 @@ export function resolveInheritedKnowledgeBaseEntries(
 
       if (path.isAbsolute(trimmed)) {
         if (isWithinRoot(sourceRoot, trimmed)) {
-          return normalizeRelativeConfigPath(path.normalize(path.relative(sourceRoot, trimmed) || "."));
+          return normalizePathSeparators(path.normalize(path.relative(sourceRoot, trimmed) || "."));
         }
 
         return path.normalize(trimmed);
@@ -60,10 +57,10 @@ export function resolveInheritedKnowledgeBaseEntries(
 
       const resolvedFromSource = path.resolve(sourceRoot, trimmed);
       if (isWithinRoot(sourceRoot, resolvedFromSource)) {
-        return normalizeRelativeConfigPath(path.normalize(trimmed));
+        return normalizePathSeparators(path.normalize(trimmed));
       }
 
-      return normalizeRelativeConfigPath(path.normalize(path.relative(targetRoot, resolvedFromSource)));
+      return normalizePathSeparators(path.normalize(path.relative(targetRoot, resolvedFromSource)));
     })
     .filter(Boolean);
 }
