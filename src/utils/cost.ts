@@ -62,6 +62,7 @@ export function createCostEstimate(
 
 export function formatCostEstimate(estimate: CostEstimate): string {
   const sizeFormatted = formatBytes(estimate.totalSizeBytes);
+  const filesFormatted = `${estimate.filesCount.toLocaleString()} files`;
   const costFormatted = estimate.isFree
     ? "Free"
     : `~$${estimate.estimatedCost.toFixed(4)}`;
@@ -71,14 +72,14 @@ export function formatCostEstimate(estimate: CostEstimate): string {
 │  📊 Indexing Estimate                                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  Files to index:     ${padRight(estimate.filesCount.toLocaleString() + " files", 40)}│
-│  Total size:         ${padRight(sizeFormatted, 40)}│
-│  Estimated chunks:   ${padRight("~" + estimate.estimatedChunks.toLocaleString() + " chunks", 40)}│
-│  Estimated tokens:   ${padRight("~" + estimate.estimatedTokens.toLocaleString() + " tokens", 40)}│
+│  Files to index:     ${filesFormatted.padEnd(40)}│
+│  Total size:         ${sizeFormatted.padEnd(40)}│
+│  Estimated chunks:   ${("~" + estimate.estimatedChunks.toLocaleString() + " chunks").padEnd(40)}│
+│  Estimated tokens:   ${("~" + estimate.estimatedTokens.toLocaleString() + " tokens").padEnd(40)}│
 │                                                                 │
-│  Provider: ${padRight(estimate.provider, 52)}│
-│  Model:    ${padRight(estimate.model, 52)}│
-│  Cost:     ${padRight(costFormatted, 52)}│
+│  Provider: ${estimate.provider.padEnd(52)}│
+│  Model:    ${estimate.model.padEnd(52)}│
+│  Cost:     ${costFormatted.padEnd(52)}│
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 `;
@@ -92,9 +93,6 @@ export function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-function padRight(str: string, length: number): string {
-  return str.padEnd(length);
-}
 
 export interface ConfirmationResult {
   confirmed: boolean;

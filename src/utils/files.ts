@@ -205,7 +205,6 @@ export async function* walkDirectory(
     }
   }
 
-  // Sort by size ascending, keep only the smallest maxFilesPerDirectory files
   filesInDir.sort((a, b) => a.size - b.size);
   const limitedFiles = filesInDir.slice(0, options.maxFilesPerDirectory);
   for (const f of limitedFiles) {
@@ -215,7 +214,6 @@ export async function* walkDirectory(
     skipped.push({ path: path.relative(projectRoot, filesInDir[i].path), reason: "excluded" });
   }
 
-  // Recurse into subdirectories respecting depth limit
   const canRecurse = options.maxDepth === -1 || currentDepth < options.maxDepth;
   if (canRecurse) {
     for (const sub of subdirs) {
@@ -247,7 +245,6 @@ export async function collectFiles(
   const files: Array<{ path: string; size: number }> = [];
   const skipped: SkippedFile[] = [];
 
-  // Collect from project root
   for await (const file of walkDirectory(
     projectRoot,
     projectRoot,
@@ -262,9 +259,7 @@ export async function collectFiles(
     files.push(file);
   }
 
-  // Collect from additional knowledge base directories
   if (additionalRoots && additionalRoots.length > 0) {
-    // Normalize and deduplicate knowledge base paths
     const normalizedRoots = new Set<string>();
     for (const kbRoot of additionalRoots) {
       const resolved = path.normalize(
