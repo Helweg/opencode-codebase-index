@@ -5,13 +5,110 @@ import * as path from "path";
 import { resolveProjectConfigPath } from "./paths.js";
 import { resolveInheritedKnowledgeBaseEntries } from "./rebase.js";
 
-function loadJsonFile(filePath: string): unknown {
-  try {
-    if (existsSync(filePath)) {
-      const content = readFileSync(filePath, "utf-8");
-      return JSON.parse(content);
+const PROJECT_OVERRIDE_KEYS = [
+  "embeddingProvider",
+  "customProvider",
+  "embeddingModel",
+  "reranker",
+  "include",
+  "exclude",
+  "indexing",
+  "search",
+  "debug",
+  "scope",
+] as const;
+
+const MERGE_ARRAY_KEYS = ["knowledgeBases", "additionalInclude"] as const;
+
+type ProjectOverrideKey = (typeof PROJECT_OVERRIDE_KEYS)[number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function applyProjectOverride(
+  merged: Record<string, unknown>,
+  normalizedProjectConfig: Record<string, unknown>,
+  globalConfig: Record<string, unknown>,
+  key: ProjectOverrideKey,
+): void {
+  if (key in normalizedProjectConfig) {
+    merged[key] = normalizedProjectConfig[key];
+    return;
+  }
+
+  if (key in globalConfig) {
+    merged[key] = globalConfig[key];
+  }
+}
+
+function mergeUniqueStringArray(values: unknown[]): string[] {
+  return [...new Set(values.map((value) => String(value).trim()))];
+}
+
+function normalizeKnowledgeBasePath(value: unknown): string {
+  let normalized = path.normalize(String(value).trim());
+  const root = path.parse(normalized).root;
+
+  while (normalized.length > root.length && /[\\/]$/.test(normalized)) {
+    normalized = normalized.slice(0, -1);
+  }
+
+  return normalized;
+}
+
+function mergeKnowledgeBasePaths(values: unknown[]): string[] {
+  return [...new Set(values.map((value) => normalizeKnowledgeBasePath(value)).filter((value) => value.length > 0))];
+}
+
+function validateConfigLayerShape(rawConfig: unknown, filePath: string): Record<string, unknown> {
+  if (!isRecord(rawConfig)) {
+    throw new Error(`Config file ${filePath} must contain a JSON object at the root.`);
+  }
+
+  if (rawConfig.knowledgeBases !== undefined && !isStringArray(rawConfig.knowledgeBases)) {
+    throw new Error(`Config file ${filePath} field 'knowledgeBases' must be an array of strings.`);
+  }
+  if (rawConfig.additionalInclude !== undefined && !isStringArray(rawConfig.additionalInclude)) {
+    throw new Error(`Config file ${filePath} field 'additionalInclude' must be an array of strings.`);
+  }
+  if (rawConfig.include !== undefined && !isStringArray(rawConfig.include)) {
+    throw new Error(`Config file ${filePath} field 'include' must be an array of strings.`);
+  }
+  if (rawConfig.exclude !== undefined && !isStringArray(rawConfig.exclude)) {
+    throw new Error(`Config file ${filePath} field 'exclude' must be an array of strings.`);
+  }
+
+  for (const section of ["customProvider", "indexing", "search", "debug", "reranker"] as const) {
+    const value = rawConfig[section];
+    if (value !== undefined && !isRecord(value)) {
+      throw new Error(`Config file ${filePath} field '${section}' must be an object.`);
     }
-  } catch { /* ignore */ }
+  }
+
+  return rawConfig;
+}
+
+function loadJsonFile(filePath: string): unknown {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    return validateConfigLayerShape(JSON.parse(content), filePath);
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message.startsWith("Config file ")) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to load config file ${filePath}: ${message}`);
+  }
+
   return null;
 }
 
@@ -76,95 +173,23 @@ export function loadMergedConfig(projectRoot: string): unknown {
     return normalizedProjectConfig;
   }
 
+  if (!globalConfig || !projectConfig) {
+    return globalConfig ?? normalizedProjectConfig;
+  }
+
   // Both exist - start with global config as base
   const merged: Record<string, unknown> = { ...globalConfig };
 
-  // For embeddingProvider: project overrides if set, otherwise use global
-  if (projectConfig && "embeddingProvider" in normalizedProjectConfig) {
-    merged.embeddingProvider = normalizedProjectConfig.embeddingProvider;
-  } else if (globalConfig && globalConfig.embeddingProvider) {
-    merged.embeddingProvider = globalConfig.embeddingProvider;
-  }
-
-  // For customProvider: project overrides if set, otherwise use global
-  if (projectConfig && "customProvider" in normalizedProjectConfig) {
-    merged.customProvider = normalizedProjectConfig.customProvider;
-  } else if (globalConfig && globalConfig.customProvider) {
-    merged.customProvider = globalConfig.customProvider;
-  }
-
-  // For embeddingModel: project overrides if set, otherwise use global
-  if (projectConfig && "embeddingModel" in normalizedProjectConfig) {
-    merged.embeddingModel = normalizedProjectConfig.embeddingModel;
-  } else if (globalConfig && globalConfig.embeddingModel) {
-    merged.embeddingModel = globalConfig.embeddingModel;
-  }
-
-  // For reranker: project overrides if set, otherwise use global
-  if (projectConfig && "reranker" in normalizedProjectConfig) {
-    merged.reranker = normalizedProjectConfig.reranker;
-  } else if (globalConfig && globalConfig.reranker) {
-    merged.reranker = globalConfig.reranker;
-  }
-
-  // For include: project overrides if set, otherwise use global
-  if (projectConfig && "include" in normalizedProjectConfig) {
-    merged.include = normalizedProjectConfig.include;
-  } else if (globalConfig && globalConfig.include) {
-    merged.include = globalConfig.include;
-  }
-
-  // For exclude: project overrides if set, otherwise use global
-  if (projectConfig && "exclude" in normalizedProjectConfig) {
-    merged.exclude = normalizedProjectConfig.exclude;
-  } else if (globalConfig && globalConfig.exclude) {
-    merged.exclude = globalConfig.exclude;
-  }
-
-  // For indexing: project overrides if set, otherwise use global
-  if (projectConfig && "indexing" in normalizedProjectConfig) {
-    merged.indexing = normalizedProjectConfig.indexing;
-  } else if (globalConfig && globalConfig.indexing) {
-    merged.indexing = globalConfig.indexing;
-  }
-
-  // For search: project overrides if set, otherwise use global
-  if (projectConfig && "search" in normalizedProjectConfig) {
-    merged.search = normalizedProjectConfig.search;
-  } else if (globalConfig && globalConfig.search) {
-    merged.search = globalConfig.search;
-  }
-
-  // For debug: project overrides if set, otherwise use global
-  if (projectConfig && "debug" in normalizedProjectConfig) {
-    merged.debug = normalizedProjectConfig.debug;
-  } else if (globalConfig && globalConfig.debug) {
-    merged.debug = globalConfig.debug;
-  }
-
-  // For scope: project overrides if set, otherwise use global
-  if (projectConfig && "scope" in normalizedProjectConfig) {
-    merged.scope = normalizedProjectConfig.scope;
-  } else if (globalConfig && "scope" in globalConfig) {
-    merged.scope = globalConfig.scope;
+  for (const key of PROJECT_OVERRIDE_KEYS) {
+    applyProjectOverride(merged, normalizedProjectConfig, globalConfig, key);
   }
 
   // For other config sections: project overrides if set, otherwise use global
   if (projectConfig) {
     for (const key of Object.keys(projectConfig)) {
       if (
-        key === "embeddingProvider" ||
-        key === "customProvider" ||
-        key === "embeddingModel" ||
-        key === "reranker" ||
-        key === "include" ||
-        key === "exclude" ||
-        key === "indexing" ||
-        key === "search" ||
-        key === "debug" ||
-        key === "scope" ||
-        key === "knowledgeBases" ||
-        key === "additionalInclude"
+        PROJECT_OVERRIDE_KEYS.includes(key as ProjectOverrideKey) ||
+        MERGE_ARRAY_KEYS.includes(key as (typeof MERGE_ARRAY_KEYS)[number])
       ) {
         continue; // Already handled above
       }
@@ -178,15 +203,13 @@ export function loadMergedConfig(projectRoot: string): unknown {
     ? (Array.isArray(normalizedProjectConfig.knowledgeBases) ? normalizedProjectConfig.knowledgeBases as string[] : [])
     : [];
   const allKbs = [...globalKbs, ...projectKbs];
-  const uniqueKbs = [...new Set(allKbs.map(p => String(p).trim()))];
-  merged.knowledgeBases = uniqueKbs;
+  merged.knowledgeBases = mergeKnowledgeBasePaths(allKbs);
 
   // For additionalInclude: merge arrays (union, deduplicated)
   const globalAdditional = globalConfig && Array.isArray(globalConfig.additionalInclude) ? globalConfig.additionalInclude : [];
   const projectAdditional = projectConfig && Array.isArray(projectConfig.additionalInclude) ? projectConfig.additionalInclude : [];
   const allAdditional = [...globalAdditional, ...projectAdditional];
-  const uniqueAdditional = [...new Set(allAdditional.map(p => String(p).trim()))];
-  merged.additionalInclude = uniqueAdditional;
+  merged.additionalInclude = mergeUniqueStringArray(allAdditional);
 
   return merged;
 }

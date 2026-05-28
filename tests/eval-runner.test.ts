@@ -966,4 +966,52 @@ describe("eval runner", () => {
 
     expect(result.gate?.passed).toBe(true);
   });
+
+  it("includes the config path when eval config JSON is malformed", async () => {
+    const brokenConfigPath = path.join(tempDir, "broken-config.json");
+    writeFileSync(brokenConfigPath, '{"embeddingProvider":"custom",', "utf-8");
+
+    await expect(
+      runEvaluation({
+        projectRoot: tempDir,
+        configPath: path.relative(tempDir, brokenConfigPath),
+        datasetPath: "benchmarks/golden/small.json",
+        outputRoot: "benchmarks/results",
+        ciMode: false,
+        reindex: false,
+      })
+    ).rejects.toThrow(new RegExp(`Failed to parse eval config JSON at ${brokenConfigPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  });
+
+  it("fails early when eval config has an invalid knowledgeBases shape", async () => {
+    const invalidConfigPath = path.join(tempDir, "invalid-shape-config.json");
+    writeFileSync(
+      invalidConfigPath,
+      JSON.stringify(
+        {
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "mock-embedding-model",
+            dimensions: 8,
+          },
+          knowledgeBases: "docs/reference",
+        },
+        null,
+        2,
+      ),
+      "utf-8"
+    );
+
+    await expect(
+      runEvaluation({
+        projectRoot: tempDir,
+        configPath: path.relative(tempDir, invalidConfigPath),
+        datasetPath: "benchmarks/golden/small.json",
+        outputRoot: "benchmarks/results",
+        ciMode: false,
+        reindex: false,
+      })
+    ).rejects.toThrow(/field 'knowledgeBases' must be an array of strings/);
+  });
 });

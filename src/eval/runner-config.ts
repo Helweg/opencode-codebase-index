@@ -7,6 +7,56 @@ import { getGlobalIndexPath, resolveProjectConfigPath, resolveProjectIndexPath }
 import { rebasePathEntries, resolveInheritedKnowledgeBaseEntries } from "../config/rebase.js";
 import { parseConfig, type SearchConfig as ConfigSearchConfig } from "../config/schema.js";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function validateEvalConfigShape(rawConfig: unknown, filePath: string): Record<string, unknown> {
+  if (!isRecord(rawConfig)) {
+    throw new Error(`Eval config at ${filePath} must contain a JSON object at the root.`);
+  }
+
+  const config = rawConfig;
+
+  if (config.knowledgeBases !== undefined && !isStringArray(config.knowledgeBases)) {
+    throw new Error(`Eval config at ${filePath} field 'knowledgeBases' must be an array of strings.`);
+  }
+  if (config.additionalInclude !== undefined && !isStringArray(config.additionalInclude)) {
+    throw new Error(`Eval config at ${filePath} field 'additionalInclude' must be an array of strings.`);
+  }
+  if (config.include !== undefined && !isStringArray(config.include)) {
+    throw new Error(`Eval config at ${filePath} field 'include' must be an array of strings.`);
+  }
+  if (config.exclude !== undefined && !isStringArray(config.exclude)) {
+    throw new Error(`Eval config at ${filePath} field 'exclude' must be an array of strings.`);
+  }
+
+  for (const section of ["customProvider", "indexing", "search", "debug", "reranker"] as const) {
+    const value = config[section];
+    if (value !== undefined && !isRecord(value)) {
+      throw new Error(`Eval config at ${filePath} field '${section}' must be an object.`);
+    }
+  }
+
+  return config;
+}
+
+function parseJsonConfigFile(filePath: string): unknown {
+  try {
+    return validateEvalConfigShape(JSON.parse(readFileSync(filePath, "utf-8")), filePath);
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message.startsWith("Eval config at ")) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse eval config JSON at ${filePath}: ${message}`);
+  }
+}
+
 export function toAbsolute(projectRoot: string, maybeRelative: string): string {
   return path.isAbsolute(maybeRelative) ? maybeRelative : path.join(projectRoot, maybeRelative);
 }
@@ -48,7 +98,7 @@ function loadRawConfig(projectRoot: string, configPath?: string): unknown {
   const fromPath = configPath ? toAbsolute(projectRoot, configPath) : null;
   if (fromPath && existsSync(fromPath)) {
     return normalizeEvalConfigKnowledgeBases(
-      JSON.parse(readFileSync(fromPath, "utf-8")),
+      parseJsonConfigFile(fromPath),
       projectRoot,
       fromPath,
     );
@@ -57,7 +107,7 @@ function loadRawConfig(projectRoot: string, configPath?: string): unknown {
   const projectConfig = resolveProjectConfigPath(projectRoot);
   if (existsSync(projectConfig)) {
     return normalizeEvalConfigKnowledgeBases(
-      JSON.parse(readFileSync(projectConfig, "utf-8")),
+      parseJsonConfigFile(projectConfig),
       projectRoot,
       projectConfig,
     );
@@ -65,7 +115,7 @@ function loadRawConfig(projectRoot: string, configPath?: string): unknown {
 
   const globalConfig = path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
   if (existsSync(globalConfig)) {
-    return JSON.parse(readFileSync(globalConfig, "utf-8"));
+    return parseJsonConfigFile(globalConfig);
   }
 
   return {};
@@ -109,7 +159,7 @@ export function ensureLocalEvalProjectConfig(projectRoot: string, configPath?: s
   }
 
   const sourceConfig = normalizeEvalConfigKnowledgeBases(
-    JSON.parse(readFileSync(resolvedConfigPath, "utf-8")),
+    parseJsonConfigFile(resolvedConfigPath),
     projectRoot,
     resolvedConfigPath,
   );

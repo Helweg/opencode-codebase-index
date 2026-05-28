@@ -10,7 +10,13 @@ import type {
 
 function parseJsonFile(filePath: string): unknown {
   const content = readFileSync(filePath, "utf-8");
-  return JSON.parse(content);
+
+  try {
+    return JSON.parse(content);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse JSON from ${filePath}: ${message}`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
