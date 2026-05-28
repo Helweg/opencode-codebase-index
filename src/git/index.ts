@@ -40,12 +40,10 @@ export function resolveGitDir(repoRoot: string): string | null {
     const stat = statSync(gitPath);
     
     if (stat.isDirectory()) {
-      // Normal repo: .git is a directory
       return gitPath;
     }
     
     if (stat.isFile()) {
-      // Worktree: .git is a file with gitdir pointer
       const content = readFileSync(gitPath, "utf-8").trim();
       const match = content.match(/^gitdir:\s*(.+)$/);
       if (match) {

@@ -14,17 +14,16 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
     version: "0.5.1",
   });
 
-  const runtimeConfig = config;
-  let indexer = new Indexer(projectRoot, runtimeConfig);
+  let indexer = new Indexer(projectRoot, config);
   let initialized = false;
 
   function refreshIndexerFromConfig(): void {
-    indexer = new Indexer(projectRoot, runtimeConfig);
+    indexer = new Indexer(projectRoot, config);
     initialized = false;
   }
 
   function shouldForceLocalizeProjectIndex(): boolean {
-    if (runtimeConfig.scope !== "project") {
+    if (config.scope !== "project") {
       return false;
     }
 
