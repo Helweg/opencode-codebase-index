@@ -2633,7 +2633,6 @@ export class Indexer {
 
     this.provider = createEmbeddingProvider(this.configuredProviderInfo);
 
-    // Initialize reranker if configured
     if (this.config.reranker?.enabled) {
       this.reranker = createReranker(this.config.reranker);
       if (this.reranker.isAvailable()) {
@@ -3354,22 +3353,16 @@ export class Indexer {
       database.upsertChunksBatch(chunkDataBatch);
     }
 
-
-    // ── Call Graph Extraction ────────────────────────────────────────
-    // Extract symbols and call edges from changed files.
     const allSymbolIds = new Set<string>();
     const symbolsByFile = new Map<string, SymbolData[]>();
 
-    // For changed files: delete old symbols/edges, extract new ones
     for (let i = 0; i < parsedFiles.length; i++) {
       const parsed = parsedFiles[i];
       const changedFile = changedFiles[i];
 
-      // Clean up old call graph data for this file
       database.deleteCallEdgesByFile(parsed.path);
       database.deleteSymbolsByFile(parsed.path);
 
-      // Build symbols from parsed chunks
       const fileSymbols: SymbolData[] = [];
 
       for (const chunk of parsed.chunks) {
@@ -3415,16 +3408,13 @@ export class Indexer {
         symbolsByFile.set(parsed.path, fileSymbols);
       }
 
-      // Extract call sites from file content (only for supported languages)
       if (!fileLanguage || !CALL_GRAPH_LANGUAGES.has(fileLanguage)) continue;
 
       const callSites = extractCalls(changedFile.content, fileLanguage);
       if (callSites.length === 0) continue;
 
-      // Map each call site to its enclosing symbol
       const edges: CallEdgeData[] = [];
       for (const site of callSites) {
-        // Find the enclosing symbol (function/method that contains this call)
         const enclosingSymbol = fileSymbols.find(
           (sym) => site.line >= sym.startLine && site.line <= sym.endLine
         );
@@ -3457,7 +3447,6 @@ export class Indexer {
       }
     }
 
-    // Collect symbol IDs from unchanged files for branch association
     for (const filePath of unchangedFilePaths) {
       const existingSymbols = database.getSymbolsByFile(filePath);
       for (const sym of existingSymbols) {
@@ -3826,7 +3815,6 @@ export class Indexer {
       this.saveFileHashCache();
     }
 
-    // Auto-GC after indexing: check if orphan count exceeds threshold
     if (this.config.indexing.autoGc && stats.removedChunks > 0) {
       const gcReset = await this.maybeRunOrphanGc();
       if (gcReset) {
@@ -4341,12 +4329,10 @@ export class Indexer {
     this.fileHashCache.clear();
     this.saveFileHashCache();
 
-    // Clear persisted index data across all branches so force rebuilds
     // cannot reuse stale chunks, symbols, or embeddings from a prior provider.
     database.clearAllIndexedData();
     this.saveFailedBatches([]);
 
-    // Clear index metadata so compatibility is re-evaluated from scratch
     database.deleteMetadata("index.version");
     database.deleteMetadata("index.embeddingProvider");
     database.deleteMetadata("index.embeddingModel");
@@ -4358,7 +4344,6 @@ export class Indexer {
     database.deleteMetadata("index.createdAt");
     database.deleteMetadata("index.updatedAt");
 
-    // Re-validate compatibility (no stored metadata = compatible)
     this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo!);
   }
 
