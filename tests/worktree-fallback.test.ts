@@ -108,6 +108,25 @@ describe("worktree fallback (issue #60)", () => {
     }
   });
 
+  it("falls back to project config when the global config is malformed", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "worktree-fallback-home-"));
+
+    try {
+      vi.stubEnv("HOME", homeDir);
+      const globalConfigPath = path.join(homeDir, ".config", "opencode", "codebase-index.json");
+      fs.mkdirSync(path.dirname(globalConfigPath), { recursive: true });
+      fs.writeFileSync(globalConfigPath, '{"debug":', "utf-8");
+
+      const loaded = loadMergedConfig(worktreeDir) as Record<string, unknown>;
+
+      expect(loaded.scope).toBe("project");
+      expect(loaded.additionalInclude).toEqual(["docs/**/*.md"]);
+      expect(loaded.knowledgeBases).toEqual(["docs/reference"]);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps project object overrides as wholesale replacements instead of deep-merging", () => {
     const globalConfigPath = path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
 

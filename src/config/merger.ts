@@ -153,10 +153,25 @@ export function loadProjectConfigLayer(projectRoot: string): Record<string, unkn
  */
 export function loadMergedConfig(projectRoot: string): unknown {
   const globalConfigPath = os.homedir() + "/.config/opencode/codebase-index.json";
-  const globalConfig = loadJsonFile(globalConfigPath) as Record<string, unknown> | null;
   const projectConfigPath = resolveProjectConfigPath(projectRoot);
+  let globalConfig: Record<string, unknown> | null = null;
+  let globalConfigError: Error | null = null;
+
+  try {
+    globalConfig = loadJsonFile(globalConfigPath) as Record<string, unknown> | null;
+  } catch (error: unknown) {
+    globalConfigError = error instanceof Error ? error : new Error(String(error));
+  }
+
   const projectConfig = loadJsonFile(projectConfigPath) as Record<string, unknown> | null;
   const normalizedProjectConfig = loadProjectConfigLayer(projectRoot);
+
+  if (globalConfigError) {
+    if (!projectConfig) {
+      throw globalConfigError;
+    }
+    globalConfig = null;
+  }
 
   // If neither exists, return empty
   if (!globalConfig && !projectConfig) {
