@@ -532,9 +532,24 @@ func _ready() -> void:
       expect(takeDamage).toBeDefined();
       expect(takeDamage!.callType).toBe("MethodCall");
 
-      const emit = calls.find((c) => c.calleeName === "emit");
+      // `signal.emit()` resolves to the signal name (not the `emit` method)
+      // so it can match the indexed signal symbol.
+      const emit = calls.find((c) => c.calleeName === "health_changed");
       expect(emit).toBeDefined();
       expect(emit!.callType).toBe("MethodCall");
+      expect(calls.some((c) => c.calleeName === "emit")).toBe(false);
+    });
+
+    it("should resolve Class.new() to the class name as a constructor", () => {
+      const content = `
+func spawn() -> void:
+    var e = Enemy.new()
+`;
+      const calls = extractCalls(content, "gdscript");
+      const ctor = calls.find((c) => c.calleeName === "Enemy");
+      expect(ctor).toBeDefined();
+      expect(ctor!.callType).toBe("Constructor");
+      expect(calls.some((c) => c.calleeName === "new")).toBe(false);
     });
 
     it("should preserve case (GDScript is case-sensitive)", () => {

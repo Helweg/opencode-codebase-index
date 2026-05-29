@@ -451,11 +451,52 @@ mod tests {
             "Expected self.take_damage() as MethodCall, got: {:?}",
             calls
         );
+        // `signal.emit()` must resolve to the signal name, not the `emit`
+        // method, so it can match the indexed `signal_statement` symbol.
         assert!(
             calls
                 .iter()
-                .any(|c| c.callee_name == "emit" && c.call_type == CallType::MethodCall),
-            "Expected health_changed.emit() as MethodCall, got: {:?}",
+                .any(|c| c.callee_name == "health_changed" && c.call_type == CallType::MethodCall),
+            "Expected health_changed.emit() to target the signal, got: {:?}",
+            calls
+        );
+        assert!(
+            !calls.iter().any(|c| c.callee_name == "emit"),
+            "`emit` must not leak as a callee, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_signal_emit_chained() {
+        // `self.<signal>.emit()` must still target the signal name.
+        let code = "func _ready() -> void:\n    self.health_changed.emit(health)\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "health_changed" && c.call_type == CallType::MethodCall),
+            "Expected chained self.health_changed.emit() to target the signal, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_instantiation() {
+        // `Class.new()` must resolve to the class name (a constructor call),
+        // not the `new` method which is never indexed as a symbol.
+        let code = "func spawn() -> void:\n    var e = Enemy.new()\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "Enemy" && c.call_type == CallType::Constructor),
+            "Expected Enemy.new() as Constructor targeting the class, got: {:?}",
+            calls
+        );
+        assert!(
+            !calls.iter().any(|c| c.callee_name == "new"),
+            "`new` must not leak as a callee, got: {:?}",
             calls
         );
     }
