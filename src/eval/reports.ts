@@ -32,8 +32,7 @@ export function loadSummary(summaryPath: string, options?: LoadSummaryOptions): 
       throw error;
     }
 
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to load eval summary at ${summaryPath}: ${message}`);
+    throw new Error(`Failed to load eval summary at ${summaryPath}: ${String(error)}`);
   }
 }
 

@@ -173,17 +173,14 @@ export function loadMergedConfig(projectRoot: string): unknown {
     globalConfig = null;
   }
 
-  // If neither exists, return empty
   if (!globalConfig && !projectConfig) {
     return {};
   }
 
-  // If only global exists, return it
   if (!projectConfig && globalConfig) {
     return globalConfig;
   }
 
-  // If only project exists, return it
   if (!globalConfig && projectConfig) {
     return normalizedProjectConfig;
   }
@@ -192,7 +189,7 @@ export function loadMergedConfig(projectRoot: string): unknown {
     return globalConfig ?? normalizedProjectConfig;
   }
 
-  // Both exist - start with global config as base
+
   const merged: Record<string, unknown> = { ...globalConfig };
 
   for (const key of PROJECT_OVERRIDE_KEYS) {

@@ -27,6 +27,10 @@ import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config
 import { resolveWorktreeMainRepoRoot } from "../git/index.js";
 import { getConfigPath, loadEditableConfig, loadRuntimeConfig, saveConfig } from "./config-state.js";
 
+function ensureStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? (value as string[]) : [];
+}
+
 const z = tool.schema;
 
 let sharedIndexer: Indexer | null = null;
@@ -333,12 +337,10 @@ export const add_knowledge_base: ToolDefinition = tool({
   async execute(args) {
     const inputPath = args.path.trim();
 
-    // Resolve the path
     const resolvedPath = path.isAbsolute(inputPath)
       ? inputPath
       : resolveKnowledgeBasePath(inputPath, sharedProjectRoot);
 
-    // Validate the directory exists
     if (!existsSync(resolvedPath)) {
       return `Error: Directory does not exist: ${resolvedPath}`;
     }
@@ -352,20 +354,15 @@ export const add_knowledge_base: ToolDefinition = tool({
       return `Error: Cannot access directory: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`;
     }
 
-    // Load current config
     const config = loadEditableConfig(sharedProjectRoot);
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
-      : [];
+    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
-    // Check if already added (normalize paths for comparison)
     const alreadyExists = hasMatchingKnowledgeBasePath(knowledgeBases, resolvedPath, sharedProjectRoot);
 
     if (alreadyExists) {
       return `Knowledge base already configured: ${resolvedPath}`;
     }
 
-    // Add the knowledge base
     knowledgeBases.push(resolvedPath);
     config.knowledgeBases = knowledgeBases;
     saveConfig(sharedProjectRoot, config);
@@ -386,9 +383,7 @@ export const list_knowledge_bases: ToolDefinition = tool({
   args: {},
   async execute() {
     const config = loadRuntimeConfig(sharedProjectRoot);
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
-      : [];
+    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
     if (knowledgeBases.length === 0) {
       return "No knowledge bases configured. Use add_knowledge_base to add folders.";
@@ -427,17 +422,13 @@ export const remove_knowledge_base: ToolDefinition = tool({
   async execute(args) {
     const inputPath = args.path.trim();
 
-    // Load current config
     const config = loadEditableConfig(sharedProjectRoot);
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
-      : [];
+    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
     if (knowledgeBases.length === 0) {
       return "No knowledge bases configured.";
     }
 
-    // Find and remove the knowledge base
     const index = findKnowledgeBasePathIndex(knowledgeBases, inputPath, sharedProjectRoot);
 
     if (index === -1) {
