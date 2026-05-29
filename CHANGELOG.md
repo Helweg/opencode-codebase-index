@@ -7,11 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Subsystem module splits**: Split large config, embeddings, eval, MCP, watcher, git, tools, routing, and utility modules into smaller focused files while preserving public entrypoints (#92).
+- **AI slop removal**: Trimmed redundant comments and small wrapper noise across config, eval, runtime, indexer, tools, and utils with behavior-neutral refactors (#93).
+
 ### Fixed
 - **SSRF protection for custom embedding provider**: Custom provider URLs are now validated against cloud metadata endpoints (169.254.x.x, metadata.google.internal) and non-HTTP protocols to prevent server-side request forgery via malicious config files.
 - **Knowledge base path restrictions**: `add_knowledge_base` now blocks sensitive system directories (`/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/var/run`, `/var/log`) and home dotdirs (`.ssh`, `.gnupg`, `.aws`, `.config/gcloud`, `.docker`, `.kube`). Symlinks are resolved before checking.
 - **Google API key moved to header**: The Google embedding provider now sends the API key via the `x-goog-api-key` header instead of a URL query parameter, preventing credential exposure in logs and proxies.
 - **Error response truncation**: All embedding providers now truncate error response bodies to 500 characters, preventing reflection of potentially sensitive data from misconfigured or malicious endpoints.
+- **Config and eval loading hardening**: File-specific parse/shape errors, knowledge-base/include path rebasing fixes, and malformed eval summary coverage (#92).
+- **Command and indexer diagnostics**: Surface command file read failures and warn-level cache recovery details for corrupted persisted state (#92).
 
 ## [0.8.1] - 2026-05-22
 
