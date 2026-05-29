@@ -61,18 +61,19 @@ export class GoogleEmbeddingProvider extends BaseEmbeddingProvider<EmbeddingProv
         }));
 
         const response = await fetch(
-          `${this.credentials.baseUrl}/models/${this.modelInfo.model}:batchEmbedContents?key=${this.credentials.apiKey}`,
+          `${this.credentials.baseUrl}/models/${this.modelInfo.model}:batchEmbedContents`,
           {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
+              ...(this.credentials.apiKey && { "x-goog-api-key": this.credentials.apiKey }),
             },
             body: JSON.stringify({ requests }),
           }
         );
 
         if (!response.ok) {
-          const error = await response.text();
+          const error = (await response.text()).slice(0, 500);
           throw new Error(`Google embedding API error: ${response.status} - ${error}`);
         }
 

@@ -36,7 +36,7 @@ export class GitHubCopilotEmbeddingProvider extends BaseEmbeddingProvider<Embedd
     });
 
     if (!response.ok) {
-      const error = await response.text();
+      const error = (await response.text()).slice(0, 500);
       throw new Error(`GitHub Copilot embedding API error: ${response.status} - ${error}`);
     }
 

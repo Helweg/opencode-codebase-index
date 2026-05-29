@@ -115,7 +115,7 @@ export class OllamaEmbeddingProvider extends BaseEmbeddingProvider<EmbeddingProv
     });
 
     if (!response.ok) {
-      const error = await response.text();
+      const error = (await response.text()).slice(0, 500);
       throw new Error(`Ollama embedding API error: ${response.status} - ${error}`);
     }
 

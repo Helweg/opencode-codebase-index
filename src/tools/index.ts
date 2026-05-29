@@ -21,11 +21,12 @@ import {
   hasMatchingKnowledgeBasePath,
   resolveKnowledgeBasePath,
 } from "./knowledge-base-paths.js";
-import { existsSync, statSync } from "fs";
+import { existsSync, realpathSync, statSync } from "fs";
 import * as path from "path";
 import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
 import { resolveWorktreeMainRepoRoot } from "../git/index.js";
 import { getConfigPath, loadEditableConfig, loadRuntimeConfig, saveConfig } from "./config-state.js";
+import * as os from "os";
 
 function ensureStringArray(value: unknown): string[] {
   return Array.isArray(value) ? (value as string[]) : [];
@@ -337,38 +338,75 @@ export const add_knowledge_base: ToolDefinition = tool({
   async execute(args) {
     const inputPath = args.path.trim();
 
-    const resolvedPath = path.isAbsolute(inputPath)
-      ? inputPath
-      : resolveKnowledgeBasePath(inputPath, sharedProjectRoot);
+    const normalizedPath = path.resolve(
+      path.isAbsolute(inputPath)
+        ? inputPath
+        : resolveKnowledgeBasePath(inputPath, sharedProjectRoot)
+    );
 
-    if (!existsSync(resolvedPath)) {
-      return `Error: Directory does not exist: ${resolvedPath}`;
+    if (!existsSync(normalizedPath)) {
+      return `Error: Directory does not exist: ${normalizedPath}`;
+    }
+
+    // Resolve symlinks to get the real path for security checks only
+    let realPath: string;
+    try {
+      realPath = realpathSync(normalizedPath);
+    } catch {
+      return `Error: Cannot resolve path: ${normalizedPath}`;
+    }
+
+    // Security: block sensitive system directories (check against real path to prevent symlink bypass)
+    const blockedPrefixes = [
+      "/etc",
+      "/proc",
+      "/sys",
+      "/dev",
+      "/boot",
+      "/root",
+      "/var/run",
+      "/var/log",
+    ];
+    const homeDir = os.homedir();
+    const sensitiveDotDirs = [".ssh", ".gnupg", ".aws", ".config/gcloud", ".docker", ".kube"];
+
+    for (const prefix of blockedPrefixes) {
+      if (realPath === prefix || realPath.startsWith(prefix + "/")) {
+        return `Error: Adding system directory as knowledge base is not allowed: ${normalizedPath}`;
+      }
+    }
+
+    for (const dotDir of sensitiveDotDirs) {
+      const sensitiveDir = path.join(homeDir, dotDir);
+      if (realPath === sensitiveDir || realPath.startsWith(sensitiveDir + "/")) {
+        return `Error: Adding sensitive directory as knowledge base is not allowed: ${normalizedPath}`;
+      }
     }
 
     try {
-      const stat = statSync(resolvedPath);
+      const stat = statSync(normalizedPath);
       if (!stat.isDirectory()) {
-        return `Error: Path is not a directory: ${resolvedPath}`;
+        return `Error: Path is not a directory: ${normalizedPath}`;
       }
     } catch (error) {
-      return `Error: Cannot access directory: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`;
+      return `Error: Cannot access directory: ${normalizedPath} - ${error instanceof Error ? error.message : String(error)}`;
     }
 
     const config = loadEditableConfig(sharedProjectRoot);
     const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
-    const alreadyExists = hasMatchingKnowledgeBasePath(knowledgeBases, resolvedPath, sharedProjectRoot);
+    const alreadyExists = hasMatchingKnowledgeBasePath(knowledgeBases, normalizedPath, sharedProjectRoot);
 
     if (alreadyExists) {
-      return `Knowledge base already configured: ${resolvedPath}`;
+      return `Knowledge base already configured: ${normalizedPath}`;
     }
 
-    knowledgeBases.push(resolvedPath);
+    knowledgeBases.push(normalizedPath);
     config.knowledgeBases = knowledgeBases;
     saveConfig(sharedProjectRoot, config);
     refreshIndexerFromConfig();
 
-    let result = `${resolvedPath}\n`;
+    let result = `${normalizedPath}\n`;
     result += `Total knowledge bases: ${knowledgeBases.length}\n`;
     result += `Config saved to: ${getConfigPath(sharedProjectRoot)}\n`;
     result += `\nRun /index to rebuild the index with the new knowledge base.`;

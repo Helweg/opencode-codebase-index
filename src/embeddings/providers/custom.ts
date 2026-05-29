@@ -4,6 +4,7 @@ import {
   CustomProviderNonRetryableError,
   type EmbeddingBatchResult,
 } from "../provider-types.js";
+import { sanitizeUrlForError, validateExternalUrl } from "../../utils/url-validation.js";
 
 export class CustomEmbeddingProvider extends BaseEmbeddingProvider<CustomModelInfo> {
   public constructor(credentials: ProviderCredentials, modelInfo: CustomModelInfo) {
@@ -40,13 +41,22 @@ export class CustomEmbeddingProvider extends BaseEmbeddingProvider<CustomModelIn
     }
 
     const baseUrl = this.credentials.baseUrl ?? "";
+    const fullUrl = `${baseUrl}/embeddings`;
+
+    const urlCheck = validateExternalUrl(fullUrl);
+    if (!urlCheck.valid) {
+      throw new CustomProviderNonRetryableError(
+        `Custom embedding provider URL blocked (SSRF protection): ${urlCheck.reason}`
+      );
+    }
+
     const timeoutMs = this.modelInfo.timeoutMs;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/embeddings`, {
+      response = await fetch(fullUrl, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -57,7 +67,7 @@ export class CustomEmbeddingProvider extends BaseEmbeddingProvider<CustomModelIn
       });
     } catch (error: unknown) {
       if (error instanceof Error && error.name === "AbortError") {
-        throw new Error(`Custom embedding API request timed out after ${timeoutMs}ms for ${baseUrl}/embeddings`);
+        throw new Error(`Custom embedding API request timed out after ${timeoutMs}ms for ${sanitizeUrlForError(fullUrl)}`);
       }
       throw error;
     } finally {
@@ -65,7 +75,7 @@ export class CustomEmbeddingProvider extends BaseEmbeddingProvider<CustomModelIn
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = (await response.text()).slice(0, 500);
       if (response.status >= 400 && response.status < 500 && response.status !== 429) {
         throw new CustomProviderNonRetryableError(`Custom embedding API error (non-retryable): ${response.status} - ${errorText}`);
       }

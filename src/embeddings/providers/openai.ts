@@ -25,7 +25,7 @@ export class OpenAIEmbeddingProvider extends BaseEmbeddingProvider<EmbeddingProv
     });
 
     if (!response.ok) {
-      const error = await response.text();
+      const error = (await response.text()).slice(0, 500);
       throw new Error(`OpenAI embedding API error: ${response.status} - ${error}`);
     }
 

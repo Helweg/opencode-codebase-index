@@ -363,6 +363,7 @@ Query the call graph to find callers or callees of a function/method. Automatica
 Add a folder as a knowledge base to be indexed alongside project code.
 - **Use for**: Indexing external documentation, API references, example programs.
 - **Parameters**: `path` (folder path, absolute or relative), `reindex` (optional, default `true`).
+- **Restrictions**: System directories (`/etc`, `/proc`, `/sys`, `/dev`) and sensitive home directories (`.ssh`, `.gnupg`, `.aws`, `.docker`, `.kube`) are blocked. Symlinks are resolved before validation.
 - **Example**: `add_knowledge_base(path="/path/to/docs")`
 
 ### `list_knowledge_bases`
