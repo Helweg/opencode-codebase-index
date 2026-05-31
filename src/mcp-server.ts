@@ -1,31 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import * as path from "path";
 import { existsSync } from "fs";
 
 import { Indexer } from "./indexer/index.js";
-import type { ParsedCodebaseIndexConfig, LogLevel } from "./config/schema.js";
-import { loadProjectConfigLayer, materializeLocalProjectConfig } from "./config/merger.js";
-import { formatDefinitionLookup, formatHealthCheck, formatIndexStats, formatStatus } from "./tools/utils.js";
-import { formatCostEstimate } from "./utils/cost.js";
-import type { LogEntry } from "./utils/logger.js";
+import type { ParsedCodebaseIndexConfig } from "./config/schema.js";
 import { resolveWorktreeMainRepoRoot } from "./git/index.js";
-
-const MAX_CONTENT_LINES = 30;
-
-function truncateContent(content: string): string {
-  const lines = content.split("\n");
-  if (lines.length <= MAX_CONTENT_LINES) return content;
-  return (
-    lines.slice(0, MAX_CONTENT_LINES).join("\n") +
-    `\n// ... (${lines.length - MAX_CONTENT_LINES} more lines)`
-  );
-}
-
-const CHUNK_TYPE_ENUM = [
-  "function", "class", "method", "interface", "type",
-  "enum", "struct", "impl", "trait", "module", "other",
-] as const;
+import { registerMcpPrompts } from "./mcp-server/register-prompts.js";
+import { registerMcpTools } from "./mcp-server/register-tools.js";
 
 export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndexConfig): McpServer {
   const server = new McpServer({
@@ -33,17 +14,16 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
     version: "0.5.1",
   });
 
-  const runtimeConfig = config;
-  let indexer = new Indexer(projectRoot, runtimeConfig);
+  let indexer = new Indexer(projectRoot, config);
   let initialized = false;
 
   function refreshIndexerFromConfig(): void {
-    indexer = new Indexer(projectRoot, runtimeConfig);
+    indexer = new Indexer(projectRoot, config);
     initialized = false;
   }
 
   function shouldForceLocalizeProjectIndex(): boolean {
-    if (runtimeConfig.scope !== "project") {
+    if (config.scope !== "project") {
       return false;
     }
 
@@ -64,361 +44,15 @@ export function createMcpServer(projectRoot: string, config: ParsedCodebaseIndex
     }
   }
 
-  // --- Tools ---
+  registerMcpTools(server, {
+    projectRoot,
+    ensureInitialized,
+    getIndexer: () => indexer,
+    refreshIndexerFromConfig,
+    shouldForceLocalizeProjectIndex,
+  });
 
-  server.tool(
-    "codebase_search",
-    "Search codebase by MEANING, not keywords. Returns full code content. For just finding WHERE code is (saves ~90% tokens), use codebase_peek instead.",
-    {
-      query: z.string().describe("Natural language description of what code you're looking for. Describe behavior, not syntax."),
-      limit: z.number().optional().default(5).describe("Maximum number of results to return"),
-      fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
-      directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-      chunkType: z.enum(CHUNK_TYPE_ENUM).optional().describe("Filter by code chunk type"),
-      contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
-    },
-    async (args) => {
-      await ensureInitialized();
-      const results = await indexer.search(args.query, args.limit ?? 5, {
-        fileType: args.fileType,
-        directory: args.directory,
-        chunkType: args.chunkType,
-        contextLines: args.contextLines,
-      });
-
-      if (results.length === 0) {
-        return { content: [{ type: "text", text: "No matching code found. Try a different query or run index_codebase first." }] };
-      }
-
-      const formatted = results.map((r, idx) => {
-        const header = r.name
-          ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-          : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
-        return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
-      });
-
-      return { content: [{ type: "text", text: `Found ${results.length} results for "${args.query}":\n\n${formatted.join("\n\n")}` }] };
-    },
-  );
-
-  server.tool(
-    "codebase_peek",
-    "Quick lookup of code locations by meaning. Returns only metadata (file, line, name, type) WITHOUT code content. Saves ~90% tokens vs codebase_search.",
-    {
-      query: z.string().describe("Natural language description of what code you're looking for."),
-      limit: z.number().optional().default(10).describe("Maximum number of results to return"),
-      fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
-      directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-      chunkType: z.enum(CHUNK_TYPE_ENUM).optional().describe("Filter by code chunk type"),
-    },
-    async (args) => {
-      await ensureInitialized();
-      const results = await indexer.search(args.query, args.limit ?? 10, {
-        fileType: args.fileType,
-        directory: args.directory,
-        chunkType: args.chunkType,
-        metadataOnly: true,
-      });
-
-      if (results.length === 0) {
-        return { content: [{ type: "text", text: "No matching code found. Try a different query or run index_codebase first." }] };
-      }
-
-      const formatted = results.map((r, idx) => {
-        const location = `${r.filePath}:${r.startLine}-${r.endLine}`;
-        const name = r.name ? `"${r.name}"` : "(anonymous)";
-        return `[${idx + 1}] ${r.chunkType} ${name} at ${location} (score: ${r.score.toFixed(2)})`;
-      });
-
-      return { content: [{ type: "text", text: `Found ${results.length} locations for "${args.query}":\n\n${formatted.join("\n")}\n\nUse Read tool to examine specific files.` }] };
-    },
-  );
-
-  server.tool(
-    "index_codebase",
-    "Index the codebase for semantic search. Creates vector embeddings of code chunks. Incremental - only re-indexes changed files. Run before first codebase_search.",
-    {
-      force: z.boolean().optional().default(false).describe("Force reindex even if already indexed"),
-      estimateOnly: z.boolean().optional().default(false).describe("Only show cost estimate without indexing"),
-      verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
-    },
-    async (args) => {
-      if (args.estimateOnly) {
-        await ensureInitialized();
-        const estimate = await indexer.estimateCost();
-        return { content: [{ type: "text", text: formatCostEstimate(estimate) }] };
-      }
-
-      if (args.force) {
-        if (shouldForceLocalizeProjectIndex()) {
-          materializeLocalProjectConfig(projectRoot, loadProjectConfigLayer(projectRoot));
-          refreshIndexerFromConfig();
-        }
-        await ensureInitialized();
-        await indexer.clearIndex();
-        refreshIndexerFromConfig();
-        await ensureInitialized();
-      } else {
-        await ensureInitialized();
-      }
-
-      const stats = await indexer.index();
-      return { content: [{ type: "text", text: formatIndexStats(stats, args.verbose ?? false) }] };
-    },
-  );
-
-  server.tool(
-    "index_status",
-    "Check the status of the codebase index. Shows whether the codebase is indexed, how many chunks are stored, and the embedding provider being used.",
-    {},
-    async () => {
-      await ensureInitialized();
-      const status = await indexer.getStatus();
-      return { content: [{ type: "text", text: formatStatus(status) }] };
-    },
-  );
-
-  server.tool(
-    "index_health_check",
-    "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
-    {},
-    async () => {
-      await ensureInitialized();
-      const result = await indexer.healthCheck();
-      return { content: [{ type: "text", text: formatHealthCheck(result) }] };
-    },
-  );
-
-  server.tool(
-    "index_metrics",
-    "Get metrics and performance statistics for the codebase index. Requires debug.enabled=true and debug.metrics=true in config.",
-    {},
-    async () => {
-      await ensureInitialized();
-      const logger = indexer.getLogger();
-
-      if (!logger.isEnabled()) {
-        return { content: [{ type: "text", text: "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```" }] };
-      }
-
-      if (!logger.isMetricsEnabled()) {
-        return { content: [{ type: "text", text: "Metrics collection is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```" }] };
-      }
-
-      return { content: [{ type: "text", text: logger.formatMetrics() }] };
-    },
-  );
-
-  server.tool(
-    "index_logs",
-    "Get recent debug logs from the codebase indexer. Requires debug.enabled=true in config.",
-    {
-      limit: z.number().optional().default(20).describe("Maximum number of log entries to return"),
-      category: z.enum(["search", "embedding", "cache", "gc", "branch", "general"]).optional().describe("Filter by log category"),
-      level: z.enum(["error", "warn", "info", "debug"]).optional().describe("Filter by minimum log level"),
-    },
-    async (args) => {
-      await ensureInitialized();
-      const logger = indexer.getLogger();
-
-      if (!logger.isEnabled()) {
-        return { content: [{ type: "text", text: "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true\n  }\n}\n```" }] };
-      }
-
-      let logs: LogEntry[];
-      if (args.category) {
-        logs = logger.getLogsByCategory(args.category, args.limit);
-      } else if (args.level) {
-        logs = logger.getLogsByLevel(args.level as LogLevel, args.limit);
-      } else {
-        logs = logger.getLogs(args.limit);
-      }
-
-      if (logs.length === 0) {
-        return { content: [{ type: "text", text: "No logs recorded yet. Logs are captured during indexing and search operations." }] };
-      }
-
-      const text = logs.map(l => {
-        const dataStr = l.data ? ` ${JSON.stringify(l.data)}` : "";
-        return `[${l.timestamp}] [${l.level.toUpperCase()}] [${l.category}] ${l.message}${dataStr}`;
-      }).join("\n");
-
-      return { content: [{ type: "text", text }] };
-    },
-  );
-
-  server.tool(
-    "find_similar",
-    "Find code similar to a given snippet. Use for duplicate detection, pattern discovery, or refactoring prep.",
-    {
-      code: z.string().describe("The code snippet to find similar code for"),
-      limit: z.number().optional().default(10).describe("Maximum number of results to return"),
-      fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
-      directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-      chunkType: z.enum(CHUNK_TYPE_ENUM).optional().describe("Filter by code chunk type"),
-      excludeFile: z.string().optional().describe("Exclude results from this file path"),
-    },
-    async (args) => {
-      await ensureInitialized();
-      const results = await indexer.findSimilar(args.code, args.limit ?? 10, {
-        fileType: args.fileType,
-        directory: args.directory,
-        chunkType: args.chunkType,
-        excludeFile: args.excludeFile,
-      });
-
-      if (results.length === 0) {
-        return { content: [{ type: "text", text: "No similar code found. Try a different snippet or run index_codebase first." }] };
-      }
-
-      const formatted = results.map((r, idx) => {
-        const header = r.name
-          ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-          : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
-        return `${header} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
-      });
-
-      return { content: [{ type: "text", text: `Found ${results.length} similar code blocks:\n\n${formatted.join("\n\n")}` }] };
-    },
-  );
-
-  server.tool(
-    "implementation_lookup",
-    "Jump to symbol definition. Find WHERE something is defined. Returns the authoritative source location(s). Prefers real implementation files over tests, docs, examples, and fixtures.",
-    {
-      query: z.string().describe("Symbol name or natural language description (e.g., 'validateToken', 'where is the payment handler defined')"),
-      limit: z.number().optional().default(5).describe("Maximum number of results"),
-      fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py')"),
-      directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils')"),
-    },
-    async (args) => {
-      await ensureInitialized();
-      const results = await indexer.search(args.query, args.limit ?? 5, {
-        fileType: args.fileType,
-        directory: args.directory,
-        definitionIntent: true,
-      });
-
-      return { content: [{ type: "text", text: formatDefinitionLookup(results, args.query) }] };
-    },
-  );
-
-  server.tool(
-    "call_graph",
-    "Query the call graph to find callers or callees of a function/method. Use to understand code flow and dependencies.",
-    {
-      name: z.string().describe("Function or method name to query"),
-      direction: z.enum(["callers", "callees"]).default("callers").describe("Direction: 'callers' finds who calls this function, 'callees' finds what this function calls"),
-      symbolId: z.string().optional().describe("Symbol ID (required for 'callees' direction)"),
-    },
-    async (args) => {
-      await ensureInitialized();
-      if (args.direction === "callees") {
-        if (!args.symbolId) {
-          return { content: [{ type: "text", text: "Error: 'symbolId' is required when direction is 'callees'." }] };
-        }
-        const callees = await indexer.getCallees(args.symbolId);
-        if (callees.length === 0) {
-          return { content: [{ type: "text", text: `No callees found for symbol ${args.symbolId}.` }] };
-        }
-        const formatted = callees.map((e, i) =>
-          `[${i + 1}] \u2192 ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
-        );
-        return { content: [{ type: "text", text: `Callees (${callees.length}):\n\n${formatted.join("\n")}` }] };
-      }
-      const callers = await indexer.getCallers(args.name);
-      if (callers.length === 0) {
-        return { content: [{ type: "text", text: `No callers found for "${args.name}".` }] };
-      }
-      const formatted = callers.map((e, i) =>
-        `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`
-      );
-      return { content: [{ type: "text", text: `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}` }] };
-    },
-  );
-
-  // --- Prompts ---
-
-  server.prompt(
-    "search",
-    "Search codebase by meaning using semantic search",
-    { query: z.string().describe("What to search for in the codebase") },
-    (args) => ({
-      messages: [{
-        role: "user",
-        content: {
-          type: "text",
-          text: `Search the codebase for: "${args.query}"\n\nUse the codebase_search tool with this query. If you need just locations first, use codebase_peek instead to save tokens.`,
-        },
-      }],
-    }),
-  );
-
-  server.prompt(
-    "find",
-    "Find code using hybrid approach (semantic + grep)",
-    { query: z.string().describe("What to find in the codebase") },
-    (args) => ({
-      messages: [{
-        role: "user",
-        content: {
-          type: "text",
-          text: `Find code related to: "${args.query}"\n\nUse a hybrid approach:\n1. First use codebase_peek to find semantic matches by meaning\n2. Then use grep for exact identifier matches\n3. Combine results for comprehensive coverage`,
-        },
-      }],
-    }),
-  );
-
-  server.prompt(
-    "index",
-    "Index the codebase for semantic search",
-    { options: z.string().optional().describe("Options: 'force' to rebuild, 'estimate' to check costs") },
-    (args) => {
-      const opts = args.options?.toLowerCase() ?? "";
-      let instruction = "Use the index_codebase tool to index the codebase for semantic search.";
-      if (opts.includes("force")) {
-        instruction = "Use the index_codebase tool with force=true to rebuild the entire index from scratch.";
-      } else if (opts.includes("estimate")) {
-        instruction = "Use the index_codebase tool with estimateOnly=true to check the cost estimate before indexing.";
-      }
-      return {
-        messages: [{
-          role: "user",
-          content: { type: "text", text: instruction },
-        }],
-      };
-    },
-  );
-
-  server.prompt(
-    "status",
-    "Check if the codebase is indexed and ready",
-    {},
-    () => ({
-      messages: [{
-        role: "user",
-        content: {
-          type: "text",
-          text: "Use the index_status tool to check if the codebase index is ready and show its current state.",
-        },
-      }],
-    }),
-  );
-
-  server.prompt(
-    "definition",
-    "Find where a symbol is defined in the codebase",
-    { query: z.string().describe("Symbol name or description to find the definition of") },
-    (args) => ({
-      messages: [{
-        role: "user",
-        content: {
-          type: "text",
-          text: `Find the definition of: "${args.query}"\n\nUse the implementation_lookup tool to find where this symbol is defined. This prioritizes real implementation files over tests, docs, and examples. If no definition is found, fall back to codebase_search for broader discovery.`,
-        },
-      }],
-    }),
-  );
+  registerMcpPrompts(server);
 
   return server;
 }

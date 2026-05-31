@@ -882,7 +882,7 @@ export class Database {
     return this.inner.getStats();
   }
 
-  // ── Symbol methods ──────────────────────────────────────────────
+
 
   upsertSymbol(symbol: SymbolData): void {
     this.throwIfClosed();
@@ -920,7 +920,7 @@ export class Database {
     return this.inner.deleteSymbolsByFile(filePath);
   }
 
-  // ── Call Edge methods ────────────────────────────────────────────
+
 
   upsertCallEdge(edge: CallEdgeData): void {
     this.throwIfClosed();
@@ -958,7 +958,7 @@ export class Database {
     this.inner.resolveCallEdge(edgeId, toSymbolId);
   }
 
-  // ── Branch Symbol methods ────────────────────────────────────────
+
 
   addSymbolsToBranch(branch: string, symbolIds: string[]): void {
     this.throwIfClosed();
@@ -999,7 +999,7 @@ export class Database {
     return this.inner.deleteBranchSymbolsForBranch(branch, symbolIds);
   }
 
-  // ── GC methods for symbols/edges ─────────────────────────────────
+
 
   gcOrphanSymbols(): number {
     this.throwIfClosed();

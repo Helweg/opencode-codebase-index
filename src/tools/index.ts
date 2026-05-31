@@ -16,11 +16,21 @@ import {
   formatLogs,
   formatSearchResults,
 } from "./utils.js";
-import { existsSync, writeFileSync, mkdirSync, statSync } from "fs";
+import {
+  findKnowledgeBasePathIndex,
+  hasMatchingKnowledgeBasePath,
+  resolveKnowledgeBasePath,
+} from "./knowledge-base-paths.js";
+import { existsSync, realpathSync, statSync } from "fs";
 import * as path from "path";
-import { loadMergedConfig, loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
-import { resolveWritableProjectConfigPath } from "../config/paths.js";
+import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
 import { resolveWorktreeMainRepoRoot } from "../git/index.js";
+import { getConfigPath, loadEditableConfig, loadRuntimeConfig, saveConfig } from "./config-state.js";
+import * as os from "os";
+
+function ensureStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? (value as string[]) : [];
+}
 
 const z = tool.schema;
 
@@ -41,11 +51,11 @@ function refreshIndexerFromConfig(): void {
     throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");
   }
 
-  sharedIndexer = new Indexer(sharedProjectRoot, parseConfig(loadRuntimeConfig()));
+  sharedIndexer = new Indexer(sharedProjectRoot, parseConfig(loadRuntimeConfig(sharedProjectRoot)));
 }
 
 function shouldForceLocalizeProjectIndex(): boolean {
-  const currentConfig = parseConfig(loadRuntimeConfig());
+  const currentConfig = parseConfig(loadRuntimeConfig(sharedProjectRoot));
   if (currentConfig.scope !== "project") {
     return false;
   }
@@ -65,97 +75,6 @@ function getIndexer(): Indexer {
     throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");
   }
   return sharedIndexer;
-}
-
-function getConfigPath(): string {
-  return resolveWritableProjectConfigPath(sharedProjectRoot);
-}
-
-function normalizeConfigPathValue(value: string, baseDir: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-
-  const absolutePath = path.isAbsolute(trimmed) ? trimmed : path.resolve(baseDir, trimmed);
-  return path.normalize(absolutePath);
-}
-
-function serializeConfigPathValue(value: string, baseDir: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-
-  const normalizeRelativePath = (candidate: string): string => candidate.replace(/\\/g, "/");
-
-  if (!path.isAbsolute(trimmed)) {
-    return normalizeRelativePath(path.normalize(trimmed));
-  }
-
-  const relativePath = path.relative(baseDir, trimmed);
-  if (!relativePath || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))) {
-    return normalizeRelativePath(path.normalize(relativePath || "."));
-  }
-
-  return path.normalize(trimmed);
-}
-
-function normalizeKnowledgeBasePaths(config: Record<string, unknown>): Record<string, unknown> {
-  const normalized = { ...config };
-
-  if (Array.isArray(normalized.knowledgeBases)) {
-    normalized.knowledgeBases = (normalized.knowledgeBases as string[]).map(kb => {
-      return normalizeConfigPathValue(kb, sharedProjectRoot);
-    });
-  }
-
-  return normalized;
-}
-
-function loadRuntimeConfig(): Record<string, unknown> {
-  const rawConfig = loadMergedConfig(sharedProjectRoot);
-  const config: Record<string, unknown> = {};
-
-  if (rawConfig && typeof rawConfig === "object") {
-    for (const key of Object.keys(rawConfig)) {
-      config[key] = rawConfig[key as keyof typeof rawConfig];
-    }
-  }
-
-  return normalizeKnowledgeBasePaths(config);
-}
-
-function loadEditableConfig(): Record<string, unknown> {
-  const rawConfig = loadProjectConfigLayer(sharedProjectRoot);
-  const config: Record<string, unknown> = {};
-
-  if (rawConfig && typeof rawConfig === "object") {
-    for (const key of Object.keys(rawConfig)) {
-      config[key] = rawConfig[key as keyof typeof rawConfig];
-    }
-  }
-
-  return normalizeKnowledgeBasePaths(config);
-}
-
-function saveConfig(config: Record<string, unknown>): void {
-  const configPath = getConfigPath();
-  const configDir = path.dirname(configPath);
-  const configBaseDir = path.dirname(configDir);
-  if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true });
-  }
-
-  const serializableConfig: Record<string, unknown> = { ...config };
-
-  if (Array.isArray(serializableConfig.knowledgeBases)) {
-    serializableConfig.knowledgeBases = (serializableConfig.knowledgeBases as string[]).map(kb =>
-      serializeConfigPathValue(kb, configBaseDir)
-    );
-  }
-
-  writeFileSync(configPath, JSON.stringify(serializableConfig, null, 2) + "\n", "utf-8");
 }
 
 export const codebase_peek: ToolDefinition = tool({
@@ -419,50 +338,77 @@ export const add_knowledge_base: ToolDefinition = tool({
   async execute(args) {
     const inputPath = args.path.trim();
 
-    // Resolve the path
-    const resolvedPath = path.isAbsolute(inputPath)
-      ? inputPath
-      : path.resolve(sharedProjectRoot, inputPath);
+    const normalizedPath = path.resolve(
+      path.isAbsolute(inputPath)
+        ? inputPath
+        : resolveKnowledgeBasePath(inputPath, sharedProjectRoot)
+    );
 
-    // Validate the directory exists
-    if (!existsSync(resolvedPath)) {
-      return `Error: Directory does not exist: ${resolvedPath}`;
+    if (!existsSync(normalizedPath)) {
+      return `Error: Directory does not exist: ${normalizedPath}`;
+    }
+
+    // Resolve symlinks to get the real path for security checks only
+    let realPath: string;
+    try {
+      realPath = realpathSync(normalizedPath);
+    } catch {
+      return `Error: Cannot resolve path: ${normalizedPath}`;
+    }
+
+    // Security: block sensitive system directories (check against real path to prevent symlink bypass)
+    const blockedPrefixes = [
+      "/etc",
+      "/proc",
+      "/sys",
+      "/dev",
+      "/boot",
+      "/root",
+      "/var/run",
+      "/var/log",
+    ];
+    const homeDir = os.homedir();
+    const sensitiveDotDirs = [".ssh", ".gnupg", ".aws", ".config/gcloud", ".docker", ".kube"];
+
+    for (const prefix of blockedPrefixes) {
+      if (realPath === prefix || realPath.startsWith(prefix + "/")) {
+        return `Error: Adding system directory as knowledge base is not allowed: ${normalizedPath}`;
+      }
+    }
+
+    for (const dotDir of sensitiveDotDirs) {
+      const sensitiveDir = path.join(homeDir, dotDir);
+      if (realPath === sensitiveDir || realPath.startsWith(sensitiveDir + "/")) {
+        return `Error: Adding sensitive directory as knowledge base is not allowed: ${normalizedPath}`;
+      }
     }
 
     try {
-      const stat = statSync(resolvedPath);
+      const stat = statSync(normalizedPath);
       if (!stat.isDirectory()) {
-        return `Error: Path is not a directory: ${resolvedPath}`;
+        return `Error: Path is not a directory: ${normalizedPath}`;
       }
     } catch (error) {
-      return `Error: Cannot access directory: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`;
+      return `Error: Cannot access directory: ${normalizedPath} - ${error instanceof Error ? error.message : String(error)}`;
     }
 
-    // Load current config
-    const config = loadEditableConfig();
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
-      : [];
+    const config = loadEditableConfig(sharedProjectRoot);
+    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
-    // Check if already added (normalize paths for comparison)
-    const normalizedPath = path.normalize(resolvedPath);
-    const alreadyExists = knowledgeBases.some(
-      kb => path.normalize(path.isAbsolute(kb) ? kb : path.resolve(sharedProjectRoot, kb)) === normalizedPath
-    );
+    const alreadyExists = hasMatchingKnowledgeBasePath(knowledgeBases, normalizedPath, sharedProjectRoot);
 
     if (alreadyExists) {
-      return `Knowledge base already configured: ${resolvedPath}`;
+      return `Knowledge base already configured: ${normalizedPath}`;
     }
 
-    // Add the knowledge base
-    knowledgeBases.push(resolvedPath);
+    knowledgeBases.push(normalizedPath);
     config.knowledgeBases = knowledgeBases;
-    saveConfig(config);
+    saveConfig(sharedProjectRoot, config);
     refreshIndexerFromConfig();
 
-    let result = `${resolvedPath}\n`;
+    let result = `${normalizedPath}\n`;
     result += `Total knowledge bases: ${knowledgeBases.length}\n`;
-    result += `Config saved to: ${getConfigPath()}\n`;
+    result += `Config saved to: ${getConfigPath(sharedProjectRoot)}\n`;
     result += `\nRun /index to rebuild the index with the new knowledge base.`;
 
     return result;
@@ -474,10 +420,8 @@ export const list_knowledge_bases: ToolDefinition = tool({
     "List all configured knowledge base folders that are indexed alongside the main project.",
   args: {},
   async execute() {
-    const config = loadRuntimeConfig();
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
-      : [];
+    const config = loadRuntimeConfig(sharedProjectRoot);
+    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
     if (knowledgeBases.length === 0) {
       return "No knowledge bases configured. Use add_knowledge_base to add folders.";
@@ -487,7 +431,7 @@ export const list_knowledge_bases: ToolDefinition = tool({
 
     for (let i = 0; i < knowledgeBases.length; i++) {
       const kb = knowledgeBases[i];
-      const resolvedPath = path.isAbsolute(kb) ? kb : path.resolve(sharedProjectRoot, kb);
+      const resolvedPath = resolveKnowledgeBasePath(kb, sharedProjectRoot);
       const exists = existsSync(resolvedPath);
 
       result += `[${i + 1}] ${kb}\n`;
@@ -502,7 +446,7 @@ export const list_knowledge_bases: ToolDefinition = tool({
       result += "\n";
     }
 
-    result += `Config file: ${getConfigPath()}`;
+    result += `Config file: ${getConfigPath(sharedProjectRoot)}`;
     return result;
   },
 });
@@ -516,22 +460,14 @@ export const remove_knowledge_base: ToolDefinition = tool({
   async execute(args) {
     const inputPath = args.path.trim();
 
-    // Load current config
-    const config = loadEditableConfig();
-    const knowledgeBases: string[] = Array.isArray(config.knowledgeBases)
-      ? config.knowledgeBases as string[]
-      : [];
+    const config = loadEditableConfig(sharedProjectRoot);
+    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
     if (knowledgeBases.length === 0) {
       return "No knowledge bases configured.";
     }
 
-    // Find and remove the knowledge base
-    const normalizedInput = path.normalize(inputPath);
-    const index = knowledgeBases.findIndex(
-      kb => path.normalize(kb) === normalizedInput ||
-           path.normalize(path.isAbsolute(kb) ? kb : path.resolve(sharedProjectRoot, kb)) === normalizedInput
-    );
+    const index = findKnowledgeBasePathIndex(knowledgeBases, inputPath, sharedProjectRoot);
 
     if (index === -1) {
       let result = `Knowledge base not found: ${inputPath}\n\n`;
@@ -544,12 +480,12 @@ export const remove_knowledge_base: ToolDefinition = tool({
 
     const removed = knowledgeBases.splice(index, 1)[0];
     config.knowledgeBases = knowledgeBases;
-    saveConfig(config);
+    saveConfig(sharedProjectRoot, config);
     refreshIndexerFromConfig();
 
     let result = `Removed: ${removed}\n\n`;
     result += `Remaining knowledge bases: ${knowledgeBases.length}\n`;
-    result += `Config saved to: ${getConfigPath()}\n`;
+    result += `Config saved to: ${getConfigPath(sharedProjectRoot)}\n`;
     result += `\nRun /index to rebuild the index without the removed knowledge base.`;
 
     return result;

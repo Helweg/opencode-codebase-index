@@ -58,7 +58,10 @@ class SiliconFlowReranker implements RerankerInterface {
       headers["Authorization"] = `Bearer ${this.config.apiKey}`;
     }
 
-    const baseUrl = this.config.baseUrl ?? "https://api.siliconflow.cn/v1";
+    const baseUrl = this.config.baseUrl;
+    if (!baseUrl) {
+      throw new Error("Reranker baseUrl is required. Configure reranker.baseUrl in your codebase-index.json.");
+    }
     const timeoutMs = this.config.timeoutMs ?? 30000;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);

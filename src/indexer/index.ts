@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, promises as fsPromises } from "fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fsPromises } from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
 import PQueue from "p-queue";
@@ -36,7 +36,7 @@ import type { SymbolData, CallEdgeData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
 
-export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript"]);
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab"]);
 // Languages whose identifiers are case-insensitive at the language level.
 // The Rust call_extractor lowercases callee names for these languages (except
 // constructors and imports), so same-file resolution in this file must use
@@ -1821,13 +1821,20 @@ export class Indexer {
   }
 
   private loadFileHashCache(): void {
+    if (!existsSync(this.fileHashCachePath)) {
+      return;
+    }
+
     try {
-      if (existsSync(this.fileHashCachePath)) {
-        const data = readFileSync(this.fileHashCachePath, "utf-8");
-        const parsed = JSON.parse(data);
-        this.fileHashCache = new Map(Object.entries(parsed));
-      }
-    } catch {
+      const data = readFileSync(this.fileHashCachePath, "utf-8");
+      const parsed = JSON.parse(data);
+      this.fileHashCache = new Map(Object.entries(parsed));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn("Failed to load file hash cache, resetting cache state", {
+        fileHashCachePath: this.fileHashCachePath,
+        error: message,
+      });
       this.fileHashCache = new Map();
     }
   }
@@ -1842,6 +1849,7 @@ export class Indexer {
 
   private atomicWriteSync(targetPath: string, data: string): void {
     const tempPath = `${targetPath}.tmp`;
+    mkdirSync(path.dirname(targetPath), { recursive: true });
     writeFileSync(tempPath, data);
     renameSync(tempPath, targetPath);
   }
@@ -2303,7 +2311,12 @@ export class Indexer {
       return this.loadSerializedFailedBatches()
         .map((batch) => normalizeFailedBatch(batch, maxChunkTokens))
         .filter((batch): batch is FailedBatch => batch !== null);
-    } catch {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn("Failed to load failed batch state, skipping persisted retries", {
+        failedBatchesPath: this.failedBatchesPath,
+        error: message,
+      });
       return [];
     }
   }
@@ -2628,7 +2641,6 @@ export class Indexer {
 
     this.provider = createEmbeddingProvider(this.configuredProviderInfo);
 
-    // Initialize reranker if configured
     if (this.config.reranker?.enabled) {
       this.reranker = createReranker(this.config.reranker);
       if (this.reranker.isAvailable()) {
@@ -3349,22 +3361,16 @@ export class Indexer {
       database.upsertChunksBatch(chunkDataBatch);
     }
 
-
-    // ── Call Graph Extraction ────────────────────────────────────────
-    // Extract symbols and call edges from changed files.
     const allSymbolIds = new Set<string>();
     const symbolsByFile = new Map<string, SymbolData[]>();
 
-    // For changed files: delete old symbols/edges, extract new ones
     for (let i = 0; i < parsedFiles.length; i++) {
       const parsed = parsedFiles[i];
       const changedFile = changedFiles[i];
 
-      // Clean up old call graph data for this file
       database.deleteCallEdgesByFile(parsed.path);
       database.deleteSymbolsByFile(parsed.path);
 
-      // Build symbols from parsed chunks
       const fileSymbols: SymbolData[] = [];
 
       for (const chunk of parsed.chunks) {
@@ -3410,16 +3416,13 @@ export class Indexer {
         symbolsByFile.set(parsed.path, fileSymbols);
       }
 
-      // Extract call sites from file content (only for supported languages)
       if (!fileLanguage || !CALL_GRAPH_LANGUAGES.has(fileLanguage)) continue;
 
       const callSites = extractCalls(changedFile.content, fileLanguage);
       if (callSites.length === 0) continue;
 
-      // Map each call site to its enclosing symbol
       const edges: CallEdgeData[] = [];
       for (const site of callSites) {
-        // Find the enclosing symbol (function/method that contains this call)
         const enclosingSymbol = fileSymbols.find(
           (sym) => site.line >= sym.startLine && site.line <= sym.endLine
         );
@@ -3452,7 +3455,6 @@ export class Indexer {
       }
     }
 
-    // Collect symbol IDs from unchanged files for branch association
     for (const filePath of unchangedFilePaths) {
       const existingSymbols = database.getSymbolsByFile(filePath);
       for (const sym of existingSymbols) {
@@ -3821,7 +3823,6 @@ export class Indexer {
       this.saveFileHashCache();
     }
 
-    // Auto-GC after indexing: check if orphan count exceeds threshold
     if (this.config.indexing.autoGc && stats.removedChunks > 0) {
       const gcReset = await this.maybeRunOrphanGc();
       if (gcReset) {
@@ -4336,12 +4337,10 @@ export class Indexer {
     this.fileHashCache.clear();
     this.saveFileHashCache();
 
-    // Clear persisted index data across all branches so force rebuilds
     // cannot reuse stale chunks, symbols, or embeddings from a prior provider.
     database.clearAllIndexedData();
     this.saveFailedBatches([]);
 
-    // Clear index metadata so compatibility is re-evaluated from scratch
     database.deleteMetadata("index.version");
     database.deleteMetadata("index.embeddingProvider");
     database.deleteMetadata("index.embeddingModel");
@@ -4353,7 +4352,6 @@ export class Indexer {
     database.deleteMetadata("index.createdAt");
     database.deleteMetadata("index.updatedAt");
 
-    // Re-validate compatibility (no stored metadata = compatible)
     this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo!);
   }
 

@@ -1,7 +1,25 @@
 // Config schema without zod dependency to avoid version conflicts with OpenCode SDK
 
 import { AUTO_DETECT_PROVIDER_ORDER, DEFAULT_INCLUDE, DEFAULT_EXCLUDE, EMBEDDING_MODELS, DEFAULT_PROVIDER_MODELS } from "./constants.js";
-import { substituteEnvString } from "./env-substitution.js";
+import {
+  getDefaultDebugConfig,
+  getDefaultIndexingConfig,
+  getDefaultRerankerBaseUrl,
+  getDefaultSearchConfig,
+} from "./defaults.js";
+import {
+  getResolvedString,
+  getResolvedStringArray,
+  isStringArray,
+  isValidFusionStrategy,
+  isValidLogLevel,
+  isValidModel,
+  isValidProvider,
+  isValidRerankerProvider,
+  isValidScope,
+} from "./validators.js";
+
+export { isValidModel } from "./validators.js";
 
 export type IndexScope = "project" | "global";
 
@@ -133,113 +151,6 @@ export type ParsedCodebaseIndexConfig = CodebaseIndexConfig & {
   additionalInclude: string[];
 };
 
-function getDefaultIndexingConfig(): IndexingConfig {
-  return {
-    autoIndex: false,
-    watchFiles: true,
-    maxFileSize: 1048576,
-    maxChunksPerFile: 100,
-    semanticOnly: false,
-    retries: 3,
-    retryDelayMs: 1000,
-    autoGc: true,
-    gcIntervalDays: 7,
-    gcOrphanThreshold: 100,
-    requireProjectMarker: true,
-    maxDepth: 5,
-    maxFilesPerDirectory: 100,
-    fallbackToTextOnMaxChunks: true,
-  };
-}
-
-function getDefaultSearchConfig(): SearchConfig {
-  return {
-    maxResults: 20,
-    minScore: 0.1,
-    includeContext: true,
-    hybridWeight: 0.5,
-    fusionStrategy: "rrf",
-    rrfK: 60,
-    rerankTopN: 20,
-    contextLines: 0,
-    routingHints: true,
-  };
-}
-
-function isValidFusionStrategy(value: unknown): value is SearchConfig["fusionStrategy"] {
-  return value === "weighted" || value === "rrf";
-}
-
-function isValidRerankerProvider(value: unknown): value is RerankerProvider {
-  return value === "cohere" || value === "jina" || value === "custom";
-}
-
-function getDefaultRerankerBaseUrl(provider: RerankerProvider): string {
-  switch (provider) {
-    case "cohere":
-      return "https://api.cohere.ai/v1";
-    case "jina":
-      return "https://api.jina.ai/v1";
-    case "custom":
-      return "";
-  }
-}
-
-function getDefaultDebugConfig(): DebugConfig {
-  return {
-    enabled: false,
-    logLevel: "info",
-    logSearch: true,
-    logEmbedding: true,
-    logCache: true,
-    logGc: true,
-    logBranch: true,
-    metrics: true,
-  };
-}
-
-const VALID_SCOPES: IndexScope[] = ["project", "global"];
-const VALID_LOG_LEVELS: LogLevel[] = ["error", "warn", "info", "debug"];
-
-function isValidProvider(value: unknown): value is EmbeddingProvider {
-  return typeof value === "string" && Object.keys(EMBEDDING_MODELS).includes(value);
-}
-
-export function isValidModel<P extends EmbeddingProvider>(
-  value: unknown,
-  provider: P
-): value is ProviderModels[P] {
-  return typeof value === "string" && Object.keys(EMBEDDING_MODELS[provider]).includes(value);
-}
-
-function isValidScope(value: unknown): value is IndexScope {
-  return typeof value === "string" && VALID_SCOPES.includes(value as IndexScope);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === "string");
-}
-
-function getResolvedString(value: unknown, keyPath: string): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  return substituteEnvString(value, keyPath);
-}
-
-function getResolvedStringArray(value: unknown, keyPath: string): string[] | undefined {
-  if (!isStringArray(value)) {
-    return undefined;
-  }
-
-  return value.map((item, index) => substituteEnvString(item, `${keyPath}[${index}]`));
-}
-
-function isValidLogLevel(value: unknown): value is LogLevel {
-  return typeof value === "string" && VALID_LOG_LEVELS.includes(value as LogLevel);
-}
-
 export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const embeddingProviderValue = getResolvedString(input.embeddingProvider, "$root.embeddingProvider");
@@ -301,14 +212,15 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
 
   const rawAdditionalInclude = input.additionalInclude;
   const additionalInclude: string[] = isStringArray(rawAdditionalInclude)
-    ? rawAdditionalInclude.filter(p => typeof p === "string" && p.trim().length > 0).map(p => p.trim())
+    ? rawAdditionalInclude
+      .filter(p => typeof p === "string" && p.trim().length > 0)
+      .map(p => p.trim())
     : [];
 
   let embeddingProvider: EmbeddingProvider | 'custom' | 'auto';
-  let embeddingModel: EmbeddingModelName | undefined = undefined;
-  let customProvider: CustomProviderConfig | undefined = undefined;
-  let reranker: RerankerConfig | undefined = undefined;
-  
+  let embeddingModel: EmbeddingModelName | undefined;
+  let customProvider: CustomProviderConfig | undefined;
+  let reranker: RerankerConfig | undefined;
   if (embeddingProviderValue === 'custom') {
     embeddingProvider = 'custom';
     const rawCustom = (input.customProvider && typeof input.customProvider === 'object' ? input.customProvider : null) as Record<string, unknown> | null;
@@ -350,7 +262,7 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     embeddingProvider = embeddingProviderValue;
     const rawEmbeddingModel = input.embeddingModel;
     if (typeof rawEmbeddingModel === "string") {
-      const embeddingModelValue = substituteEnvString(rawEmbeddingModel, "$root.embeddingModel");
+      const embeddingModelValue = getResolvedString(rawEmbeddingModel, "$root.embeddingModel");
       if (embeddingModelValue) {
         embeddingModel = isValidModel(embeddingModelValue, embeddingProvider) ? embeddingModelValue : DEFAULT_PROVIDER_MODELS[embeddingProvider];
       }
@@ -411,9 +323,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
 }
 
 export function getDefaultModelForProvider(provider: EmbeddingProvider): EmbeddingModelInfo {
-  const models = EMBEDDING_MODELS[provider]
-  const providerDefault = DEFAULT_PROVIDER_MODELS[provider]
-  return models[providerDefault as keyof typeof models]
+  const models = EMBEDDING_MODELS[provider];
+  const providerDefault = DEFAULT_PROVIDER_MODELS[provider];
+  return models[providerDefault as keyof typeof models];
 }
 
 /**
@@ -424,7 +336,7 @@ export function getDefaultModelForProvider(provider: EmbeddingProvider): Embeddi
  */
 export type EmbeddingProvider = keyof typeof EMBEDDING_MODELS;
 
-export const availableProviders: EmbeddingProvider[] = Object.keys(EMBEDDING_MODELS) as EmbeddingProvider[]
+export const availableProviders: EmbeddingProvider[] = Object.keys(EMBEDDING_MODELS) as EmbeddingProvider[];
 
 export const autoDetectProviders: EmbeddingProvider[] = AUTO_DETECT_PROVIDER_ORDER.filter(
   (provider): provider is EmbeddingProvider => provider in EMBEDDING_MODELS,
@@ -434,7 +346,7 @@ export type ProviderModels = {
   [P in keyof typeof EMBEDDING_MODELS]: keyof (typeof EMBEDDING_MODELS)[P]
 }
 
-export type EmbeddingModelName = ProviderModels[keyof ProviderModels]
+export type EmbeddingModelName = ProviderModels[keyof ProviderModels];
 
 export type EmbeddingProviderModelInfo = {
   [P in EmbeddingProvider]: (typeof EMBEDDING_MODELS)[P][keyof (typeof EMBEDDING_MODELS)[P]]
@@ -449,4 +361,4 @@ export interface BaseModelInfo {
   costPer1MTokens: number;
 }
 
-export type EmbeddingModelInfo = EmbeddingProviderModelInfo[EmbeddingProvider]
+export type EmbeddingModelInfo = EmbeddingProviderModelInfo[EmbeddingProvider];

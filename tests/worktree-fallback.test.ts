@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadMergedConfig } from "../src/config/merger.js";
 import { parseConfig } from "../src/config/schema.js";
@@ -58,6 +58,7 @@ describe("worktree fallback (issue #60)", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -69,6 +70,107 @@ describe("worktree fallback (issue #60)", () => {
     expect(loaded.scope).toBe("project");
     expect(loaded.additionalInclude).toEqual(["docs/**/*.md"]);
     expect(loaded.knowledgeBases).toEqual(["docs/reference"]);
+  });
+
+  it("throws a file-specific error when the inherited project config is malformed", () => {
+    const configPath = path.join(mainRepoDir, ".opencode", "codebase-index.json");
+    fs.writeFileSync(configPath, '{"embeddingProvider":"custom",', "utf-8");
+
+    expect(() => loadMergedConfig(worktreeDir)).toThrow(
+      new RegExp(`Failed to load config file ${configPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+    );
+  });
+
+  it("throws a file-specific error when the inherited project config has an invalid shape", () => {
+    const configPath = path.join(mainRepoDir, ".opencode", "codebase-index.json");
+    fs.writeFileSync(configPath, JSON.stringify({ knowledgeBases: "docs/reference" }, null, 2), "utf-8");
+
+    expect(() => loadMergedConfig(worktreeDir)).toThrow(/field 'knowledgeBases' must be an array of strings/);
+  });
+
+  it("throws a file-specific error when the global config is malformed", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "worktree-fallback-home-"));
+
+    try {
+      vi.stubEnv("HOME", homeDir);
+      const globalConfigPath = path.join(homeDir, ".config", "opencode", "codebase-index.json");
+      fs.mkdirSync(path.dirname(globalConfigPath), { recursive: true });
+      fs.writeFileSync(globalConfigPath, '{"debug":', "utf-8");
+
+      const repoConfigPath = path.join(mainRepoDir, ".opencode", "codebase-index.json");
+      fs.rmSync(repoConfigPath, { force: true });
+
+      expect(() => loadMergedConfig(worktreeDir)).toThrow(
+        new RegExp(`Failed to load config file ${globalConfigPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+      );
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to project config when the global config is malformed", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "worktree-fallback-home-"));
+
+    try {
+      vi.stubEnv("HOME", homeDir);
+      const globalConfigPath = path.join(homeDir, ".config", "opencode", "codebase-index.json");
+      fs.mkdirSync(path.dirname(globalConfigPath), { recursive: true });
+      fs.writeFileSync(globalConfigPath, '{"debug":', "utf-8");
+
+      const loaded = loadMergedConfig(worktreeDir) as Record<string, unknown>;
+
+      expect(loaded.scope).toBe("project");
+      expect(loaded.additionalInclude).toEqual(["docs/**/*.md"]);
+      expect(loaded.knowledgeBases).toEqual(["docs/reference"]);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps project object overrides as wholesale replacements instead of deep-merging", () => {
+    const globalConfigPath = path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
+
+    fs.mkdirSync(path.dirname(globalConfigPath), { recursive: true });
+    fs.writeFileSync(
+      globalConfigPath,
+      JSON.stringify(
+        {
+          indexing: {
+            autoIndex: true,
+            maxFileSize: 12345,
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    fs.writeFileSync(
+      path.join(mainRepoDir, ".opencode", "codebase-index.json"),
+      JSON.stringify(
+        {
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "mock-model",
+            dimensions: 8,
+          },
+          indexing: {
+            watchFiles: false,
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8"
+    );
+
+    const loaded = loadMergedConfig(worktreeDir) as {
+      indexing?: Record<string, unknown>;
+    };
+
+    expect(loaded.indexing).toEqual({ watchFiles: false });
   });
 
   it("rebases inherited absolute repo-local knowledge bases onto the worktree", () => {

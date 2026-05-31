@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -111,6 +111,15 @@ Find template`);
       const commands = loadCommandsFromDirectory(tempDir);
 
       expect(commands.size).toBe(0);
+    });
+
+    it("includes the file path when a command file cannot be read", () => {
+      fs.writeFileSync(path.join(tempDir, "alpha.md"), "alpha");
+      fs.mkdirSync(path.join(tempDir, "broken.md"));
+
+      expect(() => loadCommandsFromDirectory(tempDir)).toThrow(
+        new RegExp(`Failed to load command file ${path.join(tempDir, "broken.md").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+      );
     });
 
     it("should handle empty file", () => {

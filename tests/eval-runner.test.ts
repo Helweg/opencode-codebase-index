@@ -472,6 +472,7 @@ describe("eval runner", () => {
           indexing: {
             watchFiles: false,
           },
+          additionalInclude: ["../docs/**/*.md"],
           knowledgeBases: ["../external-kb"],
           search: {
             maxResults: 10,
@@ -542,10 +543,83 @@ describe("eval runner", () => {
     const localEvalConfig = JSON.parse(
       readFileSync(path.join(worktreeDir, ".opencode", "codebase-index.json"), "utf-8")
     ) as {
+      additionalInclude?: string[];
       knowledgeBases?: string[];
     };
 
+    expect(localEvalConfig.additionalInclude).toEqual(["../main-repo/docs/**/*.md"]);
     expect(localEvalConfig.knowledgeBases).toEqual(["../main-repo/external-kb"]);
+  });
+
+  it("includes the baseline path when eval summary JSON is malformed", async () => {
+    const brokenBaselinePath = path.join(tempDir, "benchmarks", "baselines", "broken-summary.json");
+    writeFileSync(brokenBaselinePath, '{"generatedAt":"2026-01-01T00:00:00.000Z",', "utf-8");
+
+    await expect(
+      runEvaluation({
+        projectRoot: tempDir,
+        datasetPath: "benchmarks/golden/small.json",
+        outputRoot: "benchmarks/results",
+        againstPath: path.relative(tempDir, brokenBaselinePath),
+        ciMode: false,
+        reindex: false,
+      })
+    ).rejects.toThrow(new RegExp(`Failed to parse eval summary JSON at ${brokenBaselinePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  });
+
+  it("preserves summary validation errors for valid JSON baselines", async () => {
+    const invalidBaselinePath = path.join(tempDir, "benchmarks", "baselines", "invalid-summary.json");
+    writeFileSync(
+      invalidBaselinePath,
+      JSON.stringify(
+        {
+          generatedAt: "2026-01-01T00:00:00.000Z",
+          datasetName: "small",
+          datasetVersion: "1.0.0",
+          queryCount: 1,
+          searchConfig: {
+            fusionStrategy: "rrf",
+            hybridWeight: 0.5,
+            rrfK: 60,
+            rerankTopN: 20,
+          },
+          metrics: {
+            hitAt1: "bad",
+            hitAt3: 1,
+            hitAt5: 1,
+            hitAt10: 1,
+            mrrAt10: 1,
+            ndcgAt10: 1,
+            distinctTop3Ratio: 1,
+            rawDistinctTop3Ratio: 1,
+            latencyMs: { p50: 1, p95: 1, p99: 1 },
+            embedding: { callCount: 1, estimatedCostUsd: 0 },
+            tokenEstimate: { embeddingTokensUsed: 1 },
+            failureBuckets: {
+              "wrong-file": 0,
+              "wrong-symbol": 0,
+              "docs-tests-outranking-source": 0,
+              "no-relevant-hit-top-k": 0,
+            },
+          },
+          perQuery: [],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    await expect(
+      runEvaluation({
+        projectRoot: tempDir,
+        datasetPath: "benchmarks/golden/small.json",
+        outputRoot: "benchmarks/results",
+        againstPath: path.relative(tempDir, invalidBaselinePath),
+        ciMode: false,
+        reindex: false,
+      })
+    ).rejects.toThrow(new RegExp(`${invalidBaselinePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.metrics\\.hitAt1 must be a finite number`));
   });
 
   it("rematerializes the local eval config when repeated reindex runs use different explicit config paths", async () => {
@@ -965,5 +1039,53 @@ describe("eval runner", () => {
     });
 
     expect(result.gate?.passed).toBe(true);
+  });
+
+  it("includes the config path when eval config JSON is malformed", async () => {
+    const brokenConfigPath = path.join(tempDir, "broken-config.json");
+    writeFileSync(brokenConfigPath, '{"embeddingProvider":"custom",', "utf-8");
+
+    await expect(
+      runEvaluation({
+        projectRoot: tempDir,
+        configPath: path.relative(tempDir, brokenConfigPath),
+        datasetPath: "benchmarks/golden/small.json",
+        outputRoot: "benchmarks/results",
+        ciMode: false,
+        reindex: false,
+      })
+    ).rejects.toThrow(new RegExp(`Failed to parse eval config JSON at ${brokenConfigPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  });
+
+  it("fails early when eval config has an invalid knowledgeBases shape", async () => {
+    const invalidConfigPath = path.join(tempDir, "invalid-shape-config.json");
+    writeFileSync(
+      invalidConfigPath,
+      JSON.stringify(
+        {
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "mock-embedding-model",
+            dimensions: 8,
+          },
+          knowledgeBases: "docs/reference",
+        },
+        null,
+        2,
+      ),
+      "utf-8"
+    );
+
+    await expect(
+      runEvaluation({
+        projectRoot: tempDir,
+        configPath: path.relative(tempDir, invalidConfigPath),
+        datasetPath: "benchmarks/golden/small.json",
+        outputRoot: "benchmarks/results",
+        ciMode: false,
+        reindex: false,
+      })
+    ).rejects.toThrow(/field 'knowledgeBases' must be an array of strings/);
   });
 });

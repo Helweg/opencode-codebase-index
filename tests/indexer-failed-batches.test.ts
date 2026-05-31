@@ -105,6 +105,16 @@ describe("indexer failed batch recovery", () => {
         model: "mock-embedding-model",
         dimensions: 8,
       },
+      debug: {
+        enabled: true,
+        logLevel: "warn",
+        logSearch: false,
+        logEmbedding: false,
+        logCache: false,
+        logGc: false,
+        logBranch: false,
+        metrics: false,
+      },
       indexing: {
         watchFiles: false,
         retries: 0,
@@ -1191,6 +1201,22 @@ describe("indexer failed batch recovery", () => {
     expect(foreignChunk).toBeDefined();
     expect(typeof foreignChunk?.text).toBe("string");
     expect(foreignChunk?.texts).toBeUndefined();
+  });
+
+  it("logs a warning when persisted failed batches are malformed", async () => {
+    const failedBatchesPath = path.join(tempDir, ".opencode", "index", "failed-batches.json");
+    fs.mkdirSync(path.dirname(failedBatchesPath), { recursive: true });
+    fs.writeFileSync(failedBatchesPath, "{", "utf-8");
+
+    const indexer = createIndexer();
+    await indexer.initialize();
+    await indexer.getStatus();
+
+    const logs = indexer.getLogger().getLogs().filter((entry) => entry.level === "warn");
+    expect(logs.some((entry) =>
+      entry.message === "Failed to load failed batch state, skipping persisted retries"
+      && entry.data?.failedBatchesPath === failedBatchesPath
+    )).toBe(true);
   });
 
   it("does not retry custom-provider non-retryable errors during retryFailedBatches()", async () => {

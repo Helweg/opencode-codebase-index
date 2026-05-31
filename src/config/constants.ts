@@ -34,7 +34,6 @@ export const DEFAULT_EXCLUDE = [
   "**/.*/**",
 ];
 
-
 export const EMBEDDING_MODELS = {
   "google": {
     // `text-embedding-004` is DEPRECATED - https://ai.google.dev/gemini-api/docs/deprecations
@@ -107,7 +106,7 @@ export const DEFAULT_PROVIDER_MODELS = {
   "openai": "text-embedding-3-small",
   "google": "gemini-embedding-001",
   "ollama": "nomic-embed-text",
-} as const
+} as const;
 
 export const AUTO_DETECT_PROVIDER_ORDER = [
   "ollama",

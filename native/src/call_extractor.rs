@@ -32,6 +32,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         Language::Zig => tree_sitter_zig::LANGUAGE.into(),
         Language::Gdscript => tree_sitter_gdscript::LANGUAGE.into(),
+        Language::Matlab => tree_sitter_matlab::LANGUAGE.into(),
         Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(vec![]),
     };
@@ -58,6 +59,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Php => include_str!("../queries/php-calls.scm"),
         Language::Zig => include_str!("../queries/zig-calls.scm"),
         Language::Gdscript => include_str!("../queries/gdscript-calls.scm"),
+        Language::Matlab => include_str!("../queries/matlab-calls.scm"),
         Language::Apex => include_str!("../queries/apex-calls.scm"),
         _ => return Ok(vec![]),
     };
@@ -190,11 +192,31 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         }
     }
 
-    calls.dedup_by(|a, b| {
-        a.callee_name == b.callee_name && a.line == b.line && a.column == b.column
-    });
+    let mut deduped: Vec<CallSite> = Vec::new();
+    for call in calls {
+        if let Some(existing) = deduped.iter_mut().find(|existing| {
+            existing.callee_name == call.callee_name
+                && existing.line == call.line
+                && existing.column == call.column
+        }) {
+            if call_type_specificity(call.call_type) > call_type_specificity(existing.call_type) {
+                *existing = call;
+            }
+        } else {
+            deduped.push(call);
+        }
+    }
 
-    Ok(calls)
+    Ok(deduped)
+}
+
+fn call_type_specificity(call_type: CallType) -> u8 {
+    match call_type {
+        CallType::Call => 0,
+        CallType::MethodCall => 1,
+        CallType::Constructor => 2,
+        CallType::Import => 2,
+    }
 }
 
 #[cfg(test)]
@@ -442,7 +464,8 @@ mod tests {
 
     #[test]
     fn test_gdscript_method_calls() {
-        let code = "func _ready() -> void:\n    self.take_damage(5)\n    health_changed.emit(health)\n";
+        let code =
+            "func _ready() -> void:\n    self.take_damage(5)\n    health_changed.emit(health)\n";
         let calls = extract_calls(code, "gdscript").unwrap();
         assert!(
             calls

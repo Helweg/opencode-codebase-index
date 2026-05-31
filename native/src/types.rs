@@ -35,6 +35,7 @@ pub enum Language {
     Apex,
     Zig,
     Gdscript,
+    Matlab,
     Text,
 }
 
@@ -63,6 +64,7 @@ impl Language {
             "php" | "inc" => Language::Php,
             "zig" => Language::Zig,
             "gd" => Language::Gdscript,
+            "m" => Language::Matlab,
             "cls" | "trigger" => Language::Apex,
             _ => Language::Text,
         }
@@ -91,6 +93,7 @@ impl Language {
             Language::Php => "php",
             Language::Zig => "zig",
             Language::Gdscript => "gdscript",
+            Language::Matlab => "matlab",
             Language::Apex => "apex",
             Language::Text => "text",
         }
@@ -120,6 +123,7 @@ impl Language {
             "php" => Language::Php,
             "zig" => Language::Zig,
             "gdscript" | "gd" => Language::Gdscript,
+            "matlab" | "m" => Language::Matlab,
             "apex" => Language::Apex,
             _ => Language::Text,
         }

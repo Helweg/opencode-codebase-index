@@ -34,6 +34,23 @@ describe("Crash Recovery", () => {
 
       expect(() => fs.renameSync(tempPath, targetPath)).toThrow();
     });
+
+    it("should create missing parent directories before atomic write", () => {
+      const nestedDir = path.join(tempDir, "deeply", "nested", "dir");
+      const targetPath = path.join(nestedDir, "test-file.json");
+      const tempPath = `${targetPath}.tmp`;
+      const data = JSON.stringify({ test: "data" });
+
+      expect(fs.existsSync(nestedDir)).toBe(false);
+
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(tempPath, data);
+      fs.renameSync(tempPath, targetPath);
+
+      expect(fs.existsSync(targetPath)).toBe(true);
+      expect(fs.existsSync(tempPath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(targetPath, "utf-8"))).toEqual({ test: "data" });
+    });
   });
 
   describe("indexing lock file", () => {

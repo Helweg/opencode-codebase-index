@@ -40,7 +40,15 @@ export function loadCommandsFromDirectory(commandsDir: string): Map<string, Comm
 
   for (const file of files) {
     const filePath = path.join(commandsDir, file);
-    const content = readFileSync(filePath, "utf-8");
+    let content: string;
+
+    try {
+      content = readFileSync(filePath, "utf-8");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to load command file ${filePath}: ${message}`);
+    }
+
     const { frontmatter, body } = parseFrontmatter(content);
     
     const name = path.basename(file, ".md");

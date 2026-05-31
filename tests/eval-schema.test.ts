@@ -1,8 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import * as os from "os";
+import * as path from "path";
 
-import { parseBudget, parseGoldenDataset } from "../src/eval/schema.js";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { loadBudget, loadGoldenDataset, parseBudget, parseGoldenDataset } from "../src/eval/schema.js";
 
 describe("eval schema", () => {
+  let tempDir: string | undefined;
+
+  afterEach(() => {
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = undefined;
+    }
+  });
+
   it("parses a valid dataset", () => {
     const dataset = parseGoldenDataset(
       {
@@ -108,5 +121,25 @@ describe("eval schema", () => {
         "budget.json"
       )
     ).toThrow(/must be a non-negative number/);
+  });
+
+  it("includes the dataset file path when JSON parsing fails", () => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "eval-schema-"));
+    const datasetPath = path.join(tempDir, "broken-dataset.json");
+    writeFileSync(datasetPath, '{"version":"1.0.0",', "utf-8");
+
+    expect(() => loadGoldenDataset(datasetPath)).toThrow(
+      new RegExp(`Failed to parse JSON from ${datasetPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+    );
+  });
+
+  it("includes the budget file path when JSON parsing fails", () => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "eval-schema-"));
+    const budgetPath = path.join(tempDir, "broken-budget.json");
+    writeFileSync(budgetPath, '{"name":"default",', "utf-8");
+
+    expect(() => loadBudget(budgetPath)).toThrow(
+      new RegExp(`Failed to parse JSON from ${budgetPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+    );
   });
 });

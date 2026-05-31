@@ -211,7 +211,9 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig, GDScript
+**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig, GDScript, MATLAB†
+
+† MATLAB (`.m`) is opt-in — see below.
 
 **Additional Supported Formats (line-based chunking)**: TXT, HTML, HTM, Markdown, Shell scripts
 
@@ -227,6 +229,11 @@ graph TD
 ```
 
 Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*.pdf"`, `"**/*.csv"`).
+
+†**MATLAB opt-in**: `.m` is excluded from defaults because it conflicts with the Objective-C extension used on Apple codebases. To enable MATLAB discovery, add to your global config (`~/.config/opencode/codebase-index.json`):
+```json
+{ "additionalInclude": ["**/*.m"] }
+```
 
 **Max File Size**: Default 1MB (1048576 bytes). Configure via `indexing.maxFileSize` (bytes).
 2. **Chunking**: Large blocks are split with overlapping windows to preserve context across chunk boundaries.
@@ -353,7 +360,7 @@ Returns recent debug logs with optional filtering.
 
 ### `call_graph`
 
-Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, Zig, and GDScript.
+Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, Apex, Zig, GDScript, and MATLAB.
 
 - **Use for**: Understanding code flow, tracing dependencies, impact analysis.
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).
@@ -363,6 +370,7 @@ Query the call graph to find callers or callees of a function/method. Automatica
 Add a folder as a knowledge base to be indexed alongside project code.
 - **Use for**: Indexing external documentation, API references, example programs.
 - **Parameters**: `path` (folder path, absolute or relative), `reindex` (optional, default `true`).
+- **Restrictions**: System directories (`/etc`, `/proc`, `/sys`, `/dev`) and sensitive home directories (`.ssh`, `.gnupg`, `.aws`, `.docker`, `.kube`) are blocked. Symlinks are resolved before validation.
 - **Example**: `add_knowledge_base(path="/path/to/docs")`
 
 ### `list_knowledge_bases`
@@ -432,10 +440,10 @@ Global-level config (`~/.config/opencode/codebase-index.json`):
 {
   "embeddingProvider": "custom",
   "customProvider": {
-    "baseUrl": "https://api.siliconflow.cn/v1",
+    "baseUrl": "{env:EMBED_BASE_URL}",
     "model": "BAAI/bge-m3",
     "dimensions": 1024,
-    "apiKey": "{env:SILICONFLOW_API_KEY}"
+    "apiKey": "{env:EMBED_API_KEY}"
   }
 }
 ```
@@ -459,9 +467,9 @@ Add to your config (`.opencode/codebase-index.json` or global config):
 {
   "reranker": {
     "enabled": true,
-    "baseUrl": "https://api.siliconflow.cn/v1",
-    "model": "BAAI/bge-reranker-v2-m3",
-    "apiKey": "{env:SILICONFLOW_API_KEY}",
+    "baseUrl": "https://api.cohere.ai/v1",
+    "model": "rerank-v3.5",
+    "apiKey": "{env:RERANK_API_KEY}",
     "topN": 20
   }
 }
@@ -511,10 +519,10 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
 
   // === Custom Embedding API (when embeddingProvider is "custom") ===
   "customProvider": {
-    "baseUrl": "https://api.siliconflow.cn/v1",
+    "baseUrl": "{env:EMBED_BASE_URL}",
     "model": "BAAI/bge-m3",
     "dimensions": 1024,
-    "apiKey": "{env:SILICONFLOW_API_KEY}",
+    "apiKey": "{env:EMBED_API_KEY}",
     "maxTokens": 8192,                        // Max tokens per input text
     "timeoutMs": 30000,                       // Request timeout (ms)
     "concurrency": 3,                         // Max concurrent requests
@@ -655,6 +663,15 @@ String values in `codebase-index.json` can reference environment variables with 
 | `logGc` | `true` | Log garbage collection operations |
 | `logBranch` | `true` | Log branch detection and switches |
 | `metrics` | `false` | Enable metrics collection (indexing stats, search timing, cache performance) |
+
+### Recovery warnings in debug logs
+
+When debug logging is enabled, the indexer now emits warn-level recovery messages if persisted cache state cannot be read safely.
+
+- Corrupted or unreadable `file-hashes.json` causes the in-memory file hash cache to be reset.
+- Corrupted or unreadable `failed-batches.json` causes persisted retry batches to be skipped for that run.
+
+These warnings improve observability but do **not** change the recovery behavior: the indexer still falls back to a safe reset/skip path instead of crashing. If these warnings recur, remove the affected file under `.opencode/index/` (or the global index directory) and rebuild with `/index force`.
 
 ### Retrieval ranking behavior
 

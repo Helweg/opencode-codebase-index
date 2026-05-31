@@ -21,6 +21,23 @@ Optional flags:
 - `--rrfK <number>`
 - `--rerankTopN <number>`
 
+### Eval config validation and path resolution
+
+The eval runner accepts `--config <path>` and loads the same config shape used by the main plugin, but it now validates that shape earlier and with file-specific errors.
+
+Expected field shapes at the eval config boundary:
+
+- `knowledgeBases`, `additionalInclude`, `include`, `exclude` must be arrays of strings
+- `customProvider`, `indexing`, `search`, `debug`, `reranker` must be objects when present
+- malformed JSON fails with a file-specific parse error before evaluation starts
+
+Relative path handling during eval config materialization is also important when `--reindex` creates a local `.opencode/codebase-index.json` boundary:
+
+- `knowledgeBases` entries are rebased relative to the source config file location
+- `additionalInclude` entries are rebased the same way
+
+This means explicit eval config files outside the project root can safely use relative `knowledgeBases` and `additionalInclude` entries; the generated local eval config preserves the correct paths for the eval project root.
+
 ### Compare against baseline
 
 ```bash
@@ -28,6 +45,8 @@ npm run eval:compare -- --against benchmarks/baselines/eval-baseline-summary.jso
 ```
 
 This runs a fresh evaluation and writes `compare.json` with metric deltas.
+
+If the referenced baseline summary file contains malformed JSON, compare mode now fails with a file-specific summary parse error instead of a raw JSON exception.
 
 ### CI gate mode
 

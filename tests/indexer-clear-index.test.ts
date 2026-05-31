@@ -90,6 +90,16 @@ describe("indexer clearIndex force rebuild", () => {
         dimensions,
       },
       scope,
+      debug: {
+        enabled: true,
+        logLevel: "warn",
+        logSearch: false,
+        logEmbedding: false,
+        logCache: false,
+        logGc: false,
+        logBranch: false,
+        metrics: false,
+      },
       indexing: {
         watchFiles: false,
         retries: 0,
@@ -1374,6 +1384,24 @@ describe("indexer clearIndex force rebuild", () => {
 
     const failedBatches = JSON.parse(fs.readFileSync(failedBatchesPath, "utf-8")) as Array<{ chunks: Array<{ metadata: { filePath: string } }> }>;
     expect(failedBatches.some((batch) => batch.chunks.some((chunk) => chunk.metadata.filePath === projectBFile))).toBe(true);
+  });
+
+  it("logs a warning when the persisted file hash cache is malformed", async () => {
+    vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
+
+    const indexer = createIndexer(tempDir, 8, "global");
+    const fileHashCachePath = path.join(tempHome, ".opencode", "global-index", "file-hashes.json");
+    fs.mkdirSync(path.dirname(fileHashCachePath), { recursive: true });
+    fs.writeFileSync(fileHashCachePath, "{", "utf-8");
+
+    await indexer.clearIndex();
+
+    const logs = indexer.getLogger().getLogs().filter((entry) => entry.level === "warn");
+    expect(logs.some((entry) =>
+      entry.message === "Failed to load file hash cache, resetting cache state"
+      && entry.data?.fileHashCachePath === fileHashCachePath
+    )).toBe(true);
   });
 
   it("clears current-repo branch ownership for DB-only chunks left by failed embeddings", async () => {

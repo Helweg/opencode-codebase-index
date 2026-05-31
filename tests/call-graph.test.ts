@@ -5,6 +5,7 @@ import * as os from "os";
 import { extractCalls, Database, hashContent, parseFiles } from "../src/native/index.js";
 import type { SymbolData, CallEdgeData } from "../src/native/index.js";
 import {
+  CALL_GRAPH_LANGUAGES,
   CALL_GRAPH_SYMBOL_CHUNK_TYPES,
   CASE_INSENSITIVE_LANGUAGES,
 } from "../src/indexer/index.js";
@@ -335,6 +336,87 @@ describe("call-graph", () => {
 
         const importCalls = calls.filter((c) => c.callType === "Import");
         expect(importCalls.length).toBe(0);
+      });
+    });
+
+    describe("matlab call extraction", () => {
+      const content = `function score = calculateSignal(model, prices)
+    returns = diff(log(prices));
+    normalized = SignalUtils.normalize(returns);
+    score = model.score(normalized) + helper(normalized);
+    first = prices(1);
+end
+
+function value = helper(values)
+    value = mean(values) / std(values);
+end
+`;
+
+      it("should extract direct function calls", () => {
+        const calls = extractCalls(content, "matlab");
+        const callNames = calls.map((c) => c.calleeName);
+
+        expect(callNames).toContain("diff");
+        expect(callNames).toContain("log");
+        expect(callNames).toContain("helper");
+        expect(callNames).toContain("mean");
+        expect(callNames).toContain("std");
+      });
+
+      it("should extract method and package calls", () => {
+        const calls = extractCalls(content, "matlab");
+
+        const normalizeCall = calls.find((c) => c.calleeName === "normalize");
+        expect(normalizeCall).toBeDefined();
+        expect(normalizeCall!.callType).toBe("MethodCall");
+
+        const scoreCall = calls.find((c) => c.calleeName === "score");
+        expect(scoreCall).toBeDefined();
+        expect(scoreCall!.callType).toBe("MethodCall");
+      });
+
+      it("should document indexing syntax ambiguity", () => {
+        const calls = extractCalls(content, "matlab");
+        const pricesCall = calls.find((c) => c.calleeName === "prices");
+
+        expect(pricesCall).toBeDefined();
+        expect(pricesCall!.callType).toBe("Call");
+      });
+
+      it("should produce edges owned by MATLAB function symbols", () => {
+        expect(CALL_GRAPH_LANGUAGES.has("matlab")).toBe(true);
+
+        const filePath = path.join(tempDir, "calculateSignal.m");
+        const parsed = parseFiles([{ path: filePath, content }]);
+        expect(parsed.length).toBe(1);
+
+        const fileSymbols: SymbolData[] = [];
+        for (const chunk of parsed[0].chunks) {
+          if (!chunk.name || !CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType)) continue;
+          fileSymbols.push({
+            id: `sym_${hashContent(filePath + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`,
+            filePath,
+            name: chunk.name,
+            kind: chunk.chunkType,
+            startLine: chunk.startLine,
+            startCol: 0,
+            endLine: chunk.endLine,
+            endCol: 0,
+            language: chunk.language,
+          });
+        }
+
+        expect(fileSymbols.length).toBeGreaterThan(0);
+        expect(fileSymbols.some((s) => s.name === "calculateSignal")).toBe(true);
+        expect(fileSymbols.some((s) => s.name === "helper")).toBe(true);
+
+        const calls = extractCalls(content, "matlab");
+        const ownedCalls = calls.filter((site) =>
+          fileSymbols.some(
+            (sym) => site.line >= sym.startLine && site.line <= sym.endLine,
+          ),
+        );
+        expect(ownedCalls.length).toBe(calls.length);
       });
     });
   });

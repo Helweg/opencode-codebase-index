@@ -235,15 +235,19 @@ export function formatLogs(logs: LogEntry[]): string {
   }).join("\n");
 }
 
+function formatResultHeader(result: SearchResult, index: number): string {
+  return result.name
+    ? `[${index + 1}] ${result.chunkType} "${result.name}" in ${result.filePath}:${result.startLine}-${result.endLine}`
+    : `[${index + 1}] ${result.chunkType} in ${result.filePath}:${result.startLine}-${result.endLine}`;
+}
+
 export function formatDefinitionLookup(results: SearchResult[], query: string): string {
   if (results.length === 0) {
     return `No definition found for "${query}". Try codebase_search for broader discovery, or verify the symbol name.`;
   }
 
   const formatted = results.map((r, idx) => {
-    const header = r.name
-      ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-      : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
+    const header = formatResultHeader(r, idx);
     return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
   });
 
@@ -254,9 +258,7 @@ export type ScoreFormat = "score" | "similarity";
 
 export function formatSearchResults(results: SearchResult[], scoreFormat: ScoreFormat = "similarity"): string {
   const formatted = results.map((r, idx) => {
-    const header = r.name
-      ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-      : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
+    const header = formatResultHeader(r, idx);
 
     const scoreLabel = scoreFormat === "similarity"
       ? `(similarity: ${(r.score * 100).toFixed(1)}%)`

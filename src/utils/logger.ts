@@ -116,6 +116,11 @@ export class Logger {
     }
   }
 
+  private withMetrics(fn: () => void): void {
+    if (!this.config.metrics) return;
+    fn();
+  }
+
   search(level: LogLevel, message: string, data?: Record<string, unknown>): void {
     if (this.config.logSearch) {
       this.log(level, "search", message, data);
@@ -163,107 +168,125 @@ export class Logger {
   }
 
   recordIndexingStart(): void {
-    if (!this.config.metrics) return;
-    this.metrics.indexingStartTime = Date.now();
+    this.withMetrics(() => {
+      this.metrics.indexingStartTime = Date.now();
+    });
   }
 
   recordIndexingEnd(): void {
-    if (!this.config.metrics) return;
-    this.metrics.indexingEndTime = Date.now();
+    this.withMetrics(() => {
+      this.metrics.indexingEndTime = Date.now();
+    });
   }
 
   recordFilesScanned(count: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.filesScanned = count;
+    this.withMetrics(() => {
+      this.metrics.filesScanned = count;
+    });
   }
 
   recordFilesParsed(count: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.filesParsed = count;
+    this.withMetrics(() => {
+      this.metrics.filesParsed = count;
+    });
   }
 
   recordParseDuration(durationMs: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.parseMs = durationMs;
+    this.withMetrics(() => {
+      this.metrics.parseMs = durationMs;
+    });
   }
 
   recordChunksProcessed(count: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.chunksProcessed += count;
+    this.withMetrics(() => {
+      this.metrics.chunksProcessed += count;
+    });
   }
 
   recordChunksEmbedded(count: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.chunksEmbedded += count;
+    this.withMetrics(() => {
+      this.metrics.chunksEmbedded += count;
+    });
   }
 
   recordChunksFromCache(count: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.chunksFromCache += count;
+    this.withMetrics(() => {
+      this.metrics.chunksFromCache += count;
+    });
   }
 
   recordChunksRemoved(count: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.chunksRemoved += count;
+    this.withMetrics(() => {
+      this.metrics.chunksRemoved += count;
+    });
   }
 
   recordEmbeddingApiCall(tokens: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.embeddingApiCalls++;
-    this.metrics.embeddingTokensUsed += tokens;
+    this.withMetrics(() => {
+      this.metrics.embeddingApiCalls++;
+      this.metrics.embeddingTokensUsed += tokens;
+    });
   }
 
   recordEmbeddingError(): void {
-    if (!this.config.metrics) return;
-    this.metrics.embeddingErrors++;
+    this.withMetrics(() => {
+      this.metrics.embeddingErrors++;
+    });
   }
 
   recordSearch(durationMs: number, breakdown?: { embeddingMs: number; vectorMs: number; keywordMs: number; fusionMs: number }): void {
-    if (!this.config.metrics) return;
-    this.metrics.searchCount++;
-    this.metrics.searchTotalMs += durationMs;
-    this.metrics.searchLastMs = durationMs;
-    this.metrics.searchAvgMs = this.metrics.searchTotalMs / this.metrics.searchCount;
-    
-    if (breakdown) {
-      this.metrics.embeddingCallMs = breakdown.embeddingMs;
-      this.metrics.vectorSearchMs = breakdown.vectorMs;
-      this.metrics.keywordSearchMs = breakdown.keywordMs;
-      this.metrics.fusionMs = breakdown.fusionMs;
-    }
+    this.withMetrics(() => {
+      this.metrics.searchCount++;
+      this.metrics.searchTotalMs += durationMs;
+      this.metrics.searchLastMs = durationMs;
+      this.metrics.searchAvgMs = this.metrics.searchTotalMs / this.metrics.searchCount;
+
+      if (breakdown) {
+        this.metrics.embeddingCallMs = breakdown.embeddingMs;
+        this.metrics.vectorSearchMs = breakdown.vectorMs;
+        this.metrics.keywordSearchMs = breakdown.keywordMs;
+        this.metrics.fusionMs = breakdown.fusionMs;
+      }
+    });
   }
 
   recordCacheHit(): void {
-    if (!this.config.metrics) return;
-    this.metrics.cacheHits++;
+    this.withMetrics(() => {
+      this.metrics.cacheHits++;
+    });
   }
 
   recordCacheMiss(): void {
-    if (!this.config.metrics) return;
-    this.metrics.cacheMisses++;
+    this.withMetrics(() => {
+      this.metrics.cacheMisses++;
+    });
   }
 
   recordQueryCacheHit(): void {
-    if (!this.config.metrics) return;
-    this.metrics.queryCacheHits++;
+    this.withMetrics(() => {
+      this.metrics.queryCacheHits++;
+    });
   }
 
   recordQueryCacheSimilarHit(): void {
-    if (!this.config.metrics) return;
-    this.metrics.queryCacheSimilarHits++;
+    this.withMetrics(() => {
+      this.metrics.queryCacheSimilarHits++;
+    });
   }
 
   recordQueryCacheMiss(): void {
-    if (!this.config.metrics) return;
-    this.metrics.queryCacheMisses++;
+    this.withMetrics(() => {
+      this.metrics.queryCacheMisses++;
+    });
   }
 
   recordGc(orphans: number, chunks: number, embeddings: number): void {
-    if (!this.config.metrics) return;
-    this.metrics.gcRuns++;
-    this.metrics.gcOrphansRemoved += orphans;
-    this.metrics.gcChunksRemoved += chunks;
-    this.metrics.gcEmbeddingsRemoved += embeddings;
+    this.withMetrics(() => {
+      this.metrics.gcRuns++;
+      this.metrics.gcOrphansRemoved += orphans;
+      this.metrics.gcChunksRemoved += chunks;
+      this.metrics.gcEmbeddingsRemoved += embeddings;
+    });
   }
 
   getMetrics(): Metrics {

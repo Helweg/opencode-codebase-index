@@ -296,6 +296,35 @@ describe("knowledge base tool config refresh", () => {
     expect(indexerInstances.at(-1)?.config.additionalInclude).toEqual(["docs/**/*.md"]);
   });
 
+  it("deduplicates knowledge base paths that only differ by trailing separators", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "kb-tools-home-"));
+
+    try {
+      vi.stubEnv("HOME", homeDir);
+      const globalConfigPath = path.join(homeDir, ".config", "opencode", "codebase-index.json");
+      fs.mkdirSync(path.dirname(globalConfigPath), { recursive: true });
+      fs.writeFileSync(
+        globalConfigPath,
+        JSON.stringify({ knowledgeBases: [`${kbDir}/`] }, null, 2),
+        "utf-8"
+      );
+
+      const configPath = path.join(tempDir, ".opencode", "codebase-index.json");
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ knowledgeBases: [kbDir] }, null, 2),
+        "utf-8"
+      );
+
+      const merged = loadMergedConfig(tempDir) as { knowledgeBases?: string[] };
+      expect(merged.knowledgeBases).toEqual([path.normalize(kbDir)]);
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("writes upgraded worktree knowledge base edits to a local config boundary when a local index already exists", async () => {
     const mainRepoDir = path.join(tempDir, "main-repo");
     const worktreeDir = path.join(tempDir, "worktree-feature");
