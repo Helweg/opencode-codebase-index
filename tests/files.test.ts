@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { collectFiles, createIgnoreFilter, shouldIncludeFile, hasProjectMarker } from "../src/utils/files.js";
+import { DEFAULT_EXCLUDE, DEFAULT_INCLUDE } from "../src/config/constants.js";
 
 describe("files utilities", () => {
   let tempDir: string;
@@ -94,6 +95,34 @@ describe("files utilities", () => {
           tempDir,
           includePatterns,
           excludePatterns,
+          filter
+        )
+      ).toBe(true);
+    });
+
+    it("should NOT include MATLAB .m files by default (opt-in required)", () => {
+      const filter = createIgnoreFilter(tempDir);
+
+      expect(
+        shouldIncludeFile(
+          path.join(tempDir, "src", "calculateSignal.m"),
+          tempDir,
+          DEFAULT_INCLUDE,
+          DEFAULT_EXCLUDE,
+          filter
+        )
+      ).toBe(false);
+    });
+
+    it("should include MATLAB .m files when opted in via additionalInclude", () => {
+      const filter = createIgnoreFilter(tempDir);
+
+      expect(
+        shouldIncludeFile(
+          path.join(tempDir, "src", "calculateSignal.m"),
+          tempDir,
+          [...DEFAULT_INCLUDE, "**/*.m"],
+          DEFAULT_EXCLUDE,
           filter
         )
       ).toBe(true);

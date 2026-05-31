@@ -211,7 +211,9 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig
+**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig, MATLAB†
+
+† MATLAB (`.m`) is opt-in — see below.
 
 **Additional Supported Formats (line-based chunking)**: TXT, HTML, HTM, Markdown, Shell scripts
 
@@ -227,6 +229,11 @@ graph TD
 ```
 
 Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*.pdf"`, `"**/*.csv"`).
+
+†**MATLAB opt-in**: `.m` is excluded from defaults because it conflicts with the Objective-C extension used on Apple codebases. To enable MATLAB discovery, add to your global config (`~/.config/opencode/codebase-index.json`):
+```json
+{ "additionalInclude": ["**/*.m"] }
+```
 
 **Max File Size**: Default 1MB (1048576 bytes). Configure via `indexing.maxFileSize` (bytes).
 2. **Chunking**: Large blocks are split with overlapping windows to preserve context across chunk boundaries.
@@ -353,7 +360,7 @@ Returns recent debug logs with optional filtering.
 
 ### `call_graph`
 
-Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, and Zig.
+Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, Apex, Zig, and MATLAB.
 
 - **Use for**: Understanding code flow, tracing dependencies, impact analysis.
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).

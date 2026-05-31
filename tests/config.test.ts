@@ -9,6 +9,7 @@ import {
   EMBEDDING_MODELS,
   AUTO_DETECT_PROVIDER_ORDER,
   DEFAULT_PROVIDER_MODELS,
+  DEFAULT_INCLUDE,
 } from "../src/config/constants.js";
 
 describe("config schema", () => {
@@ -83,7 +84,7 @@ describe("config schema", () => {
       expect(config.embeddingProvider).toBe("auto");
       expect(config.embeddingModel).toBeUndefined();
       expect(config.scope).toBe("project");
-      expect(config.include).toHaveLength(13);
+      expect(config.include).toHaveLength(DEFAULT_INCLUDE.length);
       expect(config.exclude).toHaveLength(16);
     });
 
@@ -177,13 +178,13 @@ describe("config schema", () => {
     });
 
     it("should fallback to defaults for non-array include", () => {
-      expect(parseConfig({ include: "string" }).include).toHaveLength(13);
-      expect(parseConfig({ include: 123 }).include).toHaveLength(13);
+      expect(parseConfig({ include: "string" }).include).toHaveLength(DEFAULT_INCLUDE.length);
+      expect(parseConfig({ include: 123 }).include).toHaveLength(DEFAULT_INCLUDE.length);
     });
 
     it("should fallback to defaults for include with non-string items", () => {
-      expect(parseConfig({ include: [123, 456] }).include).toHaveLength(13);
-      expect(parseConfig({ include: ["valid", 123] }).include).toHaveLength(13);
+      expect(parseConfig({ include: [123, 456] }).include).toHaveLength(DEFAULT_INCLUDE.length);
+      expect(parseConfig({ include: ["valid", 123] }).include).toHaveLength(DEFAULT_INCLUDE.length);
     });
 
     it("should parse exclude as string array", () => {
