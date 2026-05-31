@@ -31,6 +31,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Go => tree_sitter_go::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         Language::Zig => tree_sitter_zig::LANGUAGE.into(),
+        Language::Gdscript => tree_sitter_gdscript::LANGUAGE.into(),
         Language::Matlab => tree_sitter_matlab::LANGUAGE.into(),
         Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
         _ => return Ok(vec![]),
@@ -57,6 +58,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Go => include_str!("../queries/go-calls.scm"),
         Language::Php => include_str!("../queries/php-calls.scm"),
         Language::Zig => include_str!("../queries/zig-calls.scm"),
+        Language::Gdscript => include_str!("../queries/gdscript-calls.scm"),
         Language::Matlab => include_str!("../queries/matlab-calls.scm"),
         Language::Apex => include_str!("../queries/apex-calls.scm"),
         _ => return Ok(vec![]),
@@ -436,6 +438,115 @@ mod tests {
                 .iter()
                 .any(|c| c.callee_name == "ClassWithArgs" && c.call_type == CallType::Constructor),
             "Expected ClassWithArgs constructor, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_direct_calls() {
+        let code = "func main() -> void:\n    foo()\n    bar(1, 2)\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "foo" && c.call_type == CallType::Call),
+            "Expected foo() direct call, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "bar" && c.call_type == CallType::Call),
+            "Expected bar() direct call, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_method_calls() {
+        let code =
+            "func _ready() -> void:\n    self.take_damage(5)\n    health_changed.emit(health)\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "take_damage" && c.call_type == CallType::MethodCall),
+            "Expected self.take_damage() as MethodCall, got: {:?}",
+            calls
+        );
+        // `signal.emit()` must resolve to the signal name, not the `emit`
+        // method, so it can match the indexed `signal_statement` symbol.
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "health_changed" && c.call_type == CallType::MethodCall),
+            "Expected health_changed.emit() to target the signal, got: {:?}",
+            calls
+        );
+        assert!(
+            !calls.iter().any(|c| c.callee_name == "emit"),
+            "`emit` must not leak as a callee, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_signal_emit_chained() {
+        // `self.<signal>.emit()` must still target the signal name.
+        let code = "func _ready() -> void:\n    self.health_changed.emit(health)\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "health_changed" && c.call_type == CallType::MethodCall),
+            "Expected chained self.health_changed.emit() to target the signal, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_instantiation() {
+        // `Class.new()` must resolve to the class name (a constructor call),
+        // not the `new` method which is never indexed as a symbol.
+        let code = "func spawn() -> void:\n    var e = Enemy.new()\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "Enemy" && c.call_type == CallType::Constructor),
+            "Expected Enemy.new() as Constructor targeting the class, got: {:?}",
+            calls
+        );
+        assert!(
+            !calls.iter().any(|c| c.callee_name == "new"),
+            "`new` must not leak as a callee, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_base_call() {
+        // GDScript super-call syntax: `.method()` calls the parent's method.
+        let code = "func _ready() -> void:\n    .ready()\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "ready" && c.call_type == CallType::MethodCall),
+            "Expected .ready() base_call as MethodCall, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_gdscript_case_sensitive() {
+        // GDScript identifiers are case-sensitive (unlike PHP/Apex). Verify
+        // we do NOT lowercase callee names.
+        let code = "func main() -> void:\n    DoThing()\n";
+        let calls = extract_calls(code, "gdscript").unwrap();
+        assert!(
+            calls.iter().any(|c| c.callee_name == "DoThing"),
+            "GDScript names must preserve case, got: {:?}",
             calls
         );
     }

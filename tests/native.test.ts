@@ -232,6 +232,42 @@ public class AccountService {
       expect(chunks.every((c) => c.language === "apex")).toBe(true);
     });
 
+    it("should parse GDScript files", () => {
+      const content = `
+extends Node
+
+class_name Player
+
+signal health_changed(new_health)
+
+const MAX_HEALTH := 100
+
+# Initialises the player when the scene is ready.
+func _ready() -> void:
+    print("ready")
+
+func take_damage(amount: int) -> void:
+    health -= amount
+    health_changed.emit(health)
+`;
+      const chunks = parseFile("player.gd", content);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+
+      const chunkTypes = chunks.map((c) => c.chunkType);
+      expect(chunkTypes).toContain("function_definition");
+
+      // Leading # comment should attach to the _ready chunk.
+      const ready = chunks.find(
+        (c) => c.chunkType === "function_definition" && c.content.includes("_ready"),
+      );
+      expect(ready).toBeDefined();
+      expect(ready!.content).toContain("Initialises the player");
+
+      // Language label is consistent.
+      expect(chunks.every((c) => c.language === "gdscript")).toBe(true);
+    });
+
     it("should parse Zig files", () => {
       const content = `
 const std = @import("std");

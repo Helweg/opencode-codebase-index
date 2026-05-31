@@ -590,6 +590,61 @@ end
     });
   });
 
+  describe("gdscript call extraction", () => {
+    it("should extract direct function calls", () => {
+      const content = `
+func main() -> void:
+    foo()
+    bar(1, 2)
+`;
+      const calls = extractCalls(content, "gdscript");
+      const callNames = calls.map((c) => c.calleeName);
+      expect(callNames).toContain("foo");
+      expect(callNames).toContain("bar");
+    });
+
+    it("should classify attribute calls as MethodCall", () => {
+      const content = `
+func _ready() -> void:
+    self.take_damage(5)
+    health_changed.emit(health)
+`;
+      const calls = extractCalls(content, "gdscript");
+      const takeDamage = calls.find((c) => c.calleeName === "take_damage");
+      expect(takeDamage).toBeDefined();
+      expect(takeDamage!.callType).toBe("MethodCall");
+
+      // `signal.emit()` resolves to the signal name (not the `emit` method)
+      // so it can match the indexed signal symbol.
+      const emit = calls.find((c) => c.calleeName === "health_changed");
+      expect(emit).toBeDefined();
+      expect(emit!.callType).toBe("MethodCall");
+      expect(calls.some((c) => c.calleeName === "emit")).toBe(false);
+    });
+
+    it("should resolve Class.new() to the class name as a constructor", () => {
+      const content = `
+func spawn() -> void:
+    var e = Enemy.new()
+`;
+      const calls = extractCalls(content, "gdscript");
+      const ctor = calls.find((c) => c.calleeName === "Enemy");
+      expect(ctor).toBeDefined();
+      expect(ctor!.callType).toBe("Constructor");
+      expect(calls.some((c) => c.calleeName === "new")).toBe(false);
+    });
+
+    it("should preserve case (GDScript is case-sensitive)", () => {
+      const content = `
+func main() -> void:
+    DoThing()
+`;
+      const calls = extractCalls(content, "gdscript");
+      expect(calls.some((c) => c.calleeName === "DoThing")).toBe(true);
+      expect(calls.some((c) => c.calleeName === "dothing")).toBe(false);
+    });
+  });
+
   describe("zig call extraction", () => {
     it("should extract direct function calls", () => {
       const content = `
