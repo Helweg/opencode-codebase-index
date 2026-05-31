@@ -1024,7 +1024,7 @@ The Rust native module handles performance-critical operations:
 - **usearch**: High-performance vector similarity search with F16 quantization
 - **SQLite**: Persistent storage for embeddings, chunks, branch catalog, symbols, and call edges
 - **BM25 inverted index**: Fast keyword search for hybrid retrieval
-- **Call graph extraction**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports (TypeScript/JavaScript, Python, Go, Rust, PHP, Zig, GDScript)
+- **Call graph extraction**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports (TypeScript/JavaScript, Python, Go, Rust, PHP, Apex, Zig, GDScript, MATLAB)
 - **xxhash**: Fast content hashing for change detection
 
 Rebuild with: `npm run build:native` (requires Rust toolchain)

@@ -8,13 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **MATLAB call graph support**: Added query-based call extraction for MATLAB direct function calls and dotted method/package calls, enabled `.m` files in the `call_graph` indexing path, and documented the MATLAB indexing/function-call ambiguity in tests.
+- **GDScript language support**: Added tree-sitter semantic parsing, file discovery (`.gd`), and call-graph extraction for GDScript (#94).
+- **MATLAB indexing support**: Added tree-sitter semantic parsing and file discovery for MATLAB (`.m`). MATLAB is opt-in via `additionalInclude` because `.m` conflicts with Objective-C on Apple codebases (#91).
+- **MATLAB call graph support**: Added query-based call extraction for MATLAB direct function calls and dotted method/package calls, enabled `.m` files in the `call_graph` indexing path, and documented the MATLAB indexing/function-call ambiguity in tests (#91).
 
 ### Changed
 - **Subsystem module splits**: Split large config, embeddings, eval, MCP, watcher, git, tools, routing, and utility modules into smaller focused files while preserving public entrypoints (#92).
 - **AI slop removal**: Trimmed redundant comments and small wrapper noise across config, eval, runtime, indexer, tools, and utils with behavior-neutral refactors (#93).
-
 - **Remove SiliconFlow default**: The custom reranker no longer falls back to a Chinese endpoint (`api.siliconflow.cn`). A `baseUrl` is now required for the `custom` reranker provider. README examples updated to use Cohere and generic env-var placeholders.
+
 ### Fixed
 - **SSRF protection for custom embedding provider**: Custom provider URLs are now validated against cloud metadata endpoints (169.254.x.x, metadata.google.internal) and non-HTTP protocols to prevent server-side request forgery via malicious config files.
 - **Knowledge base path restrictions**: `add_knowledge_base` now blocks sensitive system directories (`/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/var/run`, `/var/log`) and home dotdirs (`.ssh`, `.gnupg`, `.aws`, `.config/gcloud`, `.docker`, `.kube`). Symlinks are resolved before checking.
@@ -22,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Error response truncation**: All embedding providers now truncate error response bodies to 500 characters, preventing reflection of potentially sensitive data from misconfigured or malicious endpoints.
 - **Config and eval loading hardening**: File-specific parse/shape errors, knowledge-base/include path rebasing fixes, and malformed eval summary coverage (#92).
 - **Command and indexer diagnostics**: Surface command file read failures and warn-level cache recovery details for corrupted persisted state (#92).
+- **`additionalInclude` dedup filter removal**: User-supplied globs that matched default include patterns were silently stripped; the filter is now removed so `additionalInclude` correctly extends defaults (#91).
+- **npm audit vulnerabilities**: Remediated vulnerable transitive dependencies (#99).
 
 ## [0.8.1] - 2026-05-22
 
