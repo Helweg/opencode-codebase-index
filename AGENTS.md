@@ -1,6 +1,6 @@
 # AGENTS.md - AI Agent Guidelines for opencode-codebase-index
 
-**Generated:** 2026-05-14 | **Commit:** 929083b | **Branch:** release/v0.8.0
+**Generated:** 2026-05-31 | **Commit:** 317a76b | **Branch:** main
 
 Semantic codebase indexing plugin for OpenCode. Hybrid TypeScript/Rust architecture:
 - **TypeScript** (`src/`): Plugin logic, embedding providers, OpenCode tools
@@ -49,11 +49,11 @@ src/
 
 native/src/
 ├── lib.rs                # NAPI exports: parse_file, VectorStore, Database, InvertedIndex
-├── parser.rs             # Tree-sitter parsing (18 languages: TS, JS, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig, MATLAB)
+├── parser.rs             # Tree-sitter parsing (19 languages: TS, JS, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig, GDScript, MATLAB)
 ├── chunker.rs            # Semantic chunking with overlap
 ├── store.rs              # usearch vector store (F16 quantization)
 ├── db.rs                 # SQLite: embeddings, chunks, branch catalog, symbols, call edges
-├── call_extractor.rs     # Tree-sitter query-based call extraction (TS/JS, Python, Go, Rust, PHP, Zig, Apex, MATLAB)
+├── call_extractor.rs     # Tree-sitter query-based call extraction (TS/JS, Python, Go, Rust, PHP, Zig, Apex, GDScript, MATLAB)
 ├── inverted_index.rs     # BM25 keyword search
 ├── hasher.rs             # xxhash content hashing
 └── types.rs              # Shared types (Language enum with from_string)
