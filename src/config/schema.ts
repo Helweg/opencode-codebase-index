@@ -66,6 +66,7 @@ export interface SearchConfig {
   rerankTopN: number;
   contextLines: number;
   routingHints: boolean;
+  routingHintRole: "system" | "developer";
 }
 
 export type RerankerProvider = "cohere" | "jina" | "custom";
@@ -191,6 +192,9 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     rerankTopN: typeof rawSearch.rerankTopN === "number" ? Math.min(200, Math.max(0, Math.floor(rawSearch.rerankTopN))) : defaultSearch.rerankTopN,
     contextLines: typeof rawSearch.contextLines === "number" ? Math.min(50, Math.max(0, rawSearch.contextLines)) : defaultSearch.contextLines,
     routingHints: typeof rawSearch.routingHints === "boolean" ? rawSearch.routingHints : defaultSearch.routingHints,
+    routingHintRole: rawSearch.routingHintRole === "developer" || rawSearch.routingHintRole === "system"
+      ? rawSearch.routingHintRole
+      : defaultSearch.routingHintRole,
   };
 
   const rawDebug = (input.debug && typeof input.debug === "object" ? input.debug : {}) as Record<string, unknown>;

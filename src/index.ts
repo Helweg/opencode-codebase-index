@@ -44,6 +44,32 @@ function getCommandsDir(): string {
   return path.join(currentDir, "..", "commands");
 }
 
+function appendRoutingHints(
+  output: { system?: string[]; developer?: string[] },
+  hints: string[],
+  preferredRole: "system" | "developer",
+): void {
+  const preferredBucket = preferredRole === "developer" ? output.developer : output.system;
+  if (Array.isArray(preferredBucket)) {
+    preferredBucket.push(...hints);
+    return;
+  }
+
+  // Compatibility fallback for runtimes that do not expose a developer channel yet.
+  if (Array.isArray(output.system)) {
+    output.system.push(...hints);
+  }
+}
+
+interface ChatTransformInput {
+  sessionID?: string;
+}
+
+interface ChatTransformOutput {
+  system?: string[];
+  developer?: string[];
+}
+
 const plugin: Plugin = async ({ directory }) => {
   try {
     const projectRoot = directory;
@@ -99,9 +125,22 @@ const plugin: Plugin = async ({ directory }) => {
         routingHints?.observeUserMessage(input.sessionID, output.parts);
       },
 
-      async "experimental.chat.system.transform"(input, output) {
+      async "experimental.chat.system.transform"(input: ChatTransformInput, output: ChatTransformOutput) {
+        if (config.search.routingHintRole !== "system") {
+          return;
+        }
+
         const hints = await routingHints?.getSystemHints(input.sessionID) ?? [];
-        output.system.push(...hints);
+        appendRoutingHints(output, hints, "system");
+      },
+
+      async "experimental.chat.developer.transform"(input: ChatTransformInput, output: ChatTransformOutput) {
+        if (config.search.routingHintRole !== "developer") {
+          return;
+        }
+
+        const hints = await routingHints?.getSystemHints(input.sessionID) ?? [];
+        appendRoutingHints(output, hints, "developer");
       },
 
       async "tool.execute.after"(input) {

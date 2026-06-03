@@ -35,6 +35,7 @@ export function getDefaultSearchConfig(): SearchConfig {
     rerankTopN: 20,
     contextLines: 0,
     routingHints: true,
+    routingHintRole: "system",
   };
 }
 

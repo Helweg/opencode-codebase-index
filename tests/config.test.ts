@@ -292,6 +292,7 @@ describe("config schema", () => {
         expect(config.search.rrfK).toBe(60);
         expect(config.search.rerankTopN).toBe(20);
         expect(config.search.routingHints).toBe(true);
+        expect(config.search.routingHintRole).toBe("system");
       });
 
       it("should parse routingHints boolean", () => {
@@ -301,6 +302,15 @@ describe("config schema", () => {
 
       it("should fallback routingHints to default for invalid values", () => {
         expect(parseConfig({ search: { routingHints: "nope" } }).search.routingHints).toBe(true);
+      });
+
+      it("should parse routingHintRole values", () => {
+        expect(parseConfig({ search: { routingHintRole: "system" } }).search.routingHintRole).toBe("system");
+        expect(parseConfig({ search: { routingHintRole: "developer" } }).search.routingHintRole).toBe("developer");
+      });
+
+      it("should fallback routingHintRole to default for invalid values", () => {
+        expect(parseConfig({ search: { routingHintRole: "nope" } }).search.routingHintRole).toBe("system");
       });
 
       it("should fallback fusionStrategy to default for invalid values", () => {

@@ -575,7 +575,8 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "rrfK": 60,                               // RRF smoothing constant
     "rerankTopN": 20,                         // Deterministic rerank depth
     "contextLines": 0,                        // Extra lines before/after match
-    "routingHints": true                      // Runtime nudges for local discovery/definition queries
+    "routingHints": true,                     // Runtime nudges for local discovery/definition queries
+    "routingHintRole": "system"              // system | developer (message role used for hints)
   },
   "reranker": {
     "enabled": false,
@@ -646,6 +647,7 @@ String values in `codebase-index.json` can reference environment variables with 
 | `rerankTopN` | `20` | Deterministic rerank depth cap. Applies lightweight name/path/chunk-type rerank to top-N only |
 | `contextLines` | `0` | Extra lines to include before/after each match |
 | `routingHints` | `true` | Inject lightweight runtime hints for local conceptual discovery and definition lookups. Set to `false` to disable plugin-side routing nudges. |
+| `routingHintRole` | `"system"` | Message role used when injecting routing hints: `"system"` (default) or `"developer"`. |
 | **reranker** | | Optional second-stage model reranker for the top candidate pool |
 | `enabled` | `false` | Turn external reranking on/off |
 | `provider` | `"custom"` | Hosted shortcuts: `cohere`, `jina`, or `custom` |
@@ -676,7 +678,7 @@ These warnings improve observability but do **not** change the recovery behavior
 ### Retrieval ranking behavior
 
 - `codebase_search` and `codebase_peek` use the hybrid path: semantic + keyword retrieval → fusion (`fusionStrategy`) → deterministic rerank (`rerankTopN`) → optional external reranker (`reranker`) → filtering.
-- When `search.routingHints` is enabled (default), the plugin adds tiny per-turn runtime hints for local conceptual discovery and definition queries. Conceptual discovery is nudged toward `codebase_peek` / `codebase_search`, while definition questions are nudged toward `implementation_lookup`. Exact identifier and unrelated operational tasks are left alone.
+- When `search.routingHints` is enabled (default), the plugin adds tiny per-turn runtime hints for local conceptual discovery and definition queries. Conceptual discovery is nudged toward `codebase_peek` / `codebase_search`, while definition questions are nudged toward `implementation_lookup`. Exact identifier and unrelated operational tasks are left alone. Set `search.routingHintRole` to `"developer"` if your client/runtime expects developer-role guidance instead of system-role guidance.
 - `find_similar` stays semantic-only: semantic retrieval + deterministic rerank only (no keyword retrieval, no RRF).
 - For compatibility rollbacks, set `search.fusionStrategy` to `"weighted"` to use the legacy weighted fusion path.
 - When enabled, the external reranker sees path metadata plus a bounded on-disk code snippet for each candidate so it can distinguish real implementations from docs/tests more reliably.
