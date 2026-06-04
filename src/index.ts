@@ -158,8 +158,8 @@ const plugin: Plugin = async ({ directory }) => {
         }
       },
     };
-  } catch (error) {
-    console.error("[codebase-index] Failed to initialize plugin:", error);
+  } catch {
+    console.error("[codebase-index] Failed to initialize plugin (check config and network)");
     // Return a plugin with no tools to prevent opencode from crashing
     return {
       tool: undefined,

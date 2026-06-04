@@ -292,7 +292,7 @@ const { Indexer, parseConfig } = require('${distPath}');
 });
 `;
     
-    const result = execSync(`node -e "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
+    const result = execSync(`node -e "${script.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
       encoding: "utf-8",
       timeout: 30000,
       cwd: projectRoot,

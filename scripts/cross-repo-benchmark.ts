@@ -1355,7 +1355,7 @@ async function main(): Promise<void> {
     writeFileSync(perRepoArtifactPath, JSON.stringify(repoResult, null, 2), "utf-8");
 
     if (repoResult.error) {
-      console.log(`[${repoName}] failed: ${repoResult.error}`);
+      console.log(`[${repoName}] failed (see ${perRepoArtifactPath} for details)`);
     } else {
       const rgHitAt5 = repoResult.ripgrep ? `, rg=${pct(repoResult.ripgrep.metrics.hitAt5)}` : "";
       const sgHitAt5 = repoResult.sg ? `, sg=${pct(repoResult.sg.metrics.hitAt5)}` : "";

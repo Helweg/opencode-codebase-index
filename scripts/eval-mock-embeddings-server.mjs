@@ -53,8 +53,9 @@ const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(payload);
       } catch (error) {
+        console.error("[mock-embeddings] Request error:", error);
         res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(error) }));
+        res.end(JSON.stringify({ error: "Bad request" }));
       }
     });
     return;
