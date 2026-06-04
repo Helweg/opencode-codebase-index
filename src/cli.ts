@@ -47,7 +47,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Fatal: ${message}`);
+  const msg = error instanceof Error ? error.message : "unknown error";
+  console.error(`Fatal: ${msg}`);
   process.exit(1);
 });
