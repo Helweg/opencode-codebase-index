@@ -119,9 +119,8 @@ const plugin: Plugin = async ({ directory }) => {
         }
       },
     };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "unknown error";
-    console.error(`[codebase-index] Failed to initialize plugin: ${msg}`);
+  } catch {
+    console.error("[codebase-index] Failed to initialize plugin (check config and network)");
     // Return a plugin with no tools to prevent opencode from crashing
     return {
       tool: undefined,

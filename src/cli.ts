@@ -46,8 +46,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((error: unknown) => {
-  const msg = error instanceof Error ? error.message : "unknown error";
-  console.error(`Fatal: ${msg}`);
+main().catch((_error: unknown) => {
+  console.error("Fatal: failed to start MCP server (check config and network)");
   process.exit(1);
 });
