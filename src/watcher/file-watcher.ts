@@ -3,7 +3,7 @@ import * as path from "path";
 
 import type { CodebaseIndexConfig } from "../config/schema.js";
 import { createIgnoreFilter, shouldIncludeFile } from "../utils/files.js";
-import { hasFilteredPathSegment } from "../utils/paths.js";
+import { hasFilteredPathSegment, isRestrictedDirectory } from "../utils/paths.js";
 
 export type FileChangeType = "add" | "change" | "unlink";
 
@@ -45,6 +45,10 @@ export class FileWatcher {
           return true;
         }
 
+        if (isRestrictedDirectory(relativePath, path.sep)) {
+          return true;
+        }
+
         if (ignoreFilter.ignores(relativePath)) {
           return true;
         }
@@ -57,6 +61,15 @@ export class FileWatcher {
         stabilityThreshold: 300,
         pollInterval: 100,
       },
+    });
+
+    this.watcher.on("error", (error: unknown) => {
+      const err = error instanceof Error ? (error as NodeJS.ErrnoException) : null;
+      if (err?.code === "EPERM" || err?.code === "EACCES") {
+        // Silently ignore permission errors — common on macOS restricted paths
+        return;
+      }
+      console.error("[codebase-index] Watcher error:", err?.message ?? error);
     });
 
     this.watcher.on("add", (filePath) => this.handleChange("add", filePath));

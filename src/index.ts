@@ -1,4 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import * as os from "os";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
@@ -89,9 +90,15 @@ const plugin: Plugin = async ({ directory, worktree }) => {
       ? new RoutingHintController(() => getProjectIndexer().getStatus())
       : null;
 
-    const isValidProject = !config.indexing.requireProjectMarker || hasProjectMarker(projectRoot);
+    const isHomeDir = path.resolve(projectRoot) === path.resolve(os.homedir());
+    const isValidProject = !isHomeDir && (!config.indexing.requireProjectMarker || hasProjectMarker(projectRoot));
 
-    if (!isValidProject) {
+    if (isHomeDir) {
+      console.warn(
+        `[codebase-index] Refusing to watch or index home directory "${projectRoot}". ` +
+        `Open a specific project directory instead.`
+      );
+    } else if (!isValidProject) {
       console.warn(
         `[codebase-index] Skipping file watching and auto-indexing: no project marker found in "${projectRoot}". ` +
         `Set "indexing.requireProjectMarker": false in config to override.`
