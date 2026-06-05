@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-05
+
+### Added
+- **Developer role for routing hints**: Support `developer` role for routing hint messages via `search.routingHintRole` config option (#102).
+
+### Fixed
+- **Multi-project index collision**: Resolved index collisions when multiple projects are open by using per-directory Indexer map keyed by worktree root (#108).
+- **Watcher EPERM flood**: Prevent watcher from recursing into OS-restricted directories that cause permission error storms (#109).
+- **CodeQL security findings**: Fully break taint chains from `apiKey` to error logs and resolve 6 GitHub CodeQL security findings (#105).
+
 ## [0.9.0] - 2026-05-31
 
 ### Added
