@@ -44,7 +44,7 @@ export function initializeTools(projectRoot: string, config: ParsedCodebaseIndex
 }
 
 export function getSharedIndexer(): Indexer {
-  return getIndexerForDirectory(defaultProjectRoot);
+  return getIndexerForProject(defaultProjectRoot);
 }
 
 function refreshIndexerForDirectory(projectRoot: string): void {
@@ -71,7 +71,7 @@ function shouldForceLocalizeProjectIndex(projectRoot: string): boolean {
   return !existsSync(localIndexPath) && existsSync(inheritedIndexPath);
 }
 
-function getIndexerForDirectory(directory: string): Indexer {
+export function getIndexerForProject(directory: string): Indexer {
   const projectRoot = directory || defaultProjectRoot;
   if (!projectRoot) {
     throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");
@@ -97,7 +97,7 @@ export const codebase_peek: ToolDefinition = tool({
     chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const results = await indexer.search(args.query, args.limit ?? 10, {
       fileType: args.fileType,
       directory: args.directory,
@@ -118,8 +118,8 @@ export const index_codebase: ToolDefinition = tool({
     verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
   },
   async execute(args, context) {
-    const projectRoot = context?.directory || defaultProjectRoot;
-    let indexer = getIndexerForDirectory(projectRoot);
+    const projectRoot = context?.worktree || defaultProjectRoot;
+    let indexer = getIndexerForProject(projectRoot);
 
     if (args.estimateOnly) {
       const estimate = await indexer.estimateCost();
@@ -130,7 +130,7 @@ export const index_codebase: ToolDefinition = tool({
       if (shouldForceLocalizeProjectIndex(projectRoot)) {
         materializeLocalProjectConfig(projectRoot, loadProjectConfigLayer(projectRoot));
         refreshIndexerForDirectory(projectRoot);
-        indexer = getIndexerForDirectory(projectRoot);
+        indexer = getIndexerForProject(projectRoot);
       }
       await indexer.clearIndex();
     }
@@ -157,7 +157,7 @@ export const index_status: ToolDefinition = tool({
     "Check the status of the codebase index. Shows whether the codebase is indexed, how many chunks are stored, and the embedding provider being used.",
   args: {},
   async execute(_args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const status = await indexer.getStatus();
     return formatStatus(status);
   },
@@ -168,7 +168,7 @@ export const index_health_check: ToolDefinition = tool({
     "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
   args: {},
   async execute(_args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const result = await indexer.healthCheck();
 
     return formatHealthCheck(result);
@@ -180,7 +180,7 @@ export const index_metrics: ToolDefinition = tool({
     "Get metrics and performance statistics for the codebase index. Shows indexing stats, search timings, cache hit rates, and API usage. Requires debug.enabled=true and debug.metrics=true in config.",
   args: {},
   async execute(_args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const logger = indexer.getLogger();
 
     if (!logger.isEnabled()) {
@@ -204,7 +204,7 @@ export const index_logs: ToolDefinition = tool({
     level: z.enum(["error", "warn", "info", "debug"]).optional().describe("Filter by minimum log level"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const logger = indexer.getLogger();
 
     if (!logger.isEnabled()) {
@@ -236,7 +236,7 @@ export const find_similar: ToolDefinition = tool({
     excludeFile: z.string().optional().describe("Exclude results from this file path (useful when searching for duplicates of code from a specific file)"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const results = await indexer.findSimilar(args.code, args.limit, {
       fileType: args.fileType,
       directory: args.directory,
@@ -264,7 +264,7 @@ export const codebase_search: ToolDefinition = tool({
     contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const results = await indexer.search(args.query, args.limit ?? 5, {
       fileType: args.fileType,
       directory: args.directory,
@@ -293,7 +293,7 @@ export const implementation_lookup: ToolDefinition = tool({
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils')"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     const results = await indexer.search(args.query, args.limit ?? 5, {
       fileType: args.fileType,
       directory: args.directory,
@@ -312,7 +312,7 @@ export const call_graph: ToolDefinition = tool({
     symbolId: z.string().optional().describe("Symbol ID (required for 'callees' direction, returned by previous call_graph queries)"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForDirectory(context?.directory);
+    const indexer = getIndexerForProject(context?.worktree);
     if (args.direction === "callees") {
       if (!args.symbolId) {
         return "Error: 'symbolId' is required when direction is 'callees'. First use direction='callers' to find the symbol ID.";
@@ -346,7 +346,7 @@ export const add_knowledge_base: ToolDefinition = tool({
     path: z.string().describe("Path to the folder to add as a knowledge base (absolute or relative to project root)"),
   },
   async execute(args, context) {
-    const projectRoot = context?.directory || defaultProjectRoot;
+    const projectRoot = context?.worktree || defaultProjectRoot;
     const inputPath = args.path.trim();
 
     const normalizedPath = path.resolve(
@@ -431,7 +431,7 @@ export const list_knowledge_bases: ToolDefinition = tool({
     "List all configured knowledge base folders that are indexed alongside the main project.",
   args: {},
   async execute(_args, context) {
-    const projectRoot = context?.directory || defaultProjectRoot;
+    const projectRoot = context?.worktree || defaultProjectRoot;
     const config = loadRuntimeConfig(projectRoot);
     const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
 
@@ -470,7 +470,7 @@ export const remove_knowledge_base: ToolDefinition = tool({
     path: z.string().describe("Path of the knowledge base to remove (must match the configured path exactly)"),
   },
   async execute(args, context) {
-    const projectRoot = context?.directory || defaultProjectRoot;
+    const projectRoot = context?.worktree || defaultProjectRoot;
     const inputPath = args.path.trim();
 
     const config = loadEditableConfig(projectRoot);

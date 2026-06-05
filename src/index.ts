@@ -19,7 +19,7 @@ import {
   add_knowledge_base,
   list_knowledge_bases,
   remove_knowledge_base,
-  getSharedIndexer,
+  getIndexerForProject,
   initializeTools,
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
@@ -27,11 +27,17 @@ import { RoutingHintController } from "./routing-hints.js";
 import { hasProjectMarker } from "./utils/files.js";
 import type { CombinedWatcher } from "./watcher/index.js";
 
-let activeWatcher: CombinedWatcher | null = null;
+const activeWatchers = new Map<string, CombinedWatcher>();
 
-function replaceActiveWatcher(nextWatcher: CombinedWatcher | null): void {
-  activeWatcher?.stop();
-  activeWatcher = nextWatcher;
+function replaceActiveWatcher(projectRoot: string, nextWatcher: CombinedWatcher | null): void {
+  const existing = activeWatchers.get(projectRoot);
+  if (existing) {
+    existing.stop();
+    activeWatchers.delete(projectRoot);
+  }
+  if (nextWatcher) {
+    activeWatchers.set(projectRoot, nextWatcher);
+  }
 }
 
 function getCommandsDir(): string {
@@ -78,9 +84,9 @@ const plugin: Plugin = async ({ directory }) => {
 
     initializeTools(projectRoot, config);
 
-    const indexer = getSharedIndexer();
+    const getProjectIndexer = () => getIndexerForProject(projectRoot);
     const routingHints = config.search.routingHints
-      ? new RoutingHintController(() => indexer.getStatus())
+      ? new RoutingHintController(() => getProjectIndexer().getStatus())
       : null;
 
     const isValidProject = !config.indexing.requireProjectMarker || hasProjectMarker(projectRoot);
@@ -93,15 +99,16 @@ const plugin: Plugin = async ({ directory }) => {
     }
 
     if (config.indexing.autoIndex && isValidProject) {
+      const indexer = getProjectIndexer();
       indexer.initialize().then(() => {
         indexer.index().catch(() => {});
       }).catch(() => {});
     }
 
     if (config.indexing.watchFiles && isValidProject) {
-      replaceActiveWatcher(createWatcherWithIndexer(getSharedIndexer, projectRoot, config));
+      replaceActiveWatcher(projectRoot, createWatcherWithIndexer(getProjectIndexer, projectRoot, config));
     } else {
-      replaceActiveWatcher(null);
+      replaceActiveWatcher(projectRoot, null);
     }
 
     return {
