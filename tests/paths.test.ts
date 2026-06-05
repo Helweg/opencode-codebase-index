@@ -6,6 +6,7 @@ import {
   hasFilteredPathSegment,
   isBuildPathSegment,
   isHiddenPathSegment,
+  isRestrictedDirectory,
   normalizePathSeparators,
 } from "../src/utils/paths.js";
 
@@ -31,5 +32,26 @@ describe("path helpers", () => {
     expect(hasFilteredPathSegment(`src${path.sep}.git${path.sep}config`)).toBe(true);
     expect(hasFilteredPathSegment(`src${path.sep}cmake-build-debug${path.sep}index.ts`)).toBe(true);
     expect(hasFilteredPathSegment(`src${path.sep}watcher${path.sep}index.ts`)).toBe(false);
+  });
+
+  it("detects restricted OS directories in first path segment", () => {
+    expect(isRestrictedDirectory("Library/Containers/uuid", "/")).toBe(true);
+    expect(isRestrictedDirectory("library/Preferences", "/")).toBe(true);
+    expect(isRestrictedDirectory("Applications/App.app", "/")).toBe(true);
+    expect(isRestrictedDirectory("System/Library", "/")).toBe(true);
+    expect(isRestrictedDirectory("Volumes/Disk", "/")).toBe(true);
+    expect(isRestrictedDirectory("private/var", "/")).toBe(true);
+    expect(isRestrictedDirectory("cores/core.1234", "/")).toBe(true);
+    // Linux
+    expect(isRestrictedDirectory("proc/1/status", "/")).toBe(true);
+    expect(isRestrictedDirectory("sys/class", "/")).toBe(true);
+    // Windows
+    expect(isRestrictedDirectory("Windows\\System32", "\\")).toBe(true);
+    expect(isRestrictedDirectory("ProgramData\\App", "\\")).toBe(true);
+    // Non-restricted paths
+    expect(isRestrictedDirectory("src/Library/thing", "/")).toBe(false);
+    expect(isRestrictedDirectory("node_modules/lib", "/")).toBe(false);
+    expect(isRestrictedDirectory("dist/index.js", "/")).toBe(false);
+    expect(isRestrictedDirectory("", "/")).toBe(false);
   });
 });
