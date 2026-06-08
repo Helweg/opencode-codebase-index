@@ -22,3 +22,18 @@
     (field_declaration
       !name
       type: (type_identifier) @inherits.name))) @inherits
+
+; Package-qualified struct embedding: type Foo struct { pkg.Base }
+; Captures the type name from qualified anonymous embeds
+(struct_type
+  (field_declaration_list
+    (field_declaration
+      !name
+      type: (qualified_type
+        name: (type_identifier) @inherits.name)))) @inherits
+; Only matches anonymous fields (no name: child) — not regular typed fields
+(struct_type
+  (field_declaration_list
+    (field_declaration
+      !name
+      type: (type_identifier) @inherits.name))) @inherits

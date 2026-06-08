@@ -29,3 +29,10 @@
 (class_definition
   superclasses: (argument_list
     (identifier) @inherits.name)) @inherits
+
+; Dotted class inheritance: class Foo(models.Model, module.Base)
+; Captures the attribute (last identifier) from dotted superclass names
+(class_definition
+  superclasses: (argument_list
+    (attribute
+      attribute: (identifier) @inherits.name))) @inherits

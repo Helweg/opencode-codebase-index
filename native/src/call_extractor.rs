@@ -747,4 +747,57 @@ mod tests {
         );
         assert_eq!(inherits[0].callee_name, "BaseHandler");
     }
+
+    #[test]
+    fn test_python_dotted_inheritance() {
+        let code = "class MyView(views.APIView, models.Model):\n    pass\n";
+        let calls = extract_calls(code, "python").unwrap();
+        let inherits: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Inherits)
+            .collect();
+        assert_eq!(
+            inherits.len(),
+            2,
+            "Expected 2 Inherits from dotted superclasses, got: {:?}",
+            inherits
+        );
+        let names: Vec<&str> = inherits.iter().map(|c| c.callee_name.as_str()).collect();
+        assert!(names.contains(&"APIView"));
+        assert!(names.contains(&"Model"));
+    }
+
+    #[test]
+    fn test_go_qualified_embedding() {
+        let code = "package main\n\ntype Server struct {\n\tpkg.Base\n}";
+        let calls = extract_calls(code, "go").unwrap();
+        let inherits: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Inherits)
+            .collect();
+        assert_eq!(
+            inherits.len(),
+            1,
+            "Expected 1 Inherits from qualified embed, got: {:?}",
+            inherits
+        );
+        assert_eq!(inherits[0].callee_name, "Base");
+    }
+
+    #[test]
+    fn test_rust_scoped_impl_trait() {
+        let code = "impl std::fmt::Display for MyStruct { fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { Ok(()) } }";
+        let calls = extract_calls(code, "rust").unwrap();
+        let impls: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Implements)
+            .collect();
+        assert_eq!(
+            impls.len(),
+            1,
+            "Expected 1 Implements from scoped trait, got: {:?}",
+            impls
+        );
+        assert_eq!(impls[0].callee_name, "Display");
+    }
 }
