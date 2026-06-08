@@ -670,6 +670,36 @@ mod tests {
     }
 
     #[test]
+    fn test_typescript_qualified_extends_and_implements() {
+        let code = "class Foo extends Ns.Base implements Ns.IBar, pkg.IBaz {}";
+        let calls = extract_calls(code, "typescript").unwrap();
+        let inherits: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Inherits)
+            .collect();
+        let impls: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Implements)
+            .collect();
+        assert_eq!(
+            inherits.len(),
+            1,
+            "Expected 1 Inherits from qualified extends, got: {:?}",
+            inherits
+        );
+        assert_eq!(inherits[0].callee_name, "Base");
+        assert_eq!(
+            impls.len(),
+            2,
+            "Expected 2 Implements from qualified interfaces, got: {:?}",
+            impls
+        );
+        let impl_names: Vec<&str> = impls.iter().map(|c| c.callee_name.as_str()).collect();
+        assert!(impl_names.contains(&"IBar"));
+        assert!(impl_names.contains(&"IBaz"));
+    }
+
+    #[test]
     fn test_python_class_inheritance() {
         let code = "class Admin(BaseUser):\n    pass\n";
         let calls = extract_calls(code, "python").unwrap();
