@@ -194,11 +194,13 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
             // callee names to lowercase so that HELPER() matches symbol `helper`
             // during resolution and lookup. Constructor names keep their original
             // casing because they need to match class declarations (which are
-            // resolved by exact name in this codebase). Import names are PHP-only
-            // and similarly preserve their casing.
+            // resolved by exact name in this codebase). Import, Inherits, and
+            // Implements names similarly preserve their casing.
             let normalized_name = if (language == Language::Php || language == Language::Apex)
                 && ct != CallType::Import
                 && ct != CallType::Constructor
+                && ct != CallType::Inherits
+                && ct != CallType::Implements
             {
                 name.to_lowercase()
             } else {
@@ -646,6 +648,25 @@ mod tests {
             "Expected Implements for ISerializable, got: {:?}",
             calls
         );
+    }
+
+    #[test]
+    fn test_typescript_class_expression_extends() {
+        let code = "const Foo = class extends Bar { };\nexport default class extends Base { }";
+        let calls = extract_calls(code, "typescript").unwrap();
+        let inherits: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Inherits)
+            .collect();
+        assert_eq!(
+            inherits.len(),
+            2,
+            "Expected 2 Inherits from class expressions, got: {:?}",
+            inherits
+        );
+        let names: Vec<&str> = inherits.iter().map(|c| c.callee_name.as_str()).collect();
+        assert!(names.contains(&"Bar"));
+        assert!(names.contains(&"Base"));
     }
 
     #[test]

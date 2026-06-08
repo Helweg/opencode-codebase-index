@@ -933,19 +933,19 @@ export class Database {
     this.inner.upsertCallEdgesBatch(edges);
   }
 
-  getCallers(targetName: string, branch: string): CallEdgeData[] {
+  getCallers(targetName: string, branch: string, callTypeFilter?: string): CallEdgeData[] {
     this.throwIfClosed();
-    return this.inner.getCallers(targetName, branch);
+    return this.inner.getCallers(targetName, branch, callTypeFilter ?? null);
   }
 
-  getCallersWithContext(targetName: string, branch: string): CallEdgeData[] {
+  getCallersWithContext(targetName: string, branch: string, callTypeFilter?: string): CallEdgeData[] {
     this.throwIfClosed();
-    return this.inner.getCallersWithContext(targetName, branch);
+    return this.inner.getCallersWithContext(targetName, branch, callTypeFilter ?? null);
   }
 
-  getCallees(symbolId: string, branch: string): CallEdgeData[] {
+  getCallees(symbolId: string, branch: string, callTypeFilter?: string): CallEdgeData[] {
     this.throwIfClosed();
-    return this.inner.getCallees(symbolId, branch);
+    return this.inner.getCallees(symbolId, branch, callTypeFilter ?? null);
   }
 
   deleteCallEdgesByFile(filePath: string): number {

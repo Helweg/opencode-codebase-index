@@ -1092,18 +1092,39 @@ pub fn get_callers(
     conn: &Connection,
     symbol_name: &str,
     branch: &str,
+    call_type_filter: Option<&str>,
 ) -> DbResult<Vec<CallEdgeRow>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
-        FROM call_edges ce
-        INNER JOIN symbols s ON ce.from_symbol_id = s.id
-        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
-        WHERE ce.target_name = ? COLLATE NOCASE
-        "#,
-    )?;
+    let (sql, params) = if let Some(ct) = call_type_filter {
+        (
+            r#"
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            FROM call_edges ce
+            INNER JOIN symbols s ON ce.from_symbol_id = s.id
+            INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
+            WHERE ce.target_name = ?2 COLLATE NOCASE AND ce.call_type = ?3
+            "#,
+            vec![branch.to_string(), symbol_name.to_string(), ct.to_string()],
+        )
+    } else {
+        (
+            r#"
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            FROM call_edges ce
+            INNER JOIN symbols s ON ce.from_symbol_id = s.id
+            INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
+            WHERE ce.target_name = ?2 COLLATE NOCASE
+            "#,
+            vec![branch.to_string(), symbol_name.to_string()],
+        )
+    };
 
-    let rows = stmt.query_map(params![branch, symbol_name], |row| {
+    let mut stmt = conn.prepare(sql)?;
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
         Ok(CallEdgeRow {
             id: row.get(0)?,
             from_symbol_id: row.get(1)?,
@@ -1127,28 +1148,59 @@ pub fn get_callers_with_context(
     conn: &Connection,
     symbol_name: &str,
     branch: &str,
+    call_type_filter: Option<&str>,
 ) -> DbResult<Vec<CallerRow>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT
-            ce.id,
-            ce.from_symbol_id,
-            s.name,
-            s.file_path,
-            ce.target_name,
-            ce.to_symbol_id,
-            ce.call_type,
-            ce.line,
-            ce.col,
-            ce.is_resolved
-        FROM call_edges ce
-        INNER JOIN symbols s ON ce.from_symbol_id = s.id
-        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
-        WHERE ce.target_name = ? COLLATE NOCASE
-        "#,
-    )?;
+    let (sql, params) = if let Some(ct) = call_type_filter {
+        (
+            r#"
+            SELECT
+                ce.id,
+                ce.from_symbol_id,
+                s.name,
+                s.file_path,
+                ce.target_name,
+                ce.to_symbol_id,
+                ce.call_type,
+                ce.line,
+                ce.col,
+                ce.is_resolved
+            FROM call_edges ce
+            INNER JOIN symbols s ON ce.from_symbol_id = s.id
+            INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
+            WHERE ce.target_name = ?2 COLLATE NOCASE AND ce.call_type = ?3
+            "#,
+            vec![branch.to_string(), symbol_name.to_string(), ct.to_string()],
+        )
+    } else {
+        (
+            r#"
+            SELECT
+                ce.id,
+                ce.from_symbol_id,
+                s.name,
+                s.file_path,
+                ce.target_name,
+                ce.to_symbol_id,
+                ce.call_type,
+                ce.line,
+                ce.col,
+                ce.is_resolved
+            FROM call_edges ce
+            INNER JOIN symbols s ON ce.from_symbol_id = s.id
+            INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
+            WHERE ce.target_name = ?2 COLLATE NOCASE
+            "#,
+            vec![branch.to_string(), symbol_name.to_string()],
+        )
+    };
 
-    let rows = stmt.query_map(params![branch, symbol_name], |row| {
+    let mut stmt = conn.prepare(sql)?;
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
         Ok(CallerRow {
             id: row.get(0)?,
             from_symbol_id: row.get(1)?,
@@ -1171,18 +1223,43 @@ pub fn get_callers_with_context(
 }
 
 /// Get all call edges from a symbol (filtered by branch)
-pub fn get_callees(conn: &Connection, symbol_id: &str, branch: &str) -> DbResult<Vec<CallEdgeRow>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
-        FROM call_edges ce
-        INNER JOIN symbols s ON ce.from_symbol_id = s.id
-        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
-        WHERE ce.from_symbol_id = ?
-        "#,
-    )?;
+pub fn get_callees(
+    conn: &Connection,
+    symbol_id: &str,
+    branch: &str,
+    call_type_filter: Option<&str>,
+) -> DbResult<Vec<CallEdgeRow>> {
+    let (sql, params) = if let Some(ct) = call_type_filter {
+        (
+            r#"
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            FROM call_edges ce
+            INNER JOIN symbols s ON ce.from_symbol_id = s.id
+            INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
+            WHERE ce.from_symbol_id = ?2 AND ce.call_type = ?3
+            "#,
+            vec![branch.to_string(), symbol_id.to_string(), ct.to_string()],
+        )
+    } else {
+        (
+            r#"
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            FROM call_edges ce
+            INNER JOIN symbols s ON ce.from_symbol_id = s.id
+            INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
+            WHERE ce.from_symbol_id = ?2
+            "#,
+            vec![branch.to_string(), symbol_id.to_string()],
+        )
+    };
 
-    let rows = stmt.query_map(params![branch, symbol_id], |row| {
+    let mut stmt = conn.prepare(sql)?;
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
         Ok(CallEdgeRow {
             id: row.get(0)?,
             from_symbol_id: row.get(1)?,
@@ -1825,26 +1902,26 @@ mod tests {
         upsert_call_edge(&conn, &edge).unwrap();
 
         // Get callees of main
-        let callees = get_callees(&conn, "sym_main", "main").unwrap();
+        let callees = get_callees(&conn, "sym_main", "main", None).unwrap();
         assert_eq!(callees.len(), 1);
         assert_eq!(callees[0].target_name, "helper");
         assert!(!callees[0].is_resolved);
 
         // Get callers of helper (branch-filtered)
-        let callers = get_callers(&conn, "helper", "main").unwrap();
+        let callers = get_callers(&conn, "helper", "main", None).unwrap();
         assert_eq!(callers.len(), 1);
         assert_eq!(callers[0].from_symbol_id, "sym_main");
 
         // Resolve the edge
         resolve_call_edge(&conn, "edge1", "sym_helper").unwrap();
-        let callees = get_callees(&conn, "sym_main", "main").unwrap();
+        let callees = get_callees(&conn, "sym_main", "main", None).unwrap();
         assert!(callees[0].is_resolved);
         assert_eq!(callees[0].to_symbol_id, Some("sym_helper".to_string()));
 
         // Delete by file
         let deleted = delete_call_edges_by_file(&conn, "src/main.ts").unwrap();
         assert_eq!(deleted, 1);
-        let callees = get_callees(&conn, "sym_main", "main").unwrap();
+        let callees = get_callees(&conn, "sym_main", "main", None).unwrap();
         assert!(callees.is_empty());
     }
 
@@ -1962,7 +2039,7 @@ mod tests {
         let removed_edges = gc_orphan_call_edges(&conn).unwrap();
         assert_eq!(removed_edges, 0);
         // Edge from 'used' still exists
-        let remaining_edges = get_callees(&conn, "used", "main").unwrap();
+        let remaining_edges = get_callees(&conn, "used", "main", None).unwrap();
         assert_eq!(remaining_edges.len(), 1);
     }
 
@@ -2020,7 +2097,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(get_branch_symbol_ids(&conn, "main").unwrap().is_empty());
-        assert!(get_callees(&conn, "sym1", "main").unwrap().is_empty());
+        assert!(get_callees(&conn, "sym1", "main", None).unwrap().is_empty());
     }
 
     #[test]
@@ -2214,7 +2291,7 @@ mod tests {
             is_resolved: false,
         };
         upsert_call_edge(&conn, &edge).unwrap();
-        let before = get_callees(&conn, "sym_caller", "main").unwrap();
+        let before = get_callees(&conn, "sym_caller", "main", None).unwrap();
         assert_eq!(before.len(), 1);
 
         let deleted = delete_symbols_by_file(&conn, "src/main.ts").unwrap();

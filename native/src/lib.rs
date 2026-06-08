@@ -948,9 +948,14 @@ impl Database {
     }
 
     #[napi]
-    pub fn get_callers(&self, symbol_name: String, branch: String) -> Result<Vec<CallEdgeData>> {
+    pub fn get_callers(
+        &self,
+        symbol_name: String,
+        branch: String,
+        call_type_filter: Option<String>,
+    ) -> Result<Vec<CallEdgeData>> {
         self.with_conn(|conn| {
-            let rows = db::get_callers(conn, &symbol_name, &branch)
+            let rows = db::get_callers(conn, &symbol_name, &branch, call_type_filter.as_deref())
                 .map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(rows
                 .into_iter()
@@ -971,9 +976,14 @@ impl Database {
     }
 
     #[napi]
-    pub fn get_callees(&self, symbol_id: String, branch: String) -> Result<Vec<CallEdgeData>> {
+    pub fn get_callees(
+        &self,
+        symbol_id: String,
+        branch: String,
+        call_type_filter: Option<String>,
+    ) -> Result<Vec<CallEdgeData>> {
         self.with_conn(|conn| {
-            let rows = db::get_callees(conn, &symbol_id, &branch)
+            let rows = db::get_callees(conn, &symbol_id, &branch, call_type_filter.as_deref())
                 .map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(rows
                 .into_iter()
@@ -998,10 +1008,16 @@ impl Database {
         &self,
         symbol_name: String,
         branch: String,
+        call_type_filter: Option<String>,
     ) -> Result<Vec<CallEdgeData>> {
         self.with_conn(|conn| {
-            let rows = db::get_callers_with_context(conn, &symbol_name, &branch)
-                .map_err(|e| Error::from_reason(e.to_string()))?;
+            let rows = db::get_callers_with_context(
+                conn,
+                &symbol_name,
+                &branch,
+                call_type_filter.as_deref(),
+            )
+            .map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(rows
                 .into_iter()
                 .map(|r| CallEdgeData {

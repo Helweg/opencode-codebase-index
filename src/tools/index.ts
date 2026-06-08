@@ -319,10 +319,7 @@ export const call_graph: ToolDefinition = tool({
       if (!args.symbolId) {
         return "Error: 'symbolId' is required when direction is 'callees'. First use direction='callers' to find the symbol ID.";
       }
-      let callees = await indexer.getCallees(args.symbolId);
-      if (args.relationshipType) {
-        callees = callees.filter(e => e.callType === args.relationshipType);
-      }
+      let callees = await indexer.getCallees(args.symbolId, args.relationshipType);
       if (callees.length === 0) {
         return `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. The function may not call any other tracked functions.`;
       }
@@ -331,10 +328,7 @@ export const call_graph: ToolDefinition = tool({
       );
       return formatted.join("\n");
     }
-    let callers = await indexer.getCallers(args.name);
-    if (args.relationshipType) {
-      callers = callers.filter(e => e.callType === args.relationshipType);
-    }
+    let callers = await indexer.getCallers(args.name, args.relationshipType);
     if (callers.length === 0) {
       return `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. It may not be called by any tracked function, or the index needs updating.`;
     }

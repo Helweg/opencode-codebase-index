@@ -72,3 +72,21 @@
   (class_heritage
     (implements_clause
       (type_identifier) @implements.name))) @implements
+
+; -------------------------------------------------------------
+; Class expression inheritance: const Foo = class extends Bar { }
+; Captures the parent class name from class expressions
+; -------------------------------------------------------------
+(class
+  (class_heritage
+    (extends_clause
+      value: (identifier) @inherits.name))) @inherits
+
+; -------------------------------------------------------------
+; Class expression implements: const Foo = class implements IBar { }
+; Captures each implemented interface name from class expressions
+; -------------------------------------------------------------
+(class
+  (class_heritage
+    (implements_clause
+      (type_identifier) @implements.name))) @implements
