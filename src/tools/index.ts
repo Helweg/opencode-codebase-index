@@ -339,6 +339,29 @@ export const call_graph: ToolDefinition = tool({
   },
 });
 
+export const call_graph_path: ToolDefinition = tool({
+  description:
+    "Find the shortest connection path between two symbols in the call graph. Given a source and target function/method name, returns the chain of calls connecting them.",
+  args: {
+    from: z.string().describe("Source function/method name (starting point)"),
+    to: z.string().describe("Target function/method name (destination)"),
+    maxDepth: z.number().optional().default(10).describe("Maximum traversal depth (default: 10)"),
+  },
+  async execute(args, context) {
+    const indexer = getIndexerForProject(context?.worktree);
+    const path = await indexer.findCallPath(args.from, args.to, args.maxDepth);
+    if (path.length === 0) {
+      return `No path found between "${args.from}" and "${args.to}". They may be in disconnected components, or the call graph index needs updating.`;
+    }
+    const formatted = path.map((hop, i) => {
+      const prefix = i === 0 ? "[start]" : `--${hop.callType}-->`;
+      const location = hop.filePath ? ` (${hop.filePath}:${hop.line})` : "";
+      return `${prefix} ${hop.symbolName}${location}`;
+    });
+    return `Path (${path.length} hops):\n${formatted.join("\n")}`;
+  },
+});
+
 export const add_knowledge_base: ToolDefinition = tool({
   description:
     "Add a folder as a knowledge base to the semantic search index. " +

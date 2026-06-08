@@ -161,6 +161,14 @@ export interface CallEdgeData {
   isResolved: boolean;
 }
 
+export interface PathHopData {
+  symbolId: string;
+  symbolName: string;
+  filePath: string;
+  line: number;
+  callType: string;
+}
+
 export interface SearchResult {
   id: string;
   score: number;
@@ -956,6 +964,11 @@ export class Database {
   resolveCallEdge(edgeId: string, toSymbolId: string): void {
     this.throwIfClosed();
     this.inner.resolveCallEdge(edgeId, toSymbolId);
+  }
+
+  findShortestPath(fromName: string, toName: string, branch: string, maxDepth?: number): PathHopData[] {
+    this.throwIfClosed();
+    return this.inner.findShortestPath(fromName, toName, branch, maxDepth ?? null);
   }
 
 

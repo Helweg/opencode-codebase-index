@@ -58,6 +58,7 @@ vi.mock("../src/tools/index.js", () => {
     index_logs: toolStub,
     find_similar: toolStub,
     call_graph: toolStub,
+    call_graph_path: toolStub,
     implementation_lookup: toolStub,
     add_knowledge_base: toolStub,
     list_knowledge_bases: toolStub,

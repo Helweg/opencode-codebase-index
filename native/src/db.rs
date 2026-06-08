@@ -1326,6 +1326,281 @@ pub fn resolve_call_edge(conn: &Connection, edge_id: &str, to_symbol_id: &str) -
     Ok(())
 }
 
+/// A single hop in a shortest path between two symbols
+#[derive(Debug, Clone)]
+pub struct PathHopRow {
+    pub symbol_id: String,
+    pub symbol_name: String,
+    pub file_path: String,
+    pub line: u32,
+    pub call_type: String,
+}
+
+/// Find the shortest call path from a source symbol to a target symbol using BFS.
+/// Traverses call_edges in the "callees" direction (from_symbol_id → to_symbol_id/target_name),
+/// filtered by branch via branch_symbols.
+/// Returns the path as a Vec of hops (source → ... → target), or empty if no path exists.
+/// `max_depth` caps the BFS depth to prevent runaway traversals.
+pub fn find_shortest_path(
+    conn: &Connection,
+    from_name: &str,
+    to_name: &str,
+    branch: &str,
+    max_depth: u32,
+) -> DbResult<Vec<PathHopRow>> {
+    use std::collections::{HashMap, VecDeque};
+
+    // Find all source symbols matching from_name on this branch
+    let mut start_stmt = conn.prepare(
+        r#"
+        SELECT s.id, s.name, s.file_path, s.start_line
+        FROM symbols s
+        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
+        WHERE s.name = ? COLLATE NOCASE
+        "#,
+    )?;
+    let starts: Vec<(String, String, String, u32)> = start_stmt
+        .query_map(params![branch, from_name], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, u32>(3)?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if starts.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Ambiguous source: multiple symbols match from_name on this branch.
+    // We cannot determine which one the user means, so report no path.
+    if starts.len() > 1 {
+        return Ok(Vec::new());
+    }
+
+    // Prepare statements for BFS expansion
+    // Get callees of a symbol (by symbol_id), filtered by branch
+    let mut callees_stmt = conn.prepare(
+        r#"
+        SELECT ce.target_name, ce.to_symbol_id, ce.call_type, ce.line
+        FROM call_edges ce
+        INNER JOIN symbols s ON ce.from_symbol_id = s.id
+        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
+        WHERE ce.from_symbol_id = ?
+        "#,
+    )?;
+
+    // Resolve a target_name to symbol IDs on this branch
+    let mut resolve_stmt = conn.prepare(
+        r#"
+        SELECT s.id, s.name, s.file_path, s.start_line
+        FROM symbols s
+        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?
+        WHERE s.name = ? COLLATE NOCASE
+        "#,
+    )?;
+
+    // BFS state: queue entries are (symbol_id, depth)
+    // parent map: symbol_id -> (parent_symbol_id, call_type, line)
+    let mut visited: HashMap<String, (String, String, u32)> = HashMap::new(); // child -> (parent_id, call_type, line)
+    let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+
+    // Seed BFS with all start symbols
+    for (sid, _name, _fp, _line) in &starts {
+        visited.insert(sid.clone(), (String::new(), String::new(), 0)); // sentinel parent
+        queue.push_back((sid.clone(), 0));
+    }
+
+    let target_name_lower = to_name.to_lowercase();
+    let mut target_found: Option<String> = None;
+
+    'bfs: while let Some((current_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            continue;
+        }
+
+        // Get callees of current symbol
+        let callees: Vec<(String, Option<String>, String, u32)> = callees_stmt
+            .query_map(params![branch, &current_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,         // target_name
+                    row.get::<_, Option<String>>(1)?, // to_symbol_id
+                    row.get::<_, String>(2)?,         // call_type
+                    row.get::<_, u32>(3)?,            // line
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for (callee_target_name, to_symbol_id, call_type, line) in callees {
+            // Check if target_name matches our target (case-insensitive)
+            if callee_target_name.to_lowercase() == target_name_lower {
+                // Resolve the target to real symbol(s) on this branch
+                let resolved_targets: Vec<(String, String, String, u32)> = resolve_stmt
+                    .query_map(params![branch, to_name], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, u32>(3)?,
+                        ))
+                    })?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                // Determine which target to use:
+                // 1. If edge has to_symbol_id and it's among resolved targets, use it
+                // 2. If exactly one resolved target (unambiguous), use it
+                // 3. Otherwise ambiguous — use synthetic target (consistent with
+                //    existing call-graph behavior that keeps ambiguous targets unresolved)
+                let chosen_target_id: Option<String> = if let Some(ref edge_resolved) = to_symbol_id
+                {
+                    if resolved_targets.iter().any(|(id, ..)| id == edge_resolved) {
+                        Some(edge_resolved.clone())
+                    } else {
+                        None
+                    }
+                } else if resolved_targets.len() == 1 {
+                    Some(resolved_targets[0].0.clone())
+                } else {
+                    None
+                };
+
+                if let Some(target_id) = chosen_target_id {
+                    if !visited.contains_key(&target_id) {
+                        visited.insert(
+                            target_id.clone(),
+                            (current_id.clone(), call_type.clone(), line),
+                        );
+                        target_found = Some(target_id);
+                        break 'bfs;
+                    }
+                } else if resolved_targets.is_empty() {
+                    // No symbol found at all (external/unindexed target) — use synthetic ID
+                    let synthetic_id = format!("__target__{}", callee_target_name);
+                    if !visited.contains_key(&synthetic_id) {
+                        visited.insert(
+                            synthetic_id.clone(),
+                            (current_id.clone(), call_type.clone(), line),
+                        );
+                        target_found = Some(synthetic_id);
+                        break 'bfs;
+                    }
+                }
+                // else: ambiguous target (multiple matches, none resolved) — skip,
+                // no proven path to a specific symbol
+            }
+
+            // If resolved, continue BFS through the resolved symbol (verify it's on branch)
+            if let Some(ref resolved_id) = to_symbol_id {
+                if !visited.contains_key(resolved_id) {
+                    // Verify the resolved symbol exists on this branch
+                    let on_branch: bool = conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM branch_symbols WHERE branch = ? AND symbol_id = ?",
+                            params![branch, resolved_id],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .unwrap_or(0)
+                        > 0;
+                    if on_branch {
+                        visited.insert(
+                            resolved_id.clone(),
+                            (current_id.clone(), call_type.clone(), line),
+                        );
+                        queue.push_back((resolved_id.clone(), depth + 1));
+                    }
+                }
+            } else {
+                // Unresolved: try resolving by target_name
+                // Only traverse if unambiguous (single match) to avoid fabricating paths
+                let resolved: Vec<(String, String, String, u32)> = resolve_stmt
+                    .query_map(params![branch, &callee_target_name], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, u32>(3)?,
+                        ))
+                    })?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                // Only traverse unambiguous (single) resolution to avoid fabricating paths
+                // through implementations the call graph never actually resolved
+                if resolved.len() == 1 {
+                    let (resolved_id, _name, _fp, _line) = &resolved[0];
+                    if !visited.contains_key(resolved_id) {
+                        visited.insert(
+                            resolved_id.clone(),
+                            (current_id.clone(), call_type.clone(), line),
+                        );
+                        queue.push_back((resolved_id.clone(), depth + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    // Reconstruct path if found
+    let Some(end_id) = target_found else {
+        return Ok(Vec::new());
+    };
+
+    // Build symbol info lookup
+    let mut info_stmt =
+        conn.prepare("SELECT id, name, file_path, start_line FROM symbols WHERE id = ?")?;
+
+    let mut path: Vec<PathHopRow> = Vec::new();
+    let mut current = end_id;
+
+    while let Some(entry) = visited.get(&current) {
+        let (parent_id, call_type, _line) = entry.clone();
+
+        // Look up symbol info
+        let info: Option<(String, String, String, u32)> = if current.starts_with("__target__") {
+            // Synthetic target - use the target name
+            Some((current.clone(), to_name.to_string(), String::new(), 0))
+        } else {
+            info_stmt
+                .query_row(params![&current], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, u32>(3)?,
+                    ))
+                })
+                .optional()?
+        };
+
+        if let Some((_id, name, file_path, sym_line)) = info {
+            path.push(PathHopRow {
+                symbol_id: current.clone(),
+                symbol_name: name,
+                file_path,
+                line: sym_line,
+                call_type: if parent_id.is_empty() {
+                    String::from("source")
+                } else {
+                    call_type
+                },
+            });
+        }
+
+        if parent_id.is_empty() {
+            break; // Reached a start node
+        }
+        current = parent_id;
+    }
+
+    path.reverse();
+    Ok(path)
+}
+
 // ============================================================================
 // Branch Symbol Operations (Call Graph)
 // ============================================================================

@@ -243,6 +243,15 @@ pub struct CallEdgeData {
 }
 
 #[napi(object)]
+pub struct PathHopData {
+    pub symbol_id: String,
+    pub symbol_name: String,
+    pub file_path: String,
+    pub line: u32,
+    pub call_type: String,
+}
+
+#[napi(object)]
 pub struct KeywordSearchResult {
     pub chunk_id: String,
     pub score: f64,
@@ -1050,6 +1059,31 @@ impl Database {
         self.with_conn(|conn| {
             db::resolve_call_edge(conn, &edge_id, &to_symbol_id)
                 .map_err(|e| Error::from_reason(e.to_string()))
+        })
+    }
+
+    #[napi]
+    pub fn find_shortest_path(
+        &self,
+        from_name: String,
+        to_name: String,
+        branch: String,
+        max_depth: Option<u32>,
+    ) -> Result<Vec<PathHopData>> {
+        self.with_conn(|conn| {
+            let depth = max_depth.unwrap_or(10);
+            let hops = db::find_shortest_path(conn, &from_name, &to_name, &branch, depth)
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(hops
+                .into_iter()
+                .map(|h| PathHopData {
+                    symbol_id: h.symbol_id,
+                    symbol_name: h.symbol_name,
+                    file_path: h.file_path,
+                    line: h.line,
+                    call_type: h.call_type,
+                })
+                .collect())
         })
     }
 

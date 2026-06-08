@@ -284,4 +284,28 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       return { content: [{ type: "text", text: `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}` }] };
     },
   );
+
+  server.tool(
+    "call_graph_path",
+    "Find the shortest connection path between two symbols in the call graph. Returns the chain of calls connecting them.",
+    {
+      from: z.string().describe("Source function/method name (starting point)"),
+      to: z.string().describe("Target function/method name (destination)"),
+      maxDepth: z.number().optional().default(10).describe("Maximum traversal depth (default: 10)"),
+    },
+    async (args) => {
+      await runtime.ensureInitialized();
+      const indexer = runtime.getIndexer();
+      const path = await indexer.findCallPath(args.from, args.to, args.maxDepth);
+      if (path.length === 0) {
+        return { content: [{ type: "text", text: `No path found between "${args.from}" and "${args.to}". They may be in disconnected components, or the call graph index needs updating.` }] };
+      }
+      const formatted = path.map((hop, i) => {
+        const prefix = i === 0 ? "[start]" : `--${hop.callType}-->`;
+        const location = hop.filePath ? ` (${hop.filePath}:${hop.line})` : "";
+        return `${prefix} ${hop.symbolName}${location}`;
+      });
+      return { content: [{ type: "text", text: `Path (${path.length} hops):\n${formatted.join("\n")}` }] };
+    },
+  );
 }

@@ -214,14 +214,15 @@ describe("MCP server tools and prompts", () => {
     await client.close();
   });
 
-  it("should register all 10 tools", async () => {
+  it("should register all 11 tools", async () => {
     const tools = await client.listTools();
 
-    expect(tools.tools).toHaveLength(10);
+    expect(tools.tools).toHaveLength(11);
 
     const toolNames = tools.tools.map(t => t.name).sort();
     const expectedNames = [
       "call_graph",
+      "call_graph_path",
       "codebase_peek",
       "codebase_search",
       "find_similar",

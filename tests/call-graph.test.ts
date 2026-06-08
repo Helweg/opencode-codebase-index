@@ -1380,4 +1380,402 @@ const math = @import("math.zig");
       expect(callers[0].fromSymbolId).toBe("sym_child");
     });
   });
+
+  describe("shortest path", () => {
+    it("should find a direct path between two symbols", () => {
+      const db = openDb();
+
+      // Create symbols: A -> B -> C
+      db.upsertSymbol({
+        id: "sym_a",
+        filePath: "src/a.ts",
+        name: "funcA",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_b",
+        filePath: "src/b.ts",
+        name: "funcB",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_c",
+        filePath: "src/c.ts",
+        name: "funcC",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+
+      // Add to branch
+      db.addSymbolsToBranch("main", ["sym_a", "sym_b", "sym_c"]);
+
+      // Create edges: A calls B, B calls C
+      db.upsertCallEdgesBatch([
+        {
+          id: "edge_ab",
+          fromSymbolId: "sym_a",
+          targetName: "funcB",
+          toSymbolId: "sym_b",
+          callType: "Call",
+          line: 5,
+          col: 2,
+          isResolved: true,
+        },
+        {
+          id: "edge_bc",
+          fromSymbolId: "sym_b",
+          targetName: "funcC",
+          toSymbolId: "sym_c",
+          callType: "Call",
+          line: 3,
+          col: 2,
+          isResolved: true,
+        },
+      ]);
+
+      const result = db.findShortestPath("funcA", "funcC", "main");
+      expect(result.length).toBe(3);
+      expect(result[0].symbolName).toBe("funcA");
+      expect(result[1].symbolName).toBe("funcB");
+      expect(result[2].symbolName).toBe("funcC");
+      expect(result[0].filePath).toBe("src/a.ts");
+      expect(result[1].filePath).toBe("src/b.ts");
+      expect(result[2].filePath).toBe("src/c.ts");
+    });
+
+    it("should return empty array when no path exists", () => {
+      const db = openDb();
+
+      // Two disconnected symbols
+      db.upsertSymbol({
+        id: "sym_x",
+        filePath: "src/x.ts",
+        name: "funcX",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_y",
+        filePath: "src/y.ts",
+        name: "funcY",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+
+      db.addSymbolsToBranch("main", ["sym_x", "sym_y"]);
+
+      const result = db.findShortestPath("funcX", "funcY", "main");
+      expect(result.length).toBe(0);
+    });
+
+    it("should return empty array when source symbol does not exist", () => {
+      const db = openDb();
+      const result = db.findShortestPath("nonexistent", "funcY", "main");
+      expect(result.length).toBe(0);
+    });
+
+    it("should respect maxDepth limit", () => {
+      const db = openDb();
+
+      // Create a chain: A -> B -> C -> D
+      const symbols = ["A", "B", "C", "D"];
+      for (let i = 0; i < symbols.length; i++) {
+        db.upsertSymbol({
+          id: `sym_${symbols[i]}`,
+          filePath: `src/${symbols[i].toLowerCase()}.ts`,
+          name: `func${symbols[i]}`,
+          kind: "function",
+          startLine: 1,
+          startCol: 0,
+          endLine: 10,
+          endCol: 0,
+          language: "typescript",
+        });
+      }
+      db.addSymbolsToBranch("main", symbols.map((s) => `sym_${s}`));
+
+      // Create edges: A->B->C->D
+      for (let i = 0; i < symbols.length - 1; i++) {
+        db.upsertCallEdge({
+          id: `edge_${symbols[i]}${symbols[i + 1]}`,
+          fromSymbolId: `sym_${symbols[i]}`,
+          targetName: `func${symbols[i + 1]}`,
+          toSymbolId: `sym_${symbols[i + 1]}`,
+          callType: "Call",
+          line: 5,
+          col: 2,
+          isResolved: true,
+        });
+      }
+
+      // maxDepth=2 should not find path from A to D (needs 3 hops)
+      const shallow = db.findShortestPath("funcA", "funcD", "main", 2);
+      expect(shallow.length).toBe(0);
+
+      // maxDepth=10 (default) should find it
+      const deep = db.findShortestPath("funcA", "funcD", "main", 10);
+      expect(deep.length).toBe(4);
+      expect(deep[0].symbolName).toBe("funcA");
+      expect(deep[3].symbolName).toBe("funcD");
+    });
+
+    it("should respect branch filtering", () => {
+      const db = openDb();
+
+      db.upsertSymbol({
+        id: "sym_p",
+        filePath: "src/p.ts",
+        name: "funcP",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_q",
+        filePath: "src/q.ts",
+        name: "funcQ",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+
+      // Only add to "feature" branch, not "main"
+      db.addSymbolsToBranch("feature", ["sym_p", "sym_q"]);
+
+      db.upsertCallEdge({
+        id: "edge_pq",
+        fromSymbolId: "sym_p",
+        targetName: "funcQ",
+        toSymbolId: "sym_q",
+        callType: "Call",
+        line: 3,
+        col: 0,
+        isResolved: true,
+      });
+
+      // Should find path on "feature" branch
+      const onFeature = db.findShortestPath("funcP", "funcQ", "feature");
+      expect(onFeature.length).toBe(2);
+
+      // Should NOT find path on "main" branch
+      const onMain = db.findShortestPath("funcP", "funcQ", "main");
+      expect(onMain.length).toBe(0);
+    });
+
+    it("should find path through unresolved edges by name matching", () => {
+      const db = openDb();
+
+      db.upsertSymbol({
+        id: "sym_caller",
+        filePath: "src/caller.ts",
+        name: "caller",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_middle",
+        filePath: "src/middle.ts",
+        name: "middle",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_target",
+        filePath: "src/target.ts",
+        name: "target",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+
+      db.addSymbolsToBranch("main", ["sym_caller", "sym_middle", "sym_target"]);
+
+      // caller -> middle (unresolved, but name matches)
+      db.upsertCallEdge({
+        id: "edge_cm",
+        fromSymbolId: "sym_caller",
+        targetName: "middle",
+        toSymbolId: undefined,
+        callType: "Call",
+        line: 5,
+        col: 0,
+        isResolved: false,
+      });
+      // middle -> target (resolved)
+      db.upsertCallEdge({
+        id: "edge_mt",
+        fromSymbolId: "sym_middle",
+        targetName: "target",
+        toSymbolId: "sym_target",
+        callType: "Call",
+        line: 3,
+        col: 0,
+        isResolved: true,
+      });
+
+      const result = db.findShortestPath("caller", "target", "main");
+      expect(result.length).toBe(3);
+      expect(result[0].symbolName).toBe("caller");
+      expect(result[1].symbolName).toBe("middle");
+      expect(result[2].symbolName).toBe("target");
+    });
+
+    it("should return no path when target name is ambiguous and unresolved", () => {
+      const db = openDb();
+
+      // Create caller symbol
+      db.upsertSymbol({
+        id: "sym_caller_amb",
+        filePath: "src/caller.ts",
+        name: "caller",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+
+      // Create two symbols with the same name "handler" in different files
+      db.upsertSymbol({
+        id: "sym_handler_a",
+        filePath: "src/handler-a.ts",
+        name: "handler",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_handler_b",
+        filePath: "src/handler-b.ts",
+        name: "handler",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+
+      db.addSymbolsToBranch("main", ["sym_caller_amb", "sym_handler_a", "sym_handler_b"]);
+
+      // Unresolved edge from caller to "handler" (no to_symbol_id)
+      db.upsertCallEdge({
+        id: "edge_ambiguous",
+        fromSymbolId: "sym_caller_amb",
+        targetName: "handler",
+        toSymbolId: undefined,
+        callType: "Call",
+        line: 5,
+        col: 0,
+        isResolved: false,
+      });
+
+      // Ambiguous target (multiple symbols named "handler") should return no path
+      const result = db.findShortestPath("caller", "handler", "main");
+      expect(result.length).toBe(0);
+    });
+
+    it("should prefer edge to_symbol_id when it matches a resolved target", () => {
+      const db = openDb();
+
+      db.upsertSymbol({
+        id: "sym_src",
+        filePath: "src/src.ts",
+        name: "source",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_dest_a",
+        filePath: "src/dest-a.ts",
+        name: "dest",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+      db.upsertSymbol({
+        id: "sym_dest_b",
+        filePath: "src/dest-b.ts",
+        name: "dest",
+        kind: "function",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      });
+
+      db.addSymbolsToBranch("main", ["sym_src", "sym_dest_a", "sym_dest_b"]);
+
+      // Resolved edge pointing specifically to dest_b
+      db.upsertCallEdge({
+        id: "edge_resolved_dest",
+        fromSymbolId: "sym_src",
+        targetName: "dest",
+        toSymbolId: "sym_dest_b",
+        callType: "Call",
+        line: 5,
+        col: 0,
+        isResolved: true,
+      });
+
+      const result = db.findShortestPath("source", "dest", "main");
+      expect(result.length).toBe(2);
+      expect(result[0].symbolName).toBe("source");
+      expect(result[1].symbolName).toBe("dest");
+      // Should use the specific resolved target (dest_b), not arbitrary first match
+      expect(result[1].filePath).toBe("src/dest-b.ts");
+      expect(result[1].symbolId).toBe("sym_dest_b");
+    });
+  });
 });
