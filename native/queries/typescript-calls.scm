@@ -54,3 +54,103 @@
     (namespace_import
       (identifier) @import.namespace))
   source: (string) @import.source) @import
+
+; -------------------------------------------------------------
+; Class inheritance: class Foo extends Bar
+; Captures the parent class name
+; -------------------------------------------------------------
+(class_declaration
+  (class_heritage
+    (extends_clause
+      value: (identifier) @inherits.name))) @inherits
+
+; Qualified class inheritance: class Foo extends Ns.Base
+; Captures the property name from member_expression
+(class_declaration
+  (class_heritage
+    (extends_clause
+      value: (member_expression
+        property: (property_identifier) @inherits.name)))) @inherits
+
+; -------------------------------------------------------------
+; Interface implementation: class Foo implements IBar, IBaz
+; Captures each implemented interface name
+; -------------------------------------------------------------
+(class_declaration
+  (class_heritage
+    (implements_clause
+      (type_identifier) @implements.name))) @implements
+
+; Qualified interface: class Foo implements Ns.IBar
+; Captures the name from nested_type_identifier
+(class_declaration
+  (class_heritage
+    (implements_clause
+      (nested_type_identifier
+        name: (type_identifier) @implements.name)))) @implements
+
+; -------------------------------------------------------------
+; Class expression inheritance: const Foo = class extends Bar { }
+; Captures the parent class name from class expressions
+; -------------------------------------------------------------
+(class
+  (class_heritage
+    (extends_clause
+      value: (identifier) @inherits.name))) @inherits
+
+; Qualified class expression inheritance: const Foo = class extends Ns.Base { }
+(class
+  (class_heritage
+    (extends_clause
+      value: (member_expression
+        property: (property_identifier) @inherits.name)))) @inherits
+
+; -------------------------------------------------------------
+; Class expression implements: const Foo = class implements IBar { }
+; Captures each implemented interface name from class expressions
+; -------------------------------------------------------------
+(class
+  (class_heritage
+    (implements_clause
+      (type_identifier) @implements.name))) @implements
+
+; Qualified class expression implements: const Foo = class implements Ns.IBar { }
+(class
+  (class_heritage
+    (implements_clause
+      (nested_type_identifier
+        name: (type_identifier) @implements.name)))) @implements
+; Class inheritance: class Foo extends Bar
+; Captures the parent class name
+; -------------------------------------------------------------
+(class_declaration
+  (class_heritage
+    (extends_clause
+      value: (identifier) @inherits.name))) @inherits
+
+; -------------------------------------------------------------
+; Interface implementation: class Foo implements IBar, IBaz
+; Captures each implemented interface name
+; -------------------------------------------------------------
+(class_declaration
+  (class_heritage
+    (implements_clause
+      (type_identifier) @implements.name))) @implements
+
+; -------------------------------------------------------------
+; Class expression inheritance: const Foo = class extends Bar { }
+; Captures the parent class name from class expressions
+; -------------------------------------------------------------
+(class
+  (class_heritage
+    (extends_clause
+      value: (identifier) @inherits.name))) @inherits
+
+; -------------------------------------------------------------
+; Class expression implements: const Foo = class implements IBar { }
+; Captures each implemented interface name from class expressions
+; -------------------------------------------------------------
+(class
+  (class_heritage
+    (implements_clause
+      (type_identifier) @implements.name))) @implements

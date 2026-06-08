@@ -23,3 +23,16 @@
 (import_from_statement
   name: (dotted_name
     (identifier) @import.name)) @import
+
+; Class inheritance: class Foo(Bar, Baz)
+; Captures the base class names from argument_list
+(class_definition
+  superclasses: (argument_list
+    (identifier) @inherits.name)) @inherits
+
+; Dotted class inheritance: class Foo(models.Model, module.Base)
+; Captures the attribute (last identifier) from dotted superclass names
+(class_definition
+  superclasses: (argument_list
+    (attribute
+      attribute: (identifier) @inherits.name))) @inherits

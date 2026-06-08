@@ -4840,13 +4840,13 @@ export class Indexer {
     );
   }
 
-  async getCallers(targetName: string): Promise<CallEdgeData[]> {
+  async getCallers(targetName: string, callTypeFilter?: string): Promise<CallEdgeData[]> {
     const { database } = await this.ensureInitialized();
     const seen = new Set<string>();
     const results: CallEdgeData[] = [];
 
     for (const branchKey of this.getBranchCatalogKeys()) {
-      for (const edge of database.getCallersWithContext(targetName, branchKey)) {
+      for (const edge of database.getCallersWithContext(targetName, branchKey, callTypeFilter)) {
         if (!seen.has(edge.id)) {
           seen.add(edge.id);
           results.push(edge);
@@ -4857,13 +4857,13 @@ export class Indexer {
     return results;
   }
 
-  async getCallees(symbolId: string): Promise<CallEdgeData[]> {
+  async getCallees(symbolId: string, callTypeFilter?: string): Promise<CallEdgeData[]> {
     const { database } = await this.ensureInitialized();
     const seen = new Set<string>();
     const results: CallEdgeData[] = [];
 
     for (const branchKey of this.getBranchCatalogKeys()) {
-      for (const edge of database.getCallees(symbolId, branchKey)) {
+      for (const edge of database.getCallees(symbolId, branchKey, callTypeFilter)) {
         if (!seen.has(edge.id)) {
           seen.add(edge.id);
           results.push(edge);

@@ -248,11 +248,13 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
 
   server.tool(
     "call_graph",
-    "Query the call graph to find callers or callees of a function/method. Use to understand code flow and dependencies.",
+    "Query the call graph to find callers or callees of a function/method. Use to understand code flow and dependencies."
+      + " Supports relationship types: Call, MethodCall, Constructor, Import, Inherits, Implements.",
     {
       name: z.string().describe("Function or method name to query"),
       direction: z.enum(["callers", "callees"]).default("callers").describe("Direction: 'callers' finds who calls this function, 'callees' finds what this function calls"),
       symbolId: z.string().optional().describe("Symbol ID (required for 'callees' direction)"),
+      relationshipType: z.enum(["Call", "MethodCall", "Constructor", "Import", "Inherits", "Implements"]).optional().describe("Filter by relationship type. Omit to show all."),
     },
     async (args) => {
       await runtime.ensureInitialized();
@@ -262,22 +264,22 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
         if (!args.symbolId) {
           return { content: [{ type: "text", text: "Error: 'symbolId' is required when direction is 'callees'." }] };
         }
-        const callees = await indexer.getCallees(args.symbolId);
+        const callees = await indexer.getCallees(args.symbolId, args.relationshipType);
         if (callees.length === 0) {
-          return { content: [{ type: "text", text: `No callees found for symbol ${args.symbolId}.` }] };
+          return { content: [{ type: "text", text: `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
         }
         const formatted = callees.map((e, i) =>
-          `[${i + 1}] → ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
+          `[${i + 1}] \u2192 ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
         );
         return { content: [{ type: "text", text: `Callees (${callees.length}):\n\n${formatted.join("\n")}` }] };
       }
 
-      const callers = await indexer.getCallers(args.name);
+      const callers = await indexer.getCallers(args.name, args.relationshipType);
       if (callers.length === 0) {
-        return { content: [{ type: "text", text: `No callers found for "${args.name}".` }] };
+        return { content: [{ type: "text", text: `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
       }
       const formatted = callers.map((e, i) =>
-        `[${i + 1}] ← from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`
+        `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`
       );
       return { content: [{ type: "text", text: `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}` }] };
     },
