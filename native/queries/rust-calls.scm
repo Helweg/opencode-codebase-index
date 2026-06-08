@@ -30,3 +30,8 @@
   argument: (scoped_use_list
     list: (use_list
       (identifier) @import.name))) @import
+
+; Impl trait for type: impl Trait for Type
+; Captures the trait name as implements
+(impl_item
+  trait: (type_identifier) @implements.name) @implements

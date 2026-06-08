@@ -1271,4 +1271,113 @@ const math = @import("math.zig");
       }
     });
   });
+
+  describe("inheritance and implements extraction", () => {
+    it("should extract TypeScript class extends", () => {
+      const code = "class AdminController extends BaseController { handle() {} }";
+      const calls = extractCalls(code, "typescript");
+      const inherits = calls.filter((c) => c.callType === "Inherits");
+      expect(inherits.length).toBe(1);
+      expect(inherits[0].calleeName).toBe("BaseController");
+    });
+
+    it("should extract TypeScript class implements", () => {
+      const code = "class UserService implements IUserService { getUser() {} }";
+      const calls = extractCalls(code, "typescript");
+      const impl = calls.filter((c) => c.callType === "Implements");
+      expect(impl.length).toBe(1);
+      expect(impl[0].calleeName).toBe("IUserService");
+    });
+
+    it("should extract TypeScript extends + implements together", () => {
+      const code = "class Admin extends BaseUser implements IAdmin, ISerializable { }";
+      const calls = extractCalls(code, "typescript");
+      const inherits = calls.filter((c) => c.callType === "Inherits");
+      const impl = calls.filter((c) => c.callType === "Implements");
+      expect(inherits.length).toBe(1);
+      expect(inherits[0].calleeName).toBe("BaseUser");
+      expect(impl.length).toBe(2);
+      const implNames = impl.map((c) => c.calleeName);
+      expect(implNames).toContain("IAdmin");
+      expect(implNames).toContain("ISerializable");
+    });
+
+    it("should extract Python class inheritance", () => {
+      const code = "class Admin(BaseUser, Serializable):\n    pass\n";
+      const calls = extractCalls(code, "python");
+      const inherits = calls.filter((c) => c.callType === "Inherits");
+      expect(inherits.length).toBe(2);
+      const names = inherits.map((c) => c.calleeName);
+      expect(names).toContain("BaseUser");
+      expect(names).toContain("Serializable");
+    });
+
+    it("should extract Rust impl trait", () => {
+      const code = "impl Display for MyStruct { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
+      const calls = extractCalls(code, "rust");
+      const impl = calls.filter((c) => c.callType === "Implements");
+      expect(impl.length).toBe(1);
+      expect(impl[0].calleeName).toBe("Display");
+    });
+
+    it("should extract Go struct embedding", () => {
+      const code = "package main\n\ntype Admin struct {\n\tBaseUser\n}";
+      const calls = extractCalls(code, "go");
+      const inherits = calls.filter((c) => c.callType === "Inherits");
+      expect(inherits.length).toBe(1);
+      expect(inherits[0].calleeName).toBe("BaseUser");
+    });
+
+    it("should store and query inheritance edges in database", () => {
+      const db = openDb();
+      const branch = "main";
+
+      // Create symbols
+      const baseSymbol: SymbolData = {
+        id: "sym_base",
+        filePath: "src/base.ts",
+        name: "BaseController",
+        kind: "class",
+        startLine: 1,
+        startCol: 0,
+        endLine: 10,
+        endCol: 0,
+        language: "typescript",
+      };
+      const childSymbol: SymbolData = {
+        id: "sym_child",
+        filePath: "src/admin.ts",
+        name: "AdminController",
+        kind: "class",
+        startLine: 1,
+        startCol: 0,
+        endLine: 20,
+        endCol: 0,
+        language: "typescript",
+      };
+
+      db.upsertSymbol(baseSymbol);
+      db.upsertSymbol(childSymbol);
+      db.addSymbolsToBranch(branch, [baseSymbol.id, childSymbol.id]);
+
+      // Create an Inherits edge
+      const edge: CallEdgeData = {
+        id: "edge_inherits_1",
+        fromSymbolId: "sym_child",
+        targetName: "BaseController",
+        toSymbolId: "sym_base",
+        callType: "Inherits",
+        line: 1,
+        col: 0,
+        isResolved: true,
+      };
+      db.upsertCallEdge(edge);
+
+      // Query callers of BaseController should include the Inherits edge
+      const callers = db.getCallersWithContext("BaseController", branch);
+      expect(callers.length).toBe(1);
+      expect(callers[0].callType).toBe("Inherits");
+      expect(callers[0].fromSymbolId).toBe("sym_child");
+    });
+  });
 });

@@ -9,6 +9,8 @@ pub enum CallType {
     MethodCall,
     Constructor,
     Import,
+    Inherits,
+    Implements,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,8 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
     let import_name_idx = query.capture_index_for_name("import.name");
     let import_default_idx = query.capture_index_for_name("import.default");
     let import_namespace_idx = query.capture_index_for_name("import.namespace");
+    let inherits_name_idx = query.capture_index_for_name("inherits.name");
+    let implements_name_idx = query.capture_index_for_name("implements.name");
 
     let mut cursor = QueryCursor::new();
     let mut calls = Vec::new();
@@ -162,6 +166,24 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
                     position = Some((start.row as u32 + 1, start.column as u32));
                 }
             }
+
+            if let Some(idx) = inherits_name_idx {
+                if capture.index == idx {
+                    callee_name = Some(text.to_string());
+                    call_type = Some(CallType::Inherits);
+                    let start = node.start_position();
+                    position = Some((start.row as u32 + 1, start.column as u32));
+                }
+            }
+
+            if let Some(idx) = implements_name_idx {
+                if capture.index == idx {
+                    callee_name = Some(text.to_string());
+                    call_type = Some(CallType::Implements);
+                    let start = node.start_position();
+                    position = Some((start.row as u32 + 1, start.column as u32));
+                }
+            }
         }
 
         // PHP method calls are already marked in query (@method.call, @static.call)
@@ -216,6 +238,8 @@ fn call_type_specificity(call_type: CallType) -> u8 {
         CallType::MethodCall => 1,
         CallType::Constructor => 2,
         CallType::Import => 2,
+        CallType::Inherits => 3,
+        CallType::Implements => 3,
     }
 }
 
@@ -569,5 +593,133 @@ mod tests {
             "Expected AuthService import, got: {:?}",
             calls
         );
+    }
+
+    #[test]
+    fn test_typescript_class_extends() {
+        let code = "class AdminController extends BaseController { handle() {} }";
+        let calls = extract_calls(code, "typescript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "BaseController" && c.call_type == CallType::Inherits),
+            "Expected Inherits for BaseController, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_typescript_class_implements() {
+        let code = "class UserService implements IUserService { getUser() {} }";
+        let calls = extract_calls(code, "typescript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "IUserService" && c.call_type == CallType::Implements),
+            "Expected Implements for IUserService, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_typescript_extends_and_implements() {
+        let code = "class Admin extends BaseUser implements IAdmin, ISerializable { }";
+        let calls = extract_calls(code, "typescript").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "BaseUser" && c.call_type == CallType::Inherits),
+            "Expected Inherits for BaseUser, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "IAdmin" && c.call_type == CallType::Implements),
+            "Expected Implements for IAdmin, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "ISerializable" && c.call_type == CallType::Implements),
+            "Expected Implements for ISerializable, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_python_class_inheritance() {
+        let code = "class Admin(BaseUser):\n    pass\n";
+        let calls = extract_calls(code, "python").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "BaseUser" && c.call_type == CallType::Inherits),
+            "Expected Inherits for BaseUser, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_python_multiple_inheritance() {
+        let code = "class Admin(BaseUser, Serializable):\n    pass\n";
+        let calls = extract_calls(code, "python").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "BaseUser" && c.call_type == CallType::Inherits),
+            "Expected Inherits for BaseUser, got: {:?}",
+            calls
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "Serializable" && c.call_type == CallType::Inherits),
+            "Expected Inherits for Serializable, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_rust_impl_trait() {
+        let code = "impl Display for MyStruct { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
+        let calls = extract_calls(code, "rust").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "Display" && c.call_type == CallType::Implements),
+            "Expected Implements for Display, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_go_struct_embedding() {
+        let code = "package main\n\ntype Admin struct {\n\tBaseUser\n}";
+        let calls = extract_calls(code, "go").unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.callee_name == "BaseUser" && c.call_type == CallType::Inherits),
+            "Expected Inherits for embedded BaseUser, got: {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn test_go_struct_named_fields_not_inherits() {
+        // Regular named fields should NOT produce Inherits edges
+        let code = "package main\n\ntype Server struct {\n\tBaseHandler\n\tLogger MyLogger\n\tConfig AppConfig\n}";
+        let calls = extract_calls(code, "go").unwrap();
+        let inherits: Vec<&CallSite> = calls.iter().filter(|c| c.call_type == CallType::Inherits).collect();
+        // Only BaseHandler is embedded (no field name), Logger and Config have names
+        assert_eq!(
+            inherits.len(),
+            1,
+            "Expected only 1 Inherits (BaseHandler), got: {:?}",
+            inherits
+        );
+        assert_eq!(inherits[0].callee_name, "BaseHandler");
     }
 }

@@ -54,3 +54,21 @@
     (namespace_import
       (identifier) @import.namespace))
   source: (string) @import.source) @import
+
+; -------------------------------------------------------------
+; Class inheritance: class Foo extends Bar
+; Captures the parent class name
+; -------------------------------------------------------------
+(class_declaration
+  (class_heritage
+    (extends_clause
+      value: (identifier) @inherits.name))) @inherits
+
+; -------------------------------------------------------------
+; Interface implementation: class Foo implements IBar, IBaz
+; Captures each implemented interface name
+; -------------------------------------------------------------
+(class_declaration
+  (class_heritage
+    (implements_clause
+      (type_identifier) @implements.name))) @implements

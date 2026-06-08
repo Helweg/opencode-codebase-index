@@ -23,3 +23,9 @@
 (import_from_statement
   name: (dotted_name
     (identifier) @import.name)) @import
+
+; Class inheritance: class Foo(Bar, Baz)
+; Captures the base class names from argument_list
+(class_definition
+  superclasses: (argument_list
+    (identifier) @inherits.name)) @inherits

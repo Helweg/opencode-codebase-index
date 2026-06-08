@@ -305,11 +305,13 @@ export const implementation_lookup: ToolDefinition = tool({
 
 export const call_graph: ToolDefinition = tool({
   description:
-    "Query the call graph to find callers or callees of a function/method. Use to understand code flow and dependencies between functions.",
+    "Query the call graph to find callers or callees of a function/method. Use to understand code flow and dependencies between functions."
+    + " Supports relationship types: Call, MethodCall, Constructor, Import, Inherits, Implements.",
   args: {
     name: z.string().describe("Function or method name to query"),
     direction: z.enum(["callers", "callees"]).default("callers").describe("Direction: 'callers' finds who calls this function, 'callees' finds what this function calls"),
     symbolId: z.string().optional().describe("Symbol ID (required for 'callees' direction, returned by previous call_graph queries)"),
+    relationshipType: z.enum(["Call", "MethodCall", "Constructor", "Import", "Inherits", "Implements"]).optional().describe("Filter by relationship type. Omit to show all."),
   },
   async execute(args, context) {
     const indexer = getIndexerForProject(context?.worktree);
@@ -317,18 +319,24 @@ export const call_graph: ToolDefinition = tool({
       if (!args.symbolId) {
         return "Error: 'symbolId' is required when direction is 'callees'. First use direction='callers' to find the symbol ID.";
       }
-      const callees = await indexer.getCallees(args.symbolId);
+      let callees = await indexer.getCallees(args.symbolId);
+      if (args.relationshipType) {
+        callees = callees.filter(e => e.callType === args.relationshipType);
+      }
       if (callees.length === 0) {
-        return `No callees found for symbol ${args.symbolId}. The function may not call any other tracked functions.`;
+        return `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. The function may not call any other tracked functions.`;
       }
       const formatted = callees.map((e, i) =>
         `[${i + 1}] \u2192 ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
       );
       return formatted.join("\n");
     }
-    const callers = await indexer.getCallers(args.name);
+    let callers = await indexer.getCallers(args.name);
+    if (args.relationshipType) {
+      callers = callers.filter(e => e.callType === args.relationshipType);
+    }
     if (callers.length === 0) {
-      return `No callers found for "${args.name}". It may not be called by any tracked function, or the index needs updating.`;
+      return `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. It may not be called by any tracked function, or the index needs updating.`;
     }
     const formatted = callers.map((e, i) =>
       `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`

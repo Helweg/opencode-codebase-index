@@ -127,7 +127,7 @@ export interface ParsedFile {
 }
 
 
-export type CallType = "Call" | "MethodCall" | "Constructor" | "Import";
+export type CallType = "Call" | "MethodCall" | "Constructor" | "Import" | "Inherits" | "Implements";
 
 export interface CallSiteData {
   calleeName: string;

@@ -14,3 +14,11 @@
 ; Import: import "fmt"
 (import_spec
   path: (interpreted_string_literal) @import.name) @import
+
+; Struct embedding (Go inheritance pattern): type Foo struct { Bar }
+; Only matches anonymous fields (no name: child) — not regular typed fields
+(struct_type
+  (field_declaration_list
+    (field_declaration
+      !name
+      type: (type_identifier) @inherits.name))) @inherits
