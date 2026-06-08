@@ -683,7 +683,8 @@ mod tests {
 
     #[test]
     fn test_rust_impl_trait() {
-        let code = "impl Display for MyStruct { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
+        let code =
+            "impl Display for MyStruct { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
         let calls = extract_calls(code, "rust").unwrap();
         assert!(
             calls
@@ -712,7 +713,10 @@ mod tests {
         // Regular named fields should NOT produce Inherits edges
         let code = "package main\n\ntype Server struct {\n\tBaseHandler\n\tLogger MyLogger\n\tConfig AppConfig\n}";
         let calls = extract_calls(code, "go").unwrap();
-        let inherits: Vec<&CallSite> = calls.iter().filter(|c| c.call_type == CallType::Inherits).collect();
+        let inherits: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Inherits)
+            .collect();
         // Only BaseHandler is embedded (no field name), Logger and Config have names
         assert_eq!(
             inherits.len(),
