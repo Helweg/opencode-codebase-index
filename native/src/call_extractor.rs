@@ -800,4 +800,25 @@ mod tests {
         );
         assert_eq!(impls[0].callee_name, "Display");
     }
+
+    #[test]
+    fn test_go_pointer_embedding() {
+        // Pointer anonymous embeds: *Base and *http.Client
+        // tree-sitter-go parses these the same as non-pointer embeds
+        let code = "package main\n\ntype Server struct {\n\t*Base\n\t*http.Client\n}";
+        let calls = extract_calls(code, "go").unwrap();
+        let inherits: Vec<&CallSite> = calls
+            .iter()
+            .filter(|c| c.call_type == CallType::Inherits)
+            .collect();
+        assert_eq!(
+            inherits.len(),
+            2,
+            "Expected 2 Inherits from pointer embeds, got: {:?}",
+            inherits
+        );
+        let names: Vec<&str> = inherits.iter().map(|c| c.callee_name.as_str()).collect();
+        assert!(names.contains(&"Base"));
+        assert!(names.contains(&"Client"));
+    }
 }
