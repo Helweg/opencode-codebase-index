@@ -109,12 +109,37 @@ describe("visualize - transform", () => {
     expect(result.metadata.totalSymbols).toBe(5);
     expect(result.metadata.totalEdges).toBe(4);
     expect(result.metadata.truncated).toBe(false);
+    expect(result.metadata.moduleCount).toBeGreaterThan(0);
   });
 
   it("extracts directory from filePath", () => {
     const result = transformForVisualization(symbols, edges);
     const reqNode = result.nodes.find((n) => n.name === "handleRequest");
     expect(reqNode?.directory).toBe("src/handlers");
+  });
+
+  it("derives module metadata for nodes", () => {
+    const result = transformForVisualization(symbols, edges, { includeOrphans: true });
+    expect(result.modules.length).toBeGreaterThan(0);
+    expect(result.nodes.every((node) => node.moduleId.length > 0)).toBe(true);
+    expect(result.nodes.every((node) => node.moduleLabel.length > 0)).toBe(true);
+  });
+
+  it("aggregates module-level edges", () => {
+    const result = transformForVisualization(symbols, edges, { includeOrphans: true });
+    expect(Array.isArray(result.moduleEdges)).toBe(true);
+    expect(result.moduleEdges.every((edge) => edge.weight > 0)).toBe(true);
+  });
+
+  it("does not derive module-level edges from unresolved calls", () => {
+    const unresolvedOnly: CallEdgeData[] = [
+      makeEdge("e1", "sym1", "parseConfig", undefined, "Call", false),
+    ];
+
+    const result = transformForVisualization(symbols, unresolvedOnly, { includeOrphans: true });
+
+    expect(result.edges).toHaveLength(0);
+    expect(result.moduleEdges).toHaveLength(0);
   });
 });
 
@@ -135,18 +160,23 @@ describe("visualize - HTML template", () => {
     expect(html).toContain("Call Graph Visualization");
     expect(html).toContain('"name":"foo"');
     expect(html).toContain('"name":"bar"');
+    expect(html).toContain('"modules"');
+    expect(html).toContain('"moduleEdges"');
   });
 
   it("handles empty data", () => {
     const data = {
       nodes: [],
       edges: [],
-      metadata: { totalSymbols: 0, totalEdges: 0, truncated: false },
+      modules: [],
+      moduleEdges: [],
+      metadata: { totalSymbols: 0, totalEdges: 0, truncated: false, moduleCount: 0 },
     };
     const html = generateVisualizationHtml(data);
     expect(html).toContain("<!DOCTYPE html>");
     // Data is embedded as JSON, stats are computed at runtime from nodes.length
     expect(html).toContain('"nodes":[]');
+    expect(html).toContain('"modules"');
   });
 
   it("escapes special characters in symbol names", () => {
@@ -191,5 +221,21 @@ describe("visualize - HTML template", () => {
     expect(html).toContain('"callType":"Constructor"');
     expect(html).toContain('"callType":"Call"');
     expect(html).toContain('"callType":"MethodCall"');
+  });
+
+  it("includes focus navigation hint and scroll handler", () => {
+    const data = transformForVisualization(
+      [
+        makeSymbol("s1", "foo", "src/a.ts"),
+        makeSymbol("s2", "bar", "src/b.ts"),
+      ],
+      [makeEdge("e1", "s1", "bar", "s2")],
+      { includeOrphans: true },
+    );
+
+    const html = generateVisualizationHtml(data);
+
+    expect(html).toContain("Scroll to pan vertically inside focus mode");
+    expect(html).toContain('canvas.addEventListener("wheel"');
   });
 });
