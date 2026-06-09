@@ -5,6 +5,8 @@ export interface VisualizationNode {
   kind: string;
   line: number;
   directory: string;
+  moduleId: string;
+  moduleLabel: string;
 }
 
 export interface VisualizationEdge {
@@ -15,13 +17,32 @@ export interface VisualizationEdge {
   line: number;
 }
 
+export interface VisualizationModule {
+  id: string;
+  label: string;
+  pathPrefix: string;
+  symbolCount: number;
+  symbols: string[];
+  kinds: Record<string, number>;
+}
+
+export interface VisualizationModuleEdge {
+  source: string;
+  target: string;
+  weight: number;
+  callTypes: Record<string, number>;
+}
+
 export interface VisualizationData {
   nodes: VisualizationNode[];
   edges: VisualizationEdge[];
+  modules: VisualizationModule[];
+  moduleEdges: VisualizationModuleEdge[];
   metadata: {
     totalSymbols: number;
     totalEdges: number;
     truncated: boolean;
     directory?: string;
+    moduleCount: number;
   };
 }

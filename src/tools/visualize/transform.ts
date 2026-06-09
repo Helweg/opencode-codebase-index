@@ -2,6 +2,7 @@ import * as path from "path";
 
 import type { SymbolData, CallEdgeData } from "../../native/index.js";
 import type { VisualizationData, VisualizationNode, VisualizationEdge } from "./types.js";
+import { deriveModuleEdges, deriveModules } from "./modules.js";
 
 export interface TransformOptions {
   includeOrphans?: boolean;
@@ -85,16 +86,24 @@ export function transformForVisualization(
     kind: s.kind,
     line: s.startLine,
     directory: path.dirname(s.filePath),
+    moduleId: "",
+    moduleLabel: "",
   }));
+
+  const modules = deriveModules(nodes);
+  const moduleEdges = deriveModuleEdges(nodes, filteredEdges);
 
   return {
     nodes,
     edges: filteredEdges,
+    modules,
+    moduleEdges,
     metadata: {
       totalSymbols: symbols.length,
       totalEdges: edges.length,
       truncated,
       directory,
+      moduleCount: modules.length,
     },
   };
 }
