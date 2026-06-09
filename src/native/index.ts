@@ -127,6 +127,8 @@ export interface ParsedFile {
 }
 
 
+export type Confidence = "Direct" | "Inferred";
+
 export type CallType = "Call" | "MethodCall" | "Constructor" | "Import" | "Inherits" | "Implements";
 
 export interface CallSiteData {
@@ -134,6 +136,7 @@ export interface CallSiteData {
   line: number;
   column: number;
   callType: CallType;
+  confidence: Confidence;
 }
 
 export interface SymbolData {
@@ -156,6 +159,7 @@ export interface CallEdgeData {
   targetName: string;
   toSymbolId?: string;
   callType: string;
+  confidence: string;
   line: number;
   col: number;
   isResolved: boolean;

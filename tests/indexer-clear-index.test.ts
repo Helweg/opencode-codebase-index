@@ -1547,6 +1547,7 @@ describe("indexer clearIndex force rebuild", () => {
         targetName: "sharedHelper",
         toSymbolId: sharedSymbolId,
         callType: "Call",
+        confidence: "Direct",
         line: 1,
         col: 0,
         isResolved: true,

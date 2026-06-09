@@ -13,12 +13,20 @@ pub enum CallType {
     Implements,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum Confidence {
+    Direct,   // Explicit call/import found in AST
+    Inferred, // Pattern-based or indirect (dynamic dispatch, string-based require)
+}
+
 #[derive(Debug, Clone)]
 pub struct CallSite {
     pub callee_name: String,
     pub line: u32,
     pub column: u32,
     pub call_type: CallType,
+    pub confidence: Confidence,
 }
 
 pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>> {
@@ -212,6 +220,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
                 line: pos.0,
                 column: pos.1,
                 call_type: ct,
+                confidence: Confidence::Direct,
             });
         }
     }

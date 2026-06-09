@@ -57,6 +57,7 @@ pub fn extract_calls(content: String, language: String) -> Result<Vec<CallSiteDa
                     line: s.line,
                     column: s.column,
                     call_type: format!("{:?}", s.call_type),
+                    confidence: format!("{:?}", s.confidence),
                 })
                 .collect()
         })
@@ -213,6 +214,7 @@ pub struct CallSiteData {
     pub line: u32,
     pub column: u32,
     pub call_type: String,
+    pub confidence: String,
 }
 
 #[napi(object)]
@@ -237,6 +239,7 @@ pub struct CallEdgeData {
     pub target_name: String,
     pub to_symbol_id: Option<String>,
     pub call_type: String,
+    pub confidence: String,
     pub line: u32,
     pub col: u32,
     pub is_resolved: bool,
@@ -927,6 +930,7 @@ impl Database {
             target_name: edge.target_name,
             to_symbol_id: edge.to_symbol_id,
             call_type: edge.call_type,
+            confidence: edge.confidence,
             line: edge.line,
             col: edge.col,
             is_resolved: edge.is_resolved,
@@ -946,6 +950,7 @@ impl Database {
                 target_name: e.target_name,
                 to_symbol_id: e.to_symbol_id,
                 call_type: e.call_type,
+                confidence: e.confidence,
                 line: e.line,
                 col: e.col,
                 is_resolved: e.is_resolved,
@@ -976,6 +981,7 @@ impl Database {
                     target_name: r.target_name,
                     to_symbol_id: r.to_symbol_id,
                     call_type: r.call_type,
+                    confidence: r.confidence,
                     line: r.line,
                     col: r.col,
                     is_resolved: r.is_resolved,
@@ -1004,6 +1010,7 @@ impl Database {
                     target_name: r.target_name,
                     to_symbol_id: r.to_symbol_id,
                     call_type: r.call_type,
+                    confidence: r.confidence,
                     line: r.line,
                     col: r.col,
                     is_resolved: r.is_resolved,
@@ -1037,6 +1044,7 @@ impl Database {
                     target_name: r.target_name,
                     to_symbol_id: r.to_symbol_id,
                     call_type: r.call_type,
+                    confidence: r.confidence,
                     line: r.line,
                     col: r.col,
                     is_resolved: r.is_resolved,

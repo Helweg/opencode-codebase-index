@@ -13,7 +13,7 @@ pub enum DbError {
 pub type DbResult<T> = Result<T, DbError>;
 
 /// Schema version for migrations
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 /// Maximum number of SQL bind parameters per query.
 /// SQLite defaults to 999 (SQLITE_MAX_VARIABLE_NUMBER). We use 900 to stay safely under.
@@ -132,6 +132,7 @@ fn migrate_schema(conn: &Connection, from_version: i32) -> DbResult<()> {
                 target_name TEXT NOT NULL,
                 to_symbol_id TEXT,
                 call_type TEXT NOT NULL,
+                confidence TEXT NOT NULL DEFAULT 'Direct',
                 line INTEGER NOT NULL,
                 col INTEGER NOT NULL,
                 is_resolved INTEGER NOT NULL DEFAULT 0,
@@ -175,14 +176,15 @@ fn migrate_schema(conn: &Connection, from_version: i32) -> DbResult<()> {
                 target_name TEXT NOT NULL,
                 to_symbol_id TEXT,
                 call_type TEXT NOT NULL,
+                confidence TEXT NOT NULL DEFAULT 'Direct',
                 line INTEGER NOT NULL,
                 col INTEGER NOT NULL,
                 is_resolved INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (from_symbol_id) REFERENCES symbols(id) ON DELETE CASCADE
             );
 
-            INSERT INTO call_edges_new (id, from_symbol_id, target_name, to_symbol_id, call_type, line, col, is_resolved)
-            SELECT id, from_symbol_id, target_name, to_symbol_id, call_type, line, col, is_resolved
+            INSERT INTO call_edges_new (id, from_symbol_id, target_name, to_symbol_id, call_type, confidence, line, col, is_resolved)
+            SELECT id, from_symbol_id, target_name, to_symbol_id, call_type, 'Direct', line, col, is_resolved
             FROM call_edges;
 
             DROP TABLE call_edges;
@@ -209,6 +211,23 @@ fn migrate_schema(conn: &Connection, from_version: i32) -> DbResult<()> {
             r#"
             CREATE INDEX IF NOT EXISTS idx_chunks_name ON chunks(name);
             CREATE INDEX IF NOT EXISTS idx_chunks_name_lower ON chunks(lower(name));
+            "#,
+        )?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?)",
+            params![SCHEMA_VERSION.to_string()],
+        )?;
+    }
+
+    // v5: Add confidence column. Only needed for databases that already went
+    // through the v3 migration with old code (which didn't include confidence).
+    // Fresh installs and upgrades from v2 or below already have the column
+    // from the modified v2/v3 CREATE TABLE statements above.
+    if (3..5).contains(&from_version) {
+        conn.execute_batch(
+            r#"
+            ALTER TABLE call_edges ADD COLUMN confidence TEXT NOT NULL DEFAULT 'Direct';
             "#,
         )?;
 
@@ -826,6 +845,7 @@ pub struct CallEdgeRow {
     pub target_name: String,
     pub to_symbol_id: Option<String>,
     pub call_type: String,
+    pub confidence: String,
     pub line: u32,
     pub col: u32,
     pub is_resolved: bool,
@@ -840,6 +860,7 @@ pub struct CallerRow {
     pub target_name: String,
     pub to_symbol_id: Option<String>,
     pub call_type: String,
+    pub confidence: String,
     pub line: u32,
     pub col: u32,
     pub is_resolved: bool,
@@ -1037,8 +1058,8 @@ pub fn delete_symbols_by_file(conn: &Connection, file_path: &str) -> DbResult<us
 pub fn upsert_call_edge(conn: &Connection, edge: &CallEdgeRow) -> DbResult<()> {
     conn.execute(
         r#"
-        INSERT OR REPLACE INTO call_edges (id, from_symbol_id, target_name, to_symbol_id, call_type, line, col, is_resolved)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO call_edges (id, from_symbol_id, target_name, to_symbol_id, call_type, confidence, line, col, is_resolved)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         params![
             edge.id,
@@ -1046,6 +1067,7 @@ pub fn upsert_call_edge(conn: &Connection, edge: &CallEdgeRow) -> DbResult<()> {
             edge.target_name,
             edge.to_symbol_id,
             edge.call_type,
+            edge.confidence,
             edge.line,
             edge.col,
             edge.is_resolved as i32
@@ -1064,8 +1086,8 @@ pub fn upsert_call_edges_batch(conn: &mut Connection, edges: &[CallEdgeRow]) -> 
     {
         let mut stmt = tx.prepare(
             r#"
-            INSERT OR REPLACE INTO call_edges (id, from_symbol_id, target_name, to_symbol_id, call_type, line, col, is_resolved)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO call_edges (id, from_symbol_id, target_name, to_symbol_id, call_type, confidence, line, col, is_resolved)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )?;
 
@@ -1076,6 +1098,7 @@ pub fn upsert_call_edges_batch(conn: &mut Connection, edges: &[CallEdgeRow]) -> 
                 edge.target_name,
                 edge.to_symbol_id,
                 edge.call_type,
+                edge.confidence,
                 edge.line,
                 edge.col,
                 edge.is_resolved as i32
@@ -1097,7 +1120,7 @@ pub fn get_callers(
     let (sql, params) = if let Some(ct) = call_type_filter {
         (
             r#"
-            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.confidence, ce.line, ce.col, ce.is_resolved
             FROM call_edges ce
             INNER JOIN symbols s ON ce.from_symbol_id = s.id
             INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
@@ -1108,7 +1131,7 @@ pub fn get_callers(
     } else {
         (
             r#"
-            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.confidence, ce.line, ce.col, ce.is_resolved
             FROM call_edges ce
             INNER JOIN symbols s ON ce.from_symbol_id = s.id
             INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
@@ -1131,9 +1154,10 @@ pub fn get_callers(
             target_name: row.get(2)?,
             to_symbol_id: row.get(3)?,
             call_type: row.get(4)?,
-            line: row.get(5)?,
-            col: row.get(6)?,
-            is_resolved: row.get::<_, i32>(7)? != 0,
+            confidence: row.get(5)?,
+            line: row.get(6)?,
+            col: row.get(7)?,
+            is_resolved: row.get::<_, i32>(8)? != 0,
         })
     })?;
 
@@ -1161,6 +1185,7 @@ pub fn get_callers_with_context(
                 ce.target_name,
                 ce.to_symbol_id,
                 ce.call_type,
+                ce.confidence,
                 ce.line,
                 ce.col,
                 ce.is_resolved
@@ -1182,6 +1207,7 @@ pub fn get_callers_with_context(
                 ce.target_name,
                 ce.to_symbol_id,
                 ce.call_type,
+                ce.confidence,
                 ce.line,
                 ce.col,
                 ce.is_resolved
@@ -1209,9 +1235,10 @@ pub fn get_callers_with_context(
             target_name: row.get(4)?,
             to_symbol_id: row.get(5)?,
             call_type: row.get(6)?,
-            line: row.get(7)?,
-            col: row.get(8)?,
-            is_resolved: row.get::<_, i32>(9)? != 0,
+            confidence: row.get(7)?,
+            line: row.get(8)?,
+            col: row.get(9)?,
+            is_resolved: row.get::<_, i32>(10)? != 0,
         })
     })?;
 
@@ -1232,7 +1259,7 @@ pub fn get_callees(
     let (sql, params) = if let Some(ct) = call_type_filter {
         (
             r#"
-            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.confidence, ce.line, ce.col, ce.is_resolved
             FROM call_edges ce
             INNER JOIN symbols s ON ce.from_symbol_id = s.id
             INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
@@ -1243,7 +1270,7 @@ pub fn get_callees(
     } else {
         (
             r#"
-            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.line, ce.col, ce.is_resolved
+            SELECT ce.id, ce.from_symbol_id, ce.target_name, ce.to_symbol_id, ce.call_type, ce.confidence, ce.line, ce.col, ce.is_resolved
             FROM call_edges ce
             INNER JOIN symbols s ON ce.from_symbol_id = s.id
             INNER JOIN branch_symbols bs ON s.id = bs.symbol_id AND bs.branch = ?1
@@ -1266,9 +1293,10 @@ pub fn get_callees(
             target_name: row.get(2)?,
             to_symbol_id: row.get(3)?,
             call_type: row.get(4)?,
-            line: row.get(5)?,
-            col: row.get(6)?,
-            is_resolved: row.get::<_, i32>(7)? != 0,
+            confidence: row.get(5)?,
+            line: row.get(6)?,
+            col: row.get(7)?,
+            is_resolved: row.get::<_, i32>(8)? != 0,
         })
     })?;
 
@@ -1925,7 +1953,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "4");
+        assert_eq!(version, "5");
     }
 
     #[test]
@@ -2170,6 +2198,7 @@ mod tests {
             target_name: "helper".to_string(),
             to_symbol_id: None,
             call_type: "Call".to_string(),
+            confidence: "Direct".to_string(),
             line: 5,
             col: 4,
             is_resolved: false,
@@ -2286,6 +2315,7 @@ mod tests {
                 target_name: "something".to_string(),
                 to_symbol_id: None,
                 call_type: "Call".to_string(),
+                confidence: "Direct".to_string(),
                 line: 3,
                 col: 4,
                 is_resolved: false,
@@ -2296,6 +2326,7 @@ mod tests {
                 target_name: "other".to_string(),
                 to_symbol_id: None,
                 call_type: "Call".to_string(),
+                confidence: "Direct".to_string(),
                 line: 2,
                 col: 0,
                 is_resolved: false,
@@ -2357,6 +2388,7 @@ mod tests {
             target_name: "target".to_string(),
             to_symbol_id: None,
             call_type: "Call".to_string(),
+            confidence: "Direct".to_string(),
             line: 2,
             col: 0,
             is_resolved: false,
@@ -2404,6 +2436,7 @@ mod tests {
             target_name: "foo".to_string(),
             to_symbol_id: None,
             call_type: "Call".to_string(),
+            confidence: "Direct".to_string(),
             line: 3,
             col: 0,
             is_resolved: false,
@@ -2490,7 +2523,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(schema_version, "4");
+        assert_eq!(schema_version, "5");
 
         let on_delete: String = conn
             .query_row("PRAGMA foreign_key_list(call_edges)", [], |row| row.get(6))
@@ -2561,6 +2594,7 @@ mod tests {
             target_name: "target".to_string(),
             to_symbol_id: None,
             call_type: "Call".to_string(),
+            confidence: "Direct".to_string(),
             line: 5,
             col: 2,
             is_resolved: false,
