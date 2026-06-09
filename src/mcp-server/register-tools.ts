@@ -268,9 +268,10 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
         if (callees.length === 0) {
           return { content: [{ type: "text", text: `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
         }
-        const formatted = callees.map((e, i) =>
-          `[${i + 1}] \u2192 ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
-        );
+        const formatted = callees.map((e, i) => {
+          const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
+          return `[${i + 1}] \u2192 ${e.targetName} (${e.callType})${conf} at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`;
+        });
         return { content: [{ type: "text", text: `Callees (${callees.length}):\n\n${formatted.join("\n")}` }] };
       }
 
@@ -278,9 +279,10 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       if (callers.length === 0) {
         return { content: [{ type: "text", text: `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
       }
-      const formatted = callers.map((e, i) =>
-        `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`
-      );
+      const formatted = callers.map((e, i) => {
+        const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
+        return `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType})${conf} at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`;
+      });
       return { content: [{ type: "text", text: `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}` }] };
     },
   );

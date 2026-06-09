@@ -3435,6 +3435,7 @@ export class Indexer {
           targetName: site.calleeName,
           toSymbolId: undefined,
           callType: site.callType,
+          confidence: site.confidence,
           line: site.line,
           col: site.column,
           isResolved: false,

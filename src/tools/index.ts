@@ -323,18 +323,20 @@ export const call_graph: ToolDefinition = tool({
       if (callees.length === 0) {
         return `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. The function may not call any other tracked functions.`;
       }
-      const formatted = callees.map((e, i) =>
-        `[${i + 1}] \u2192 ${e.targetName} (${e.callType}) at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`
-      );
+      const formatted = callees.map((e, i) => {
+        const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
+        return `[${i + 1}] \u2192 ${e.targetName} (${e.callType})${conf} at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`;
+      });
       return formatted.join("\n");
     }
     const callers = await indexer.getCallers(args.name, args.relationshipType);
     if (callers.length === 0) {
       return `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. It may not be called by any tracked function, or the index needs updating.`;
     }
-    const formatted = callers.map((e, i) =>
-      `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType}) at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`
-    );
+    const formatted = callers.map((e, i) => {
+      const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
+      return `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType})${conf} at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`;
+    });
     return formatted.join("\n");
   },
 });
