@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-16
+
+### Added
+- Shortest-path queries between symbols in call graph (`e5f9046`).
+- Extract inheritance and implements relationships in call graph (#118, `b12ff6b`).
+- Confidence metadata on call graph edges (`af29b8a`).
+
+### Changed
+- Apply rustfmt formatting fixes in `db.rs` (`26e0d2b`).
+
+### Fixed
+- Reject ambiguous source/target names in path queries (`a30a09c`).
+- Prevent fabricated paths through ambiguous intermediate edges (`1102072`).
+- Avoid ambiguous target resolution in BFS path queries (`12f1d19`).
+- Resolve clippy lints in BFS path reconstruction and Rust code (`ab2e325`, `933ddf1`).
+- Restore `@opencode-ai/plugin` version pin (`ca0fdee`).
+
+### Security
+- Bump `vite` 8.0.16 / `esbuild` 0.28.1 overrides (`20a10c4`).
+
 ## [0.10.0] - 2026-06-05
 
 ### Added
