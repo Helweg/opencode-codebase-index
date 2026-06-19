@@ -5070,7 +5070,7 @@ export class Indexer {
               baseBranch: this.baseBranch,
             });
             const otherAbsolute = otherChanged.files.map((f) => path.resolve(this.projectRoot, f));
-            const otherSymbols = database.getSymbolsForFiles(otherAbsolute, resolvedBranch);
+            const otherSymbols = database.getSymbolsForFiles(otherAbsolute, openPr.headRefName);
             const otherLabels = new Set<string>();
             for (const sym of otherSymbols) {
               const label = symbolToCommunity.get(sym.id);
@@ -5117,6 +5117,7 @@ export class Indexer {
       riskLevel,
       riskReason,
       direction,
+      conflictingPRs,
     };
   }
 

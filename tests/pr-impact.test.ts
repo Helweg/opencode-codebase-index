@@ -7,6 +7,10 @@ import { Indexer } from "../src/indexer/index.js";
 import { pr_impact, call_graph, initializeTools } from "../src/tools/index.js";
 import { getChangedFiles } from "../src/tools/changed-files.js";
 import type { Database } from "../src/native/index.js";
+vi.mock("child_process", () => ({
+  execFile: vi.fn(),
+}));
+import { execFile } from "child_process";
 
 vi.mock("../src/tools/changed-files.js", () => ({
   getChangedFiles: vi.fn(),
@@ -357,5 +361,102 @@ describe("pr_impact tool", () => {
     const bothIds = both.map((c) => c.symbolId);
     expect(bothIds).toContain("sym_x");
     expect(bothIds).toContain("sym_b");
+  });
+
+  it("regression: checkConflicts detects overlapping PRs using correct branch for getSymbolsForFiles", async () => {
+    (getChangedFiles as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (args: { pr?: number }) => {
+        if (args.pr === 1) return { files: ["src/a.ts"], baseBranch: "main", source: "git" };
+        if (args.pr === 2) return { files: ["src/b.ts"], baseBranch: "main", source: "git" };
+        if (args.pr === 3) return { files: ["src/c.ts"], baseBranch: "main", source: "git" };
+        return { files: ["src/a.ts"], baseBranch: "main", source: "git" };
+      },
+    );
+
+    (execFile as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (
+        cmd: string,
+        args: string[],
+        _opts: unknown,
+        callback: (err: Error | null, result?: { stdout: string }) => void,
+      ) => {
+        if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+          callback(null, { stdout: '{"headRefName":"feature-branch"}\n' });
+        } else if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+          callback(null, {
+            stdout: '[{"number":2,"headRefName":"other-branch"},{"number":3,"headRefName":"third-branch"}]\n',
+          });
+        } else {
+          callback(new Error("Unexpected execFile: " + cmd + " " + JSON.stringify(args)));
+        }
+      },
+    );
+
+    const indexer = await createIndexer();
+    const db = await getDatabase(indexer);
+
+    db.upsertSymbol({
+      id: "sym_a",
+      filePath: path.join(tempDir, "src", "a.ts"),
+      name: "funcA",
+      kind: "function",
+      startLine: 1, startCol: 0, endLine: 10, endCol: 0,
+      language: "typescript",
+    });
+    db.upsertSymbol({
+      id: "sym_b",
+      filePath: path.join(tempDir, "src", "b.ts"),
+      name: "funcB",
+      kind: "function",
+      startLine: 1, startCol: 0, endLine: 10, endCol: 0,
+      language: "typescript",
+    });
+    db.upsertSymbol({
+      id: "sym_c",
+      filePath: path.join(tempDir, "src", "c.ts"),
+      name: "funcC",
+      kind: "function",
+      startLine: 1, startCol: 0, endLine: 10, endCol: 0,
+      language: "typescript",
+    });
+
+    db.addSymbolsToBranch("feature-branch", ["sym_a", "sym_b", "sym_c"]);
+    db.addSymbolsToBranch("other-branch", ["sym_b"]);
+
+    db.upsertCallEdge({
+      id: "edge_ab",
+      fromSymbolId: "sym_a",
+      targetName: "funcB",
+      toSymbolId: "sym_b",
+      callType: "Call",
+      confidence: "Direct",
+      line: 5, col: 0,
+      isResolved: true,
+    });
+    db.upsertCallEdge({
+      id: "edge_bc",
+      fromSymbolId: "sym_b",
+      targetName: "funcC",
+      toSymbolId: "sym_c",
+      callType: "Call",
+      confidence: "Direct",
+      line: 5, col: 0,
+      isResolved: true,
+    });
+
+    const getSymbolsSpy = vi.spyOn(db, "getSymbolsForFiles");
+
+    const result = await indexer.getPrImpact({ pr: 1, checkConflicts: true });
+
+    expect(result.conflictingPRs).toBeDefined();
+    expect(result.conflictingPRs!.length).toBeGreaterThan(0);
+
+    const prNums = result.conflictingPRs!.map((c) => c.pr);
+    expect(prNums).toContain(2);
+
+    expect(getSymbolsSpy).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.stringContaining("b.ts")]),
+      "other-branch",
+    );
   });
 });
