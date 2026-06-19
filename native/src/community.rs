@@ -70,7 +70,7 @@ pub fn get_transitive_reachability(
             let callees = bfs_callees(conn, branch, &seed_refs, &symbol_map, &name_map, max_depth)?;
             let callers = bfs_callers(conn, branch, &seed_refs, &symbol_map, &name_map, max_depth)?;
             let mut merged: HashMap<String, u32> = HashMap::new();
-            for (id, depth) in callees.into_iter().chain(callers.into_iter()) {
+            for (id, depth) in callees.into_iter().chain(callers) {
                 merged
                     .entry(id)
                     .and_modify(|d| *d = (*d).min(depth))
@@ -415,9 +415,8 @@ pub fn detect_communities(
     }
 
     let mut results = Vec::new();
-    let mut community_id = 0u32;
-    for (label, members) in communities {
-        community_id += 1;
+    for (idx, (label, members)) in communities.into_iter().enumerate() {
+        let community_id = idx as u32;
 
         // Find highest-degree symbol in community
         let mut best_member: Option<&String> = None;
@@ -619,7 +618,7 @@ mod tests {
             .collect();
         assert_eq!(map.get("s_b"), Some(&1));
         assert_eq!(map.get("s_c"), Some(&2));
-        assert!(map.get("s_a").is_none()); // root excluded
+        assert!(!map.contains_key("s_a")); // root excluded
     }
 
     #[test]
@@ -652,7 +651,7 @@ mod tests {
             .collect();
         assert_eq!(map.get("s_b"), Some(&1));
         assert_eq!(map.get("s_a"), Some(&2));
-        assert!(map.get("s_c").is_none()); // root excluded
+        assert!(!map.contains_key("s_c")); // root excluded
     }
 
     #[test]
@@ -692,7 +691,7 @@ mod tests {
             .collect();
         assert_eq!(map.get("s_b"), Some(&1));
         assert_eq!(map.get("s_c"), Some(&2));
-        assert!(map.get("s_d").is_none()); // depth 3 capped
+        assert!(!map.contains_key("s_d")); // depth 3 capped
     }
 
     #[test]
