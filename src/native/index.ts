@@ -78,8 +78,11 @@ function createMockNativeBinding() {
     Database: class {
       constructor() { throw error; }
       close() { throw error; }
+      getTransitiveReachability() { throw error; }
+      detectCommunities() { throw error; }
+      computeCentrality() { throw error; }
     },
-  };
+}
 }
 
 let native: any;
@@ -171,6 +174,30 @@ export interface PathHopData {
   filePath: string;
   line: number;
   callType: string;
+}
+
+export interface ReachabilityData {
+  symbolId: string;
+  symbolName: string;
+  filePath: string;
+  depth: number;
+}
+
+export interface CommunityData {
+  symbolId: string;
+  symbolName: string;
+  filePath: string;
+  communityId: number;
+  communityLabel: string;
+}
+
+export interface CentralityData {
+  symbolId: string;
+  symbolName: string;
+  filePath: string;
+  callerCount: number;
+  calleeCount: number;
+  totalConnections: number;
 }
 
 export interface SearchResult {
@@ -926,6 +953,15 @@ export class Database {
     this.throwIfClosed();
     return this.inner.getSymbolsByNameCi(name);
   }
+  getSymbolsForBranch(branch: string): SymbolData[] {
+    this.throwIfClosed();
+    return this.inner.getSymbolsForBranch(branch);
+  }
+
+  getSymbolsForFiles(filePaths: string[], branch: string): SymbolData[] {
+    this.throwIfClosed();
+    return this.inner.getSymbolsForFiles(filePaths, branch);
+  }
 
   deleteSymbolsByFile(filePath: string): number {
     this.throwIfClosed();
@@ -1026,5 +1062,33 @@ export class Database {
   gcOrphanCallEdges(): number {
     this.throwIfClosed();
     return this.inner.gcOrphanCallEdges();
+  }
+
+  getTransitiveReachability(
+    rootSymbolIds: string[],
+    branch: string,
+    direction: string,
+    maxDepth?: number
+  ): ReachabilityData[] {
+    this.throwIfClosed();
+    return this.inner.getTransitiveReachability(
+      rootSymbolIds,
+      branch,
+      direction,
+      maxDepth ?? null
+    );
+  }
+
+  detectCommunities(
+    branch: string,
+    symbolIds?: string[]
+  ): CommunityData[] {
+    this.throwIfClosed();
+    return this.inner.detectCommunities(branch, symbolIds ?? null);
+  }
+
+  computeCentrality(branch: string): CentralityData[] {
+    this.throwIfClosed();
+    return this.inner.computeCentrality(branch);
   }
 }
