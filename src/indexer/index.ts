@@ -5056,8 +5056,10 @@ export class Indexer {
         const currentCommunityLabels = new Set(communities.map((c) => c.label));
         const allCommunitiesData = database.detectCommunities(resolvedBranch);
         const symbolToCommunity = new Map<string, string>();
+        const structuralKey = (filePath: string, name: string): string =>
+          `${filePath.toLowerCase()}:${name.toLowerCase()}`;
         for (const c of allCommunitiesData) {
-          symbolToCommunity.set(c.symbolId, c.communityLabel);
+          symbolToCommunity.set(structuralKey(c.filePath, c.symbolName), c.communityLabel);
         }
 
         for (const openPr of openPRs) {
@@ -5073,7 +5075,7 @@ export class Indexer {
             const otherSymbols = database.getSymbolsForFiles(otherAbsolute, openPr.headRefName);
             const otherLabels = new Set<string>();
             for (const sym of otherSymbols) {
-              const label = symbolToCommunity.get(sym.id);
+              const label = symbolToCommunity.get(structuralKey(sym.filePath, sym.name));
               if (label) {
                 otherLabels.add(label);
               }

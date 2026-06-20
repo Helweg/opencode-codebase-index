@@ -4,6 +4,11 @@ import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 export interface ChangedFilesResult {
   files: string[];
   baseBranch: string;
@@ -29,10 +34,7 @@ export async function getChangedFiles(
   const { pr, branch, projectRoot, baseBranch = "main" } = opts;
 
   if (pr !== undefined) {
-    const result = await getChangedFilesForPr(pr, projectRoot, baseBranch);
-    if (result !== undefined) {
-      return result;
-    }
+    return getChangedFilesForPr(pr, projectRoot, baseBranch);
   }
 
   return getChangedFilesForBranch(branch, projectRoot, baseBranch);
@@ -42,7 +44,7 @@ async function getChangedFilesForPr(
   pr: number,
   projectRoot: string,
   baseBranch: string,
-): Promise<ChangedFilesResult | undefined> {
+): Promise<ChangedFilesResult> {
   let headRefName: string | undefined;
   let actualBaseBranch = baseBranch;
 
@@ -67,12 +69,16 @@ async function getChangedFilesForPr(
         source: "gh",
       };
     }
-  } catch {
-    // gh CLI failed or returned no files; fall through to git diff.
+  } catch (error) {
+    throw new Error(
+      `Failed to retrieve PR #${pr} via gh CLI: ${getErrorMessage(error)}`,
+    );
   }
 
   if (headRefName === undefined) {
-    return undefined;
+    throw new Error(
+      `PR #${pr} returned no usable branch or file information.`,
+    );
   }
 
   return getChangedFilesForBranch(headRefName, projectRoot, actualBaseBranch);

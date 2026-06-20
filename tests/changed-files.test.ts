@@ -118,22 +118,18 @@ describe("getChangedFiles", () => {
     expect(result.files).toEqual(["src/pr.ts", "tests/pr.test.ts"]);
   });
 
-  it("falls back to git diff when gh fails", async () => {
+  it("throws when gh pr view fails", async () => {
     mockExecFile([
       {
         command: "gh",
         args: ["pr", "view", "99", "--json", "headRefName,baseRefName,files"],
         error: new Error("GraphQL: Could not resolve to a PullRequest"),
       },
-      { command: "git", args: ["branch", "--show-current"], stdout: "feature/fallback\n" },
-      { command: "git", args: ["merge-base", "main", "feature/fallback"], stdout: "fallback-base\n" },
-      { command: "git", args: ["diff", "--name-only", "fallback-base...feature/fallback"], stdout: "src/fallback.ts\n" },
     ]);
 
-    const result = await getChangedFiles({ pr: 99, projectRoot });
-
-    expect(result.source).toBe("git");
-    expect(result.files).toEqual(["src/fallback.ts"]);
+    await expect(
+      getChangedFiles({ pr: 99, projectRoot }),
+    ).rejects.toThrow("Failed to retrieve PR #99 via gh CLI");
   });
 
   it("handles empty diffs gracefully", async () => {
