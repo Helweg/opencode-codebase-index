@@ -115,7 +115,7 @@ async function getCurrentBranch(projectRoot: string): Promise<string> {
     ["branch", "--show-current"],
     { cwd: projectRoot, timeout: 30000 },
   );
-  return stdout.trim();
+  return stdout.trim() || "HEAD";
 }
 
 async function getMergeBase(

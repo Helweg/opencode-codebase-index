@@ -5036,7 +5036,7 @@ export class Indexer {
       try {
         const { stdout } = await execFileAsync(
           "gh",
-          ["pr", "list", "--state", "open", "--json", "number,headRefName"],
+          ["pr", "list", "--state", "open", "--json", "number,headRefName", "--limit", "10000"],
           { cwd: this.projectRoot, timeout: 30000 }
         );
         const openPRs = JSON.parse(stdout) as Array<{ number: number; headRefName: string }>;

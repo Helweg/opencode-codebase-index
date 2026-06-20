@@ -100,6 +100,20 @@ describe("getChangedFiles", () => {
     expect(result.files).toEqual(["README.md"]);
   });
 
+  it("falls back to HEAD in detached-HEAD state", async () => {
+    mockExecFile([
+      { command: "git", args: ["branch", "--show-current"], stdout: "" },
+      { command: "git", args: ["merge-base", "main", "HEAD"], stdout: "detached-base\n" },
+      { command: "git", args: ["diff", "--name-only", "detached-base...HEAD"], stdout: "src/detached.ts\n" },
+    ]);
+
+    const result = await getChangedFiles({ projectRoot });
+
+    expect(result.source).toBe("git");
+    expect(result.headRefName).toBe("HEAD");
+    expect(result.files).toEqual(["src/detached.ts"]);
+  });
+
   it("extracts files from gh pr view when available", async () => {
     mockExecFile([
       {
