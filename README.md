@@ -366,6 +366,10 @@ Query the call graph to find callers or callees of a function/method. Automatica
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).
 - **Example**: Find who calls `validateToken` → `call_graph(name="validateToken", direction="callers")`
 
+### `pr_impact`
+Analyzes a PR's changed files to determine impact scope within the codebase.
+- **Use for**: Understanding which symbols are affected by a PR, their call-graph reach, risk level, and community/cluster detection.
+- **Parameters**: `checkConflicts` (optional, default `false`) — when `true`, detects overlapping concurrent PRs sharing affected symbols and returns `conflictingPRs`.
 ### `add_knowledge_base`
 Add a folder as a knowledge base to be indexed alongside project code.
 - **Use for**: Indexing external documentation, API references, example programs.
