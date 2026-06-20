@@ -4946,27 +4946,15 @@ export class Indexer {
       baseBranch: this.baseBranch,
     });
     const changedFiles = changedFilesResult.files;
+    const headRefName = changedFilesResult.headRefName;
 
-    let branch = opts.branch;
-    if (!branch && opts.pr !== undefined) {
-      try {
-        const { stdout } = await execFileAsync(
-          "gh",
-          ["pr", "view", String(opts.pr), "--json", "headRefName"],
-          { cwd: this.projectRoot, timeout: 30000 }
-        );
-        const data = JSON.parse(stdout) as { headRefName?: string };
-        if (data.headRefName) {
-          branch = data.headRefName;
-        }
-      } catch {
-        /* ignore gh failure */
-      }
+    if (opts.pr !== undefined && headRefName === undefined) {
+      throw new Error(
+        `Could not resolve head branch for PR #${opts.pr}. Run index_codebase on the PR branch first.`,
+      );
     }
-    if (!branch) {
-      branch = this.currentBranch;
-    }
-    const resolvedBranch = branch;
+
+    const resolvedBranch = headRefName || opts.branch || this.currentBranch;
 
     const branchSymbols = database.getSymbolsForBranch(resolvedBranch);
     if (branchSymbols.length === 0) {

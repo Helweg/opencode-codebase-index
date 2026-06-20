@@ -89,6 +89,7 @@ describe("pr_impact tool", () => {
       files: ["src/a.ts"],
       baseBranch: "main",
       source: "git",
+      headRefName: "main",
     });
 
     const indexer = await createIndexer();
@@ -143,6 +144,7 @@ describe("pr_impact tool", () => {
       files: ["src/a.ts"],
       baseBranch: "main",
       source: "git",
+      headRefName: "feature",
     });
 
     const indexer = await createIndexer();
@@ -155,11 +157,27 @@ describe("pr_impact tool", () => {
     expect(result).toContain("Run index_codebase first");
   });
 
+  it("throws when headRefName cannot be resolved in PR mode", async () => {
+    (getChangedFiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      files: ["src/a.ts"],
+      baseBranch: "main",
+      source: "git",
+      headRefName: undefined,
+    });
+
+    const indexer = await createIndexer();
+
+    await expect(indexer.getPrImpact({ pr: 42 })).rejects.toThrow(
+      "Could not resolve head branch for PR #42",
+    );
+  });
+
   it("detects hub nodes and flags HIGH risk", async () => {
     (getChangedFiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       files: ["src/db.ts"],
       baseBranch: "main",
       source: "git",
+      headRefName: "main",
     });
 
     const indexer = await createIndexer();
@@ -366,10 +384,10 @@ describe("pr_impact tool", () => {
   it("regression: checkConflicts detects overlapping PRs using correct branch for getSymbolsForFiles", async () => {
     (getChangedFiles as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       async (args: { pr?: number }) => {
-        if (args.pr === 1) return { files: ["src/a.ts"], baseBranch: "main", source: "git" };
-        if (args.pr === 2) return { files: ["src/b.ts"], baseBranch: "main", source: "git" };
-        if (args.pr === 3) return { files: ["src/c.ts"], baseBranch: "main", source: "git" };
-        return { files: ["src/a.ts"], baseBranch: "main", source: "git" };
+        if (args.pr === 1) return { files: ["src/a.ts"], baseBranch: "main", source: "git", headRefName: "feature-branch" };
+        if (args.pr === 2) return { files: ["src/b.ts"], baseBranch: "main", source: "git", headRefName: "other-branch" };
+        if (args.pr === 3) return { files: ["src/c.ts"], baseBranch: "main", source: "git", headRefName: "third-branch" };
+        return { files: ["src/a.ts"], baseBranch: "main", source: "git", headRefName: "feature-branch" };
       },
     );
 
@@ -380,9 +398,7 @@ describe("pr_impact tool", () => {
         _opts: unknown,
         callback: (err: Error | null, result?: { stdout: string }) => void,
       ) => {
-        if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
-          callback(null, { stdout: '{"headRefName":"feature-branch"}\n' });
-        } else if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
           callback(null, {
             stdout: '[{"number":2,"headRefName":"other-branch"},{"number":3,"headRefName":"third-branch"}]\n',
           });
@@ -463,9 +479,9 @@ describe("pr_impact tool", () => {
   it("regression: checkConflicts detects overlapping PRs despite cross-branch line drift", async () => {
     (getChangedFiles as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       async (args: { pr?: number }) => {
-        if (args.pr === 1) return { files: ["src/a.ts"], baseBranch: "main", source: "git" };
-        if (args.pr === 2) return { files: ["src/a.ts"], baseBranch: "main", source: "git" };
-        return { files: ["src/a.ts"], baseBranch: "main", source: "git" };
+        if (args.pr === 1) return { files: ["src/a.ts"], baseBranch: "main", source: "git", headRefName: "feature-branch" };
+        if (args.pr === 2) return { files: ["src/a.ts"], baseBranch: "main", source: "git", headRefName: "other-branch" };
+        return { files: ["src/a.ts"], baseBranch: "main", source: "git", headRefName: "feature-branch" };
       },
     );
 
@@ -476,9 +492,7 @@ describe("pr_impact tool", () => {
         _opts: unknown,
         callback: (err: Error | null, result?: { stdout: string }) => void,
       ) => {
-        if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
-          callback(null, { stdout: '{"headRefName":"feature-branch"}\n' });
-        } else if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
           callback(null, {
             stdout: '[{"number":2,"headRefName":"other-branch"}]\n',
           });

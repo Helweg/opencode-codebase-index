@@ -13,6 +13,7 @@ export interface ChangedFilesResult {
   files: string[];
   baseBranch: string;
   source: "gh" | "git";
+  headRefName?: string;
 }
 
 export interface GetChangedFilesOptions {
@@ -67,6 +68,7 @@ async function getChangedFilesForPr(
         ),
         baseBranch: actualBaseBranch,
         source: "gh",
+        headRefName,
       };
     }
   } catch (error) {
@@ -81,7 +83,8 @@ async function getChangedFilesForPr(
     );
   }
 
-  return getChangedFilesForBranch(headRefName, projectRoot, actualBaseBranch);
+  const result = await getChangedFilesForBranch(headRefName, projectRoot, actualBaseBranch);
+  return { ...result, headRefName };
 }
 
 async function getChangedFilesForBranch(
@@ -102,6 +105,7 @@ async function getChangedFilesForBranch(
     files: normalizeFiles(stdout.split("\n"), projectRoot),
     baseBranch,
     source: "git",
+    headRefName: targetBranch,
   };
 }
 

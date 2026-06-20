@@ -82,6 +82,7 @@ describe("getChangedFiles", () => {
 
     expect(result.source).toBe("git");
     expect(result.baseBranch).toBe("main");
+    expect(result.headRefName).toBe("feature/x");
     expect(result.files).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
@@ -95,6 +96,7 @@ describe("getChangedFiles", () => {
     const result = await getChangedFiles({ projectRoot });
 
     expect(result.source).toBe("git");
+    expect(result.headRefName).toBe("feature/current");
     expect(result.files).toEqual(["README.md"]);
   });
 
@@ -115,6 +117,7 @@ describe("getChangedFiles", () => {
 
     expect(result.source).toBe("gh");
     expect(result.baseBranch).toBe("main");
+    expect(result.headRefName).toBe("feature/pr-42");
     expect(result.files).toEqual(["src/pr.ts", "tests/pr.test.ts"]);
   });
 
@@ -144,6 +147,7 @@ describe("getChangedFiles", () => {
     });
 
     expect(result.files).toEqual([]);
+    expect(result.headRefName).toBe("feature/empty");
   });
 
   it("strips leading ./ from file paths", async () => {
@@ -158,6 +162,7 @@ describe("getChangedFiles", () => {
     });
 
     expect(result.files).toEqual(["src/file.ts"]);
+    expect(result.headRefName).toBe("feature/dotslash");
   });
 
   it("deduplicates repeated file paths", async () => {
@@ -172,6 +177,7 @@ describe("getChangedFiles", () => {
     });
 
     expect(result.files).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(result.headRefName).toBe("feature/dup");
   });
 
   it("respects a custom baseBranch", async () => {
@@ -187,6 +193,7 @@ describe("getChangedFiles", () => {
     });
 
     expect(result.baseBranch).toBe("develop");
+    expect(result.headRefName).toBe("feature/dev");
     expect(result.files).toEqual(["src/dev.ts"]);
   });
 });
