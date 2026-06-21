@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fsPromises } from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import PQueue from "p-queue";
 import pRetry from "p-retry";
 
@@ -32,9 +34,11 @@ import {
   parseFileAsText,
   estimateTokens,
 } from "../native/index.js";
-import type { SymbolData, CallEdgeData, PathHopData } from "../native/index.js";
+import type { SymbolData, CallEdgeData, PathHopData, ReachabilityData, CommunityData, CentralityData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
 import { resolveProjectIndexPath } from "../config/paths.js";
+import { getChangedFiles } from "../tools/changed-files.js";
+import type { PrImpactResult } from "./pr-impact-types.js";
 
 export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab"]);
 // Languages whose identifiers are case-insensitive at the language level.
@@ -1866,6 +1870,15 @@ export class Indexer {
 
   private getBranchCatalogKey(): string {
     const branchName = this.currentBranch || "default";
+    if (this.config.scope !== "global") {
+      return branchName;
+    }
+
+    const projectHash = hashContent(path.resolve(this.projectRoot)).slice(0, 16);
+    return `${projectHash}:${branchName}`;
+  }
+
+  private getBranchCatalogKeyFor(branchName: string): string {
     if (this.config.scope !== "global") {
       return branchName;
     }
@@ -4887,6 +4900,228 @@ export class Indexer {
     }
 
     return shortest;
+  }
+
+
+  async getSymbolsForBranch(branch?: string): Promise<SymbolData[]> {
+    const { database } = await this.ensureInitialized();
+    const resolvedBranch = branch ?? this.getBranchCatalogKey();
+    return database.getSymbolsForBranch(resolvedBranch);
+  }
+
+  async getSymbolsForFiles(filePaths: string[], branch?: string): Promise<SymbolData[]> {
+    const { database } = await this.ensureInitialized();
+    const resolvedBranch = branch ?? this.getBranchCatalogKey();
+    return database.getSymbolsForFiles(filePaths, resolvedBranch);
+  }
+
+  async getTransitiveReachability(
+    rootSymbolIds: string[],
+    direction: "callers" | "callees",
+    maxDepth?: number
+  ): Promise<ReachabilityData[]> {
+    const { database } = await this.ensureInitialized();
+    const branch = this.getBranchCatalogKey();
+    return database.getTransitiveReachability(rootSymbolIds, branch, direction, maxDepth);
+  }
+
+  async detectCommunities(branch?: string, symbolIds?: string[]): Promise<CommunityData[]> {
+    const { database } = await this.ensureInitialized();
+    const resolvedBranch = branch ?? this.getBranchCatalogKey();
+    return database.detectCommunities(resolvedBranch, symbolIds);
+  }
+
+  async computeCentrality(branch?: string): Promise<CentralityData[]> {
+    const { database } = await this.ensureInitialized();
+    const resolvedBranch = branch ?? this.getBranchCatalogKey();
+    return database.computeCentrality(resolvedBranch);
+  }
+
+  async getPrImpact(opts: {
+    pr?: number;
+    branch?: string;
+    maxDepth?: number;
+    hubThreshold?: number;
+    checkConflicts?: boolean;
+    direction?: "callers" | "callees" | "both";
+  }): Promise<PrImpactResult> {
+    const { database } = await this.ensureInitialized();
+    const execFileAsync = promisify(execFile);
+
+    const changedFilesResult = await getChangedFiles({
+      pr: opts.pr,
+      branch: opts.branch,
+      projectRoot: this.projectRoot,
+      baseBranch: this.baseBranch,
+    });
+    const changedFiles = changedFilesResult.files;
+    const headRefName = changedFilesResult.headRefName;
+
+    if (opts.pr !== undefined && headRefName === undefined) {
+      throw new Error(
+        `Could not resolve head branch for PR #${opts.pr}. Run index_codebase on the PR branch first.`,
+      );
+    }
+
+    const resolvedBranch = opts.pr !== undefined
+      ? headRefName
+      : opts.branch || this.currentBranch;
+    const branchKey = this.getBranchCatalogKeyFor(resolvedBranch || "default");
+
+    const branchSymbols = database.getSymbolsForBranch(branchKey);
+    if (branchSymbols.length === 0) {
+      throw new Error(
+        "Run index_codebase first to build the call graph and symbol index for this branch."
+      );
+    }
+
+    const absoluteChangedFiles = changedFiles.map((f) => path.resolve(this.projectRoot, f));
+    const directSymbols = database.getSymbolsForFiles(absoluteChangedFiles, branchKey);
+    const directIds = directSymbols.map((s) => s.id);
+
+    const direction = opts.direction ?? "both";
+    const maxDepth = opts.maxDepth ?? 5;
+    const transitiveCallers = database.getTransitiveReachability(
+      directIds,
+      branchKey,
+      direction,
+      maxDepth
+    );
+
+    const affectedIdsSet = new Set<string>(directIds);
+    for (const caller of transitiveCallers) {
+      affectedIdsSet.add(caller.symbolId);
+    }
+    const allAffectedIds = Array.from(affectedIdsSet);
+
+    const communitiesData = database.detectCommunities(branchKey, allAffectedIds);
+    const communityMap = new Map<string, { label: string; symbolCount: number; directSymbols: Set<string> }>();
+    for (const c of communitiesData) {
+      if (!communityMap.has(c.communityLabel)) {
+        communityMap.set(c.communityLabel, {
+          label: c.communityLabel,
+          symbolCount: 0,
+          directSymbols: new Set(),
+        });
+      }
+      const entry = communityMap.get(c.communityLabel)!;
+      entry.symbolCount++;
+      if (directIds.includes(c.symbolId)) {
+        entry.directSymbols.add(c.symbolId);
+      }
+    }
+    const communities = Array.from(communityMap.values()).map((c) => ({
+      label: c.label,
+      symbolCount: c.symbolCount,
+      directSymbols: Array.from(c.directSymbols),
+    }));
+
+    const centralityData = database.computeCentrality(branchKey);
+    const hubThreshold = opts.hubThreshold ?? 10;
+    const hubNodes = centralityData
+      .filter((c) => directIds.includes(c.symbolId) && c.callerCount >= hubThreshold)
+      .map((c) => ({
+        id: c.symbolId,
+        name: c.symbolName,
+        callerCount: c.callerCount,
+        filePath: c.filePath,
+      }));
+
+    const totalAffected = allAffectedIds.length;
+    let riskLevel: "LOW" | "MEDIUM" | "HIGH";
+    let riskReason: string;
+
+    if (totalAffected < 5 && hubNodes.length === 0) {
+      riskLevel = "LOW";
+      riskReason = `Small impact: ${totalAffected} affected symbols, no hub nodes touched.`;
+    } else if (totalAffected > 20 || hubNodes.length > 1) {
+      riskLevel = "HIGH";
+      riskReason = `Large impact: ${totalAffected} affected symbols${hubNodes.length > 0 ? `, ${hubNodes.length} hub nodes touched` : ""}.`;
+    } else {
+      riskLevel = "MEDIUM";
+      riskReason = `Moderate impact: ${totalAffected} affected symbols${hubNodes.length === 1 ? ", 1 hub node touched" : ""}.`;
+    }
+
+    let conflictingPRs: PrImpactResult["conflictingPRs"];
+    if (opts.checkConflicts) {
+      conflictingPRs = [];
+      try {
+        const { stdout } = await execFileAsync(
+          "gh",
+          ["pr", "list", "--state", "open", "--json", "number,headRefName", "--limit", "10000"],
+          { cwd: this.projectRoot, timeout: 30000 }
+        );
+        const openPRs = JSON.parse(stdout) as Array<{ number: number; headRefName: string }>;
+
+        const currentCommunityLabels = new Set(communities.map((c) => c.label));
+        const allCommunitiesData = database.detectCommunities(branchKey);
+        const symbolToCommunity = new Map<string, string>();
+        const structuralKey = (filePath: string, name: string): string =>
+          `${filePath.toLowerCase()}:${name.toLowerCase()}`;
+        for (const c of allCommunitiesData) {
+          symbolToCommunity.set(structuralKey(c.filePath, c.symbolName), c.communityLabel);
+        }
+
+        for (const openPr of openPRs) {
+          if (openPr.number === opts.pr) continue;
+
+          try {
+            const otherChanged = await getChangedFiles({
+              pr: openPr.number,
+              projectRoot: this.projectRoot,
+              baseBranch: this.baseBranch,
+            });
+            const otherAbsolute = otherChanged.files.map((f) => path.resolve(this.projectRoot, f));
+            const otherBranchKey = this.getBranchCatalogKeyFor(openPr.headRefName);
+            const otherSymbols = database.getSymbolsForFiles(otherAbsolute, otherBranchKey);
+            const otherLabels = new Set<string>();
+            for (const sym of otherSymbols) {
+              const label = symbolToCommunity.get(structuralKey(sym.filePath, sym.name));
+              if (label) {
+                otherLabels.add(label);
+              }
+            }
+            const overlapping = Array.from(otherLabels).filter((l) =>
+              currentCommunityLabels.has(l)
+            );
+            if (overlapping.length > 0) {
+              conflictingPRs.push({
+                pr: openPr.number,
+                branch: openPr.headRefName,
+                overlappingCommunities: overlapping,
+              });
+            }
+          } catch {
+            /* skip PRs we can't analyze */
+          }
+        }
+      } catch {
+        /* gh CLI not available or failed; skip conflict detection */
+      }
+    }
+
+    return {
+      changedFiles,
+      directSymbols: directSymbols.map((s) => ({
+        id: s.id,
+        name: s.name,
+        kind: s.kind,
+        filePath: s.filePath,
+      })),
+      transitiveCallers: transitiveCallers.map((c) => ({
+        id: c.symbolId,
+        name: c.symbolName,
+        filePath: c.filePath,
+        depth: c.depth,
+      })),
+      totalAffected,
+      communities,
+      hubNodes,
+      riskLevel,
+      riskReason,
+      direction,
+      conflictingPRs,
+    };
   }
 
   async close(): Promise<void> {

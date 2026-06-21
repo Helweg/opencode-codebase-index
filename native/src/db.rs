@@ -1041,6 +1041,91 @@ pub fn get_symbols_by_name_ci(conn: &Connection, name: &str) -> DbResult<Vec<Sym
     Ok(results)
 }
 
+/// Get all symbols for a branch
+pub fn get_symbols_for_branch(conn: &Connection, branch: &str) -> DbResult<Vec<SymbolRow>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT s.id, s.file_path, s.name, s.kind, s.start_line, s.start_col, s.end_line, s.end_col, s.language
+        FROM symbols s
+        INNER JOIN branch_symbols bs ON s.id = bs.symbol_id
+        WHERE bs.branch = ?
+        ORDER BY s.start_line
+        "#,
+    )?;
+
+    let rows = stmt.query_map(params![branch], |row| {
+        Ok(SymbolRow {
+            id: row.get(0)?,
+            file_path: row.get(1)?,
+            name: row.get(2)?,
+            kind: row.get(3)?,
+            start_line: row.get(4)?,
+            start_col: row.get(5)?,
+            end_line: row.get(6)?,
+            end_col: row.get(7)?,
+            language: row.get(8)?,
+        })
+    })?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row?);
+    }
+    Ok(results)
+}
+
+/// Get symbols for specific files on a branch
+pub fn get_symbols_for_files(
+    conn: &Connection,
+    file_paths: &[String],
+    branch: &str,
+) -> DbResult<Vec<SymbolRow>> {
+    if file_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut results = Vec::new();
+    for chunk in file_paths.chunks(SQL_BIND_PARAM_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            r#"
+            SELECT s.id, s.file_path, s.name, s.kind, s.start_line, s.start_col, s.end_line, s.end_col, s.language
+            FROM symbols s
+            INNER JOIN branch_symbols bs ON s.id = bs.symbol_id
+            WHERE bs.branch = ? AND s.file_path IN ({})
+            ORDER BY s.start_line
+            "#,
+            placeholders
+        );
+        let params = rusqlite::params_from_iter(
+            std::iter::once(branch).chain(chunk.iter().map(|s| s.as_str())),
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params, |row| {
+            Ok(SymbolRow {
+                id: row.get(0)?,
+                file_path: row.get(1)?,
+                name: row.get(2)?,
+                kind: row.get(3)?,
+                start_line: row.get(4)?,
+                start_col: row.get(5)?,
+                end_line: row.get(6)?,
+                end_col: row.get(7)?,
+                language: row.get(8)?,
+            })
+        })?;
+
+        for row in rows {
+            results.push(row?);
+        }
+    }
+
+    Ok(results)
+}
+
 /// Delete all symbols for a file
 pub fn delete_symbols_by_file(conn: &Connection, file_path: &str) -> DbResult<usize> {
     let count = conn.execute(
@@ -2614,5 +2699,222 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+    #[test]
+    fn test_get_symbols_for_branch_empty() {
+        let (_temp_dir, conn) = setup_test_db();
+        let result = get_symbols_for_branch(&conn, "main").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_symbols_for_branch_populated() {
+        let (_temp_dir, conn) = setup_test_db();
+
+        let sym1 = SymbolRow {
+            id: "s1".to_string(),
+            file_path: "src/a.ts".to_string(),
+            name: "funcA".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            start_col: 0,
+            end_line: 5,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        let sym2 = SymbolRow {
+            id: "s2".to_string(),
+            file_path: "src/b.ts".to_string(),
+            name: "funcB".to_string(),
+            kind: "function".to_string(),
+            start_line: 10,
+            start_col: 0,
+            end_line: 15,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        upsert_symbol(&conn, &sym1).unwrap();
+        upsert_symbol(&conn, &sym2).unwrap();
+        add_symbols_to_branch(&conn, "main", &["s1".to_string(), "s2".to_string()]).unwrap();
+
+        let result = get_symbols_for_branch(&conn, "main").unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, "s1");
+        assert_eq!(result[1].id, "s2");
+    }
+
+    #[test]
+    fn test_get_symbols_for_branch_isolation() {
+        let (_temp_dir, conn) = setup_test_db();
+
+        let sym1 = SymbolRow {
+            id: "s1".to_string(),
+            file_path: "src/a.ts".to_string(),
+            name: "funcA".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            start_col: 0,
+            end_line: 5,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        let sym2 = SymbolRow {
+            id: "s2".to_string(),
+            file_path: "src/b.ts".to_string(),
+            name: "funcB".to_string(),
+            kind: "function".to_string(),
+            start_line: 10,
+            start_col: 0,
+            end_line: 15,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        upsert_symbol(&conn, &sym1).unwrap();
+        upsert_symbol(&conn, &sym2).unwrap();
+        add_symbols_to_branch(&conn, "main", &["s1".to_string()]).unwrap();
+        add_symbols_to_branch(&conn, "feature", &["s2".to_string()]).unwrap();
+
+        let main_result = get_symbols_for_branch(&conn, "main").unwrap();
+        assert_eq!(main_result.len(), 1);
+        assert_eq!(main_result[0].id, "s1");
+
+        let feature_result = get_symbols_for_branch(&conn, "feature").unwrap();
+        assert_eq!(feature_result.len(), 1);
+        assert_eq!(feature_result[0].id, "s2");
+    }
+
+    #[test]
+    fn test_get_symbols_for_files_empty() {
+        let (_temp_dir, conn) = setup_test_db();
+        let result = get_symbols_for_files(&conn, &[], "main").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_symbols_for_files_single() {
+        let (_temp_dir, conn) = setup_test_db();
+
+        let sym1 = SymbolRow {
+            id: "s1".to_string(),
+            file_path: "src/a.ts".to_string(),
+            name: "funcA".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            start_col: 0,
+            end_line: 5,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        let sym2 = SymbolRow {
+            id: "s2".to_string(),
+            file_path: "src/b.ts".to_string(),
+            name: "funcB".to_string(),
+            kind: "function".to_string(),
+            start_line: 10,
+            start_col: 0,
+            end_line: 15,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        upsert_symbol(&conn, &sym1).unwrap();
+        upsert_symbol(&conn, &sym2).unwrap();
+        add_symbols_to_branch(&conn, "main", &["s1".to_string(), "s2".to_string()]).unwrap();
+
+        let result = get_symbols_for_files(&conn, &["src/a.ts".to_string()], "main").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "s1");
+    }
+
+    #[test]
+    fn test_get_symbols_for_files_multiple() {
+        let (_temp_dir, conn) = setup_test_db();
+
+        let sym1 = SymbolRow {
+            id: "s1".to_string(),
+            file_path: "src/a.ts".to_string(),
+            name: "funcA".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            start_col: 0,
+            end_line: 5,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        let sym2 = SymbolRow {
+            id: "s2".to_string(),
+            file_path: "src/b.ts".to_string(),
+            name: "funcB".to_string(),
+            kind: "function".to_string(),
+            start_line: 10,
+            start_col: 0,
+            end_line: 15,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        let sym3 = SymbolRow {
+            id: "s3".to_string(),
+            file_path: "src/c.ts".to_string(),
+            name: "funcC".to_string(),
+            kind: "function".to_string(),
+            start_line: 20,
+            start_col: 0,
+            end_line: 25,
+            end_col: 1,
+            language: "typescript".to_string(),
+        };
+        upsert_symbol(&conn, &sym1).unwrap();
+        upsert_symbol(&conn, &sym2).unwrap();
+        upsert_symbol(&conn, &sym3).unwrap();
+        add_symbols_to_branch(
+            &conn,
+            "main",
+            &["s1".to_string(), "s2".to_string(), "s3".to_string()],
+        )
+        .unwrap();
+
+        let result = get_symbols_for_files(
+            &conn,
+            &["src/a.ts".to_string(), "src/b.ts".to_string()],
+            "main",
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+        let ids: Vec<String> = result.into_iter().map(|r| r.id).collect();
+        assert!(ids.contains(&"s1".to_string()));
+        assert!(ids.contains(&"s2".to_string()));
+    }
+
+    #[test]
+    fn test_get_symbols_for_files_batch_chunking() {
+        let (_temp_dir, mut conn) = setup_test_db();
+
+        let mut symbols = Vec::new();
+        let mut file_paths = Vec::new();
+        let mut symbol_ids = Vec::new();
+
+        for i in 0..1000 {
+            let id = format!("s{}", i);
+            let file_path = format!("src/f{}.ts", i);
+            let sym = SymbolRow {
+                id: id.clone(),
+                file_path: file_path.clone(),
+                name: format!("func{}", i),
+                kind: "function".to_string(),
+                start_line: i as u32,
+                start_col: 0,
+                end_line: i as u32 + 1,
+                end_col: 10,
+                language: "typescript".to_string(),
+            };
+            symbols.push(sym);
+            file_paths.push(file_path);
+            symbol_ids.push(id);
+        }
+
+        upsert_symbols_batch(&mut conn, &symbols).unwrap();
+        add_symbols_to_branch(&conn, "main", &symbol_ids).unwrap();
+
+        let result = get_symbols_for_files(&conn, &file_paths, "main").unwrap();
+        assert_eq!(result.len(), 1000);
     }
 }

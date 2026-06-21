@@ -23,6 +23,7 @@ import {
   remove_knowledge_base,
   getIndexerForProject,
   initializeTools,
+  pr_impact,
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
 import { RoutingHintController } from "./routing-hints.js";
@@ -135,6 +136,7 @@ const plugin: Plugin = async ({ directory, worktree }) => {
         add_knowledge_base,
         list_knowledge_bases,
         remove_knowledge_base,
+        pr_impact,
       },
 
       async "chat.message"(input, output) {

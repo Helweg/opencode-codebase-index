@@ -2,6 +2,7 @@
 
 mod call_extractor;
 mod chunker;
+mod community;
 mod db;
 mod hasher;
 mod inverted_index;
@@ -252,6 +253,33 @@ pub struct PathHopData {
     pub file_path: String,
     pub line: u32,
     pub call_type: String,
+}
+
+#[napi(object)]
+pub struct ReachabilityData {
+    pub symbol_id: String,
+    pub symbol_name: String,
+    pub file_path: String,
+    pub depth: u32,
+}
+
+#[napi(object)]
+pub struct CommunityData {
+    pub symbol_id: String,
+    pub symbol_name: String,
+    pub file_path: String,
+    pub community_id: u32,
+    pub community_label: String,
+}
+
+#[napi(object)]
+pub struct CentralityData {
+    pub symbol_id: String,
+    pub symbol_name: String,
+    pub file_path: String,
+    pub caller_count: u32,
+    pub callee_count: u32,
+    pub total_connections: u32,
 }
 
 #[napi(object)]
@@ -910,6 +938,53 @@ impl Database {
                 .collect())
         })
     }
+    #[napi]
+    pub fn get_symbols_for_branch(&self, branch: String) -> Result<Vec<SymbolData>> {
+        self.with_conn(|conn| {
+            let rows = db::get_symbols_for_branch(conn, &branch)
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(rows
+                .into_iter()
+                .map(|r| SymbolData {
+                    id: r.id,
+                    file_path: r.file_path,
+                    name: r.name,
+                    kind: r.kind,
+                    start_line: r.start_line,
+                    start_col: r.start_col,
+                    end_line: r.end_line,
+                    end_col: r.end_col,
+                    language: r.language,
+                })
+                .collect())
+        })
+    }
+
+    #[napi]
+    pub fn get_symbols_for_files(
+        &self,
+        file_paths: Vec<String>,
+        branch: String,
+    ) -> Result<Vec<SymbolData>> {
+        self.with_conn(|conn| {
+            let rows = db::get_symbols_for_files(conn, &file_paths, &branch)
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(rows
+                .into_iter()
+                .map(|r| SymbolData {
+                    id: r.id,
+                    file_path: r.file_path,
+                    name: r.name,
+                    kind: r.kind,
+                    start_line: r.start_line,
+                    start_col: r.start_col,
+                    end_line: r.end_line,
+                    end_col: r.end_col,
+                    language: r.language,
+                })
+                .collect())
+        })
+    }
 
     #[napi]
     pub fn delete_symbols_by_file(&self, file_path: String) -> Result<u32> {
@@ -1180,6 +1255,77 @@ impl Database {
             let count =
                 db::gc_orphan_call_edges(conn).map_err(|e| Error::from_reason(e.to_string()))?;
             Ok(count as u32)
+        })
+    }
+
+    #[napi]
+    pub fn get_transitive_reachability(
+        &self,
+        root_symbol_ids: Vec<String>,
+        branch: String,
+        direction: String,
+        max_depth: Option<u32>,
+    ) -> Result<Vec<ReachabilityData>> {
+        self.with_conn(|conn| {
+            let depth = max_depth.unwrap_or(10);
+            let rows = community::get_transitive_reachability(
+                conn,
+                &root_symbol_ids,
+                &branch,
+                &direction,
+                depth,
+            )
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(rows
+                .into_iter()
+                .map(|r| ReachabilityData {
+                    symbol_id: r.symbol_id,
+                    symbol_name: r.symbol_name,
+                    file_path: r.file_path,
+                    depth: r.depth,
+                })
+                .collect())
+        })
+    }
+
+    #[napi]
+    pub fn detect_communities(
+        &self,
+        branch: String,
+        symbol_ids: Option<Vec<String>>,
+    ) -> Result<Vec<CommunityData>> {
+        self.with_conn(|conn| {
+            let rows = community::detect_communities(conn, &branch, symbol_ids.as_deref())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(rows
+                .into_iter()
+                .map(|r| CommunityData {
+                    symbol_id: r.symbol_id,
+                    symbol_name: r.symbol_name,
+                    file_path: r.file_path,
+                    community_id: r.community_id,
+                    community_label: r.community_label,
+                })
+                .collect())
+        })
+    }
+
+    #[napi]
+    pub fn compute_centrality(&self, branch: String) -> Result<Vec<CentralityData>> {
+        self.with_conn(|conn| {
+            let rows = community::compute_centrality(conn, &branch)
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(rows
+                .into_iter()
+                .map(|r| CentralityData {
+                    symbol_id: r.symbol_id,
+                    symbol_name: r.symbol_name,
+                    file_path: r.file_path,
+                    caller_count: r.caller_count,
+                    callee_count: r.callee_count,
+                    total_connections: r.total_connections,
+                })
+                .collect())
         })
     }
 }

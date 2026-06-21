@@ -16,6 +16,7 @@ import {
   formatLogs,
   formatSearchResults,
 } from "./utils.js";
+import { pr_impact } from "./pr-impact.js";
 import {
   findKnowledgeBasePathIndex,
   hasMatchingKnowledgeBasePath,
@@ -531,3 +532,4 @@ export const remove_knowledge_base: ToolDefinition = tool({
     return result;
   },
 });
+export { pr_impact };

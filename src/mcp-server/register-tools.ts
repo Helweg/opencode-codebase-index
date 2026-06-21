@@ -6,6 +6,7 @@ import type { LogLevel } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
 import type { LogEntry } from "../utils/logger.js";
 import { formatDefinitionLookup, formatHealthCheck, formatIndexStats, formatStatus } from "../tools/utils.js";
+import { formatPrImpact } from "../tools/format-pr-impact.js";
 import { CHUNK_TYPE_ENUM, type McpServerRuntime, truncateContent } from "./shared.js";
 
 export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): void {
@@ -308,6 +309,36 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
         return `${prefix} ${hop.symbolName}${location}`;
       });
       return { content: [{ type: "text", text: `Path (${path.length} hops):\n${formatted.join("\n")}` }] };
+    },
+  );
+  server.tool(
+    "pr_impact",
+    "Analyze the impact of a pull request or branch by examining changed files, affected symbols, transitive callers, communities touched, hub nodes, and risk level. Use to understand blast radius before merging.",
+    {
+      pr: z.number().optional().describe("Pull request number to analyze"),
+      branch: z.string().optional().describe("Branch name to analyze (defaults to current branch)"),
+      maxDepth: z.number().optional().default(5).describe("Maximum traversal depth for transitive callers (default: 5)"),
+      hubThreshold: z.number().optional().default(10).describe("Minimum caller count to flag a symbol as a hub node (default: 10)"),
+      checkConflicts: z.boolean().optional().default(false).describe("Check for conflicting open PRs touching the same communities (default: false)"),
+      direction: z.enum(["callers", "callees", "both"]).optional().default("both").describe("Call-graph traversal direction: 'callers' for upstream, 'callees' for downstream, 'both' for union (default: both)"),
+    },
+    async (args) => {
+      await runtime.ensureInitialized();
+      const indexer = runtime.getIndexer();
+      try {
+        const result = await indexer.getPrImpact({
+          pr: args.pr,
+          branch: args.branch,
+          maxDepth: args.maxDepth,
+          hubThreshold: args.hubThreshold,
+          checkConflicts: args.checkConflicts,
+          direction: args.direction,
+        });
+        return { content: [{ type: "text", text: formatPrImpact(result) }] };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text", text: `Error analyzing PR impact: ${message}` }] };
+      }
     },
   );
 }

@@ -133,6 +133,17 @@ vi.mock("../src/indexer/index.js", () => {
       getLogsByLevel: vi.fn().mockReturnValue([]),
       formatMetrics: vi.fn().mockReturnValue(""),
     });
+    getPrImpact = vi.fn().mockResolvedValue({
+      changedFiles: ["src/a.ts"],
+      directSymbols: [{ id: "sym_1", name: "funcA", kind: "function", filePath: "src/a.ts" }],
+      transitiveCallers: [],
+      totalAffected: 1,
+      communities: [{ label: "Core", symbolCount: 1, directSymbols: ["sym_1"] }],
+      hubNodes: [],
+      riskLevel: "LOW",
+      riskReason: "Small impact: 1 affected symbols, no hub nodes touched.",
+      conflictingPRs: undefined,
+    });
   }
   return { Indexer: MockIndexer };
 });
@@ -214,10 +225,10 @@ describe("MCP server tools and prompts", () => {
     await client.close();
   });
 
-  it("should register all 11 tools", async () => {
+  it("should register all 12 tools", async () => {
     const tools = await client.listTools();
 
-    expect(tools.tools).toHaveLength(11);
+    expect(tools.tools).toHaveLength(12);
 
     const toolNames = tools.tools.map(t => t.name).sort();
     const expectedNames = [
@@ -227,6 +238,8 @@ describe("MCP server tools and prompts", () => {
       "codebase_search",
       "find_similar",
       "implementation_lookup",
+      "pr_impact",
+
       "index_codebase",
       "index_health_check",
       "index_logs",

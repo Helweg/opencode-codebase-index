@@ -124,7 +124,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
    npx opencode-codebase-index-mcp                            # uses current directory
    ```
 
-The MCP server exposes all 9 tools (`codebase_search`, `codebase_peek`, `find_similar`, `call_graph`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 4 prompts (`search`, `find`, `index`, `status`).
+The MCP server exposes all 10 tools (`codebase_search`, `codebase_peek`, `find_similar`, `call_graph`, `pr_impact`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 4 prompts (`search`, `find`, `index`, `status`).
 
 The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) are optional peer dependencies — they're only needed if you use the MCP server.
 
@@ -366,6 +366,10 @@ Query the call graph to find callers or callees of a function/method. Automatica
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).
 - **Example**: Find who calls `validateToken` → `call_graph(name="validateToken", direction="callers")`
 
+### `pr_impact`
+Analyzes a PR's changed files to determine impact scope within the codebase.
+- **Use for**: Understanding which symbols are affected by a PR, their call-graph reach, risk level, and community/cluster detection.
+- **Parameters**: `checkConflicts` (optional, default `false`) — when `true`, detects overlapping concurrent PRs sharing affected symbols and returns `conflictingPRs`.
 ### `add_knowledge_base`
 Add a folder as a knowledge base to be indexed alongside project code.
 - **Use for**: Indexing external documentation, API references, example programs.
@@ -393,6 +397,7 @@ The plugin automatically registers these slash commands:
 | `/search <query>` | **Pure Semantic Search**. Best for "How does X work?" |
 | `/find <query>` | **Hybrid Search**. Combines semantic search + grep. Best for "Find usage of X". |
 | `/call-graph <query>` | **Call Graph Trace**. Find callers/callees to understand execution flow. |
+| `/pr-impact <PR number or branch>` | **PR Impact Analysis**. Analyze changed files, affected symbols, communities, hub nodes, and risk. |
 | `/index` | **Update Index**. Runs incremental indexing by default; use `/index force` for a full rebuild. |
 | `/status` | **Check Status**. Shows if indexed, chunk count, and provider info. |
 
