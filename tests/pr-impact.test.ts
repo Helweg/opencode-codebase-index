@@ -172,6 +172,39 @@ describe("pr_impact tool", () => {
     );
   });
 
+  it("uses the indexed detached-HEAD branch key in branch mode", async () => {
+    (getChangedFiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      files: ["src/a.ts"],
+      baseBranch: "main",
+      source: "git",
+      headRefName: "HEAD",
+    });
+
+    fs.writeFileSync(
+      path.join(tempDir, ".git", "HEAD"),
+      "2222222222222222222222222222222222222222\n",
+    );
+
+    const indexer = await createIndexer();
+    const db = await getDatabase(indexer);
+    db.upsertSymbol({
+      id: "sym_detached",
+      filePath: path.join(tempDir, "src", "a.ts"),
+      name: "detachedFunc",
+      kind: "function",
+      startLine: 1,
+      startCol: 0,
+      endLine: 10,
+      endCol: 0,
+      language: "typescript",
+    });
+    db.addSymbolsToBranch("2222222", ["sym_detached"]);
+
+    const result = await indexer.getPrImpact({});
+
+    expect(result.directSymbols.map((s) => s.id)).toContain("sym_detached");
+  });
+
   it("detects hub nodes and flags HIGH risk", async () => {
     (getChangedFiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       files: ["src/db.ts"],

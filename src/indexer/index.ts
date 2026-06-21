@@ -4963,7 +4963,9 @@ export class Indexer {
       );
     }
 
-    const resolvedBranch = headRefName || opts.branch || this.currentBranch;
+    const resolvedBranch = opts.pr !== undefined
+      ? headRefName
+      : opts.branch || this.currentBranch;
     const branchKey = this.getBranchCatalogKeyFor(resolvedBranch || "default");
 
     const branchSymbols = database.getSymbolsForBranch(branchKey);
