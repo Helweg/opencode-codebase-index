@@ -304,6 +304,15 @@ describe("config schema", () => {
         expect(parseConfig({ search: { routingHints: "nope" } }).search.routingHints).toBe(true);
       });
 
+      it("should parse routingGraphHandoffHints values", () => {
+        expect(parseConfig({ search: { routingGraphHandoffHints: true } }).search.routingGraphHandoffHints).toBe(true);
+        expect(parseConfig({ search: { routingGraphHandoffHints: false } }).search.routingGraphHandoffHints).toBe(false);
+      });
+
+      it("should fallback routingGraphHandoffHints to default for invalid values", () => {
+        expect(parseConfig({ search: { routingGraphHandoffHints: "nope" } }).search.routingGraphHandoffHints).toBe(false);
+      });
+
       it("should parse routingHintRole values", () => {
         expect(parseConfig({ search: { routingHintRole: "system" } }).search.routingHintRole).toBe("system");
         expect(parseConfig({ search: { routingHintRole: "developer" } }).search.routingHintRole).toBe("developer");

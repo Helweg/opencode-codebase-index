@@ -184,7 +184,6 @@ describe("pr_impact tool", () => {
       path.join(tempDir, ".git", "HEAD"),
       "2222222222222222222222222222222222222222\n",
     );
-
     const indexer = await createIndexer();
     const db = await getDatabase(indexer);
     db.upsertSymbol({

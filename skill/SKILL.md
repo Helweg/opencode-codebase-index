@@ -21,6 +21,8 @@ The indexed codebase contains **two types of content**:
 | Need to see actual code | `codebase_search` | Returns full code content |
 | Find duplicates/patterns | `find_similar` | Given code snippet → similar code |
 | Understand code flow | `call_graph` | Find callers/callees of any function |
+| Trace dependency paths | `call_graph_path` | Find a shortest known path between two symbols |
+| Analyze PR blast radius | `pr_impact` | Find affected symbols, communities, hub nodes, and risk |
 | Don't know function/class names | `codebase_peek` or `codebase_search` | Natural language → code |
 | Know exact identifier names | `grep` | Faster, more precise |
 | Need ALL occurrences | `grep` | Semantic returns top N only |
@@ -54,10 +56,11 @@ Suggest: "知识库中未找到相关信息，是否添加相关文档文件夹�
 
 ## Recommended Workflow
 
-1. **Search first**: `codebase_search("ADC channels ESP32")` → check local knowledge
-2. **Locate with peek**: `codebase_peek("authentication flow")` → get file locations
+1. **Locate by meaning first**: `codebase_peek("authentication flow")` → get likely locations before grep or graph tools
+2. **Search with content**: `codebase_search("ADC channels ESP32")` → inspect implementation or knowledge-base matches
 3. **Read what matters**: `Read` the specific files you need
-4. **Drill down with grep**: `grep "validateToken"` for exact matches
+4. **Trace structure after discovery**: `call_graph`, `call_graph_path`, `pr_impact`, or OMO CodeGraph once you know the relevant symbol
+5. **Drill down with grep**: `grep "validateToken"` for exact matches
 
 ## Tools
 

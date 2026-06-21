@@ -15,6 +15,7 @@
 - [⚡ Quick Start](#-quick-start)
 - [🌐 MCP Server (Cursor, Claude Code, Windsurf, etc.)](#-mcp-server-cursor-claude-code-windsurf-etc)
 - [🎯 When to Use What](#-when-to-use-what)
+- [🧭 OMO CodeGraph Compatibility](#-omo-codegraph-compatibility)
 - [🧰 Tools Available](#-tools-available)
 - [🎮 Slash Commands](#-slash-commands)
 - [📚 Knowledge Base](#-knowledge-base)
@@ -124,7 +125,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
    npx opencode-codebase-index-mcp                            # uses current directory
    ```
 
-The MCP server exposes all 10 tools (`codebase_search`, `codebase_peek`, `find_similar`, `call_graph`, `pr_impact`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 4 prompts (`search`, `find`, `index`, `status`).
+The MCP server exposes all 12 tools (`codebase_search`, `codebase_peek`, `find_similar`, `implementation_lookup`, `call_graph`, `call_graph_path`, `pr_impact`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 5 prompts (`search`, `find`, `definition`, `index`, `status`).
 
 The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) are optional peer dependencies — they're only needed if you use the MCP server.
 
@@ -156,11 +157,34 @@ src/api/checkout.ts:89      (Route handler for /pay)
 | Just need to find locations | `codebase_peek` | Returns metadata only, saves ~90% tokens |
 | Need the authoritative definition site | `implementation_lookup` | Prioritizes real implementation definitions over docs/tests |
 | Understand code flow | `call_graph` | Find callers/callees of any function |
+| Trace dependency paths | `call_graph_path` | Find the shortest known call path between two symbols |
 | Know exact identifier | `grep` | Faster, finds all occurrences |
 | Need ALL matches | `grep` | Semantic returns top N only |
 | Mixed discovery + precision | `/find` (hybrid) | Best of both worlds |
 
 **Rule of thumb**: `codebase_peek` to find locations → `Read` to examine → `grep` for precision. For symbol-definition questions, use `implementation_lookup` first.
+
+## 🧭 OMO CodeGraph Compatibility
+
+Recent OMO releases include a built-in CodeGraph MCP and make it part of the default agent workflow. This does **not** replace `opencode-codebase-index`; the two tools answer different first questions.
+
+| Need | Prefer | Why |
+|------|--------|-----|
+| Find code by intent, behavior, or natural language | `codebase_peek` / `codebase_search` | Semantic + hybrid retrieval works when you do not know exact names |
+| Jump to the likely implementation site | `implementation_lookup` | Definition-oriented ranking prefers source over tests/docs |
+| Find similar implementations or duplicate patterns | `find_similar` | Embedding similarity compares code shape and meaning |
+| Follow callers, callees, imports, inheritance, or implementations | OMO CodeGraph or `call_graph` | Structural graph tools are best for dependency topology |
+| Find a shortest known relationship chain | `call_graph_path` | Uses this plugin's indexed call edges to connect two symbols |
+| Include external docs, examples, or API references in discovery | `add_knowledge_base` + `codebase_search` | Knowledge bases are indexed into the same retrieval store |
+
+Recommended OMO workflow:
+
+1. Start broad with `codebase_peek` when the prompt is conceptual, such as "where is auth enforced?" or "payment validation flow".
+2. Use `implementation_lookup` once you have a symbol or concept that should resolve to a definition.
+3. Use OMO CodeGraph, `call_graph`, or `call_graph_path` after locating the relevant symbol to check blast radius and dependency flow.
+4. Keep `grep` for exact identifiers and exhaustive text matches.
+
+If OMO reports an uninitialized CodeGraph workspace, follow its `codegraph init` guidance. That setup is independent from this plugin's index under `.opencode/index/`, so `/index` and `codegraph init` may both be useful in the same repository.
 
 ## 📊 Token Usage
 
@@ -363,8 +387,16 @@ Returns recent debug logs with optional filtering.
 Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, Apex, Zig, GDScript, and MATLAB.
 
 - **Use for**: Understanding code flow, tracing dependencies, impact analysis.
-- **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries).
+- **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries), `relationshipType` (optional: `Call`, `MethodCall`, `Constructor`, `Import`, `Inherits`, `Implements`).
 - **Example**: Find who calls `validateToken` → `call_graph(name="validateToken", direction="callers")`
+
+### `call_graph_path`
+
+Find the shortest known call-graph path between two symbols. Use it after `codebase_peek`, `implementation_lookup`, or `call_graph` identifies the important source and target names.
+
+- **Use for**: Blast-radius checks, dependency-chain discovery, explaining how one subsystem reaches another.
+- **Parameters**: `from` (source symbol name), `to` (target symbol name), `maxDepth` (optional, default `10`).
+- **Example**: Trace how `createOrder` reaches `chargeCard` → `call_graph_path(from="createOrder", to="chargeCard")`
 
 ### `pr_impact`
 Analyzes a PR's changed files to determine impact scope within the codebase.
@@ -581,6 +613,7 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
     "rerankTopN": 20,                         // Deterministic rerank depth
     "contextLines": 0,                        // Extra lines before/after match
     "routingHints": true,                     // Runtime nudges for local discovery/definition queries
+    "routingGraphHandoffHints": false,        // Add opt-in graph/OMO CodeGraph handoff wording
     "routingHintRole": "system"              // system | developer (message role used for hints)
   },
   "reranker": {
@@ -652,6 +685,7 @@ String values in `codebase-index.json` can reference environment variables with 
 | `rerankTopN` | `20` | Deterministic rerank depth cap. Applies lightweight name/path/chunk-type rerank to top-N only |
 | `contextLines` | `0` | Extra lines to include before/after each match |
 | `routingHints` | `true` | Inject lightweight runtime hints for local conceptual discovery and definition lookups. Set to `false` to disable plugin-side routing nudges. |
+| `routingGraphHandoffHints` | `false` | When `true`, conceptual discovery hints also say to use graph tools (including OMO CodeGraph) after semantic discovery identifies relevant symbols. |
 | `routingHintRole` | `"system"` | Message role used when injecting routing hints: `"system"` (default) or `"developer"`. |
 | **reranker** | | Optional second-stage model reranker for the top candidate pool |
 | `enabled` | `false` | Turn external reranking on/off |
@@ -683,7 +717,7 @@ These warnings improve observability but do **not** change the recovery behavior
 ### Retrieval ranking behavior
 
 - `codebase_search` and `codebase_peek` use the hybrid path: semantic + keyword retrieval → fusion (`fusionStrategy`) → deterministic rerank (`rerankTopN`) → optional external reranker (`reranker`) → filtering.
-- When `search.routingHints` is enabled (default), the plugin adds tiny per-turn runtime hints for local conceptual discovery and definition queries. Conceptual discovery is nudged toward `codebase_peek` / `codebase_search`, while definition questions are nudged toward `implementation_lookup`. Exact identifier and unrelated operational tasks are left alone. Set `search.routingHintRole` to `"developer"` if your client/runtime expects developer-role guidance instead of system-role guidance.
+- When `search.routingHints` is enabled (default), the plugin adds tiny per-turn runtime hints for local conceptual discovery and definition queries. Conceptual discovery is nudged toward `codebase_peek` / `codebase_search`, while definition questions are nudged toward `implementation_lookup`. Exact identifier and unrelated operational tasks are left alone. Set `search.routingGraphHandoffHints` to `true` to add opt-in graph/OMO CodeGraph handoff wording, and set `search.routingHintRole` to `"developer"` if your client/runtime expects developer-role guidance instead of system-role guidance.
 - `find_similar` stays semantic-only: semantic retrieval + deterministic rerank only (no keyword retrieval, no RRF).
 - For compatibility rollbacks, set `search.fusionStrategy` to `"weighted"` to use the legacy weighted fusion path.
 - When enabled, the external reranker sees path metadata plus a bounded on-disk code snippet for each candidate so it can distinguish real implementations from docs/tests more reliably.

@@ -124,6 +124,7 @@ export function assessRoutingIntent(text: string): RoutingAssessment {
 export function buildRoutingHint(
   assessment: RoutingAssessment,
   status: Pick<StatusResult, "indexed" | "compatibility"> | null,
+  includeGraphHandoff: boolean = false,
 ): string | null {
   if (assessment.intent === "definition_lookup") {
     if (!status || !status.indexed || status.compatibility?.compatible === false) {
@@ -138,10 +139,14 @@ export function buildRoutingHint(
   }
 
   if (!status || !status.indexed || status.compatibility?.compatible === false) {
-    return "For this turn, if local code discovery by behavior is needed, check `index_status` first and run `index_codebase` if the index is missing or incompatible. Use `grep` for exact identifiers or exhaustive matches.";
+      const graphHandoff = includeGraphHandoff ? " Use graph tools after semantic discovery identifies relevant symbols." : "";
+      return `For this turn, if local code discovery by behavior is needed, check \`index_status\` first and run \`index_codebase\` if the index is missing or incompatible.${graphHandoff} Use \`grep\` for exact identifiers or exhaustive matches.`;
   }
 
-  return "For this turn, prefer `codebase_peek` for local code discovery by behavior or likely location, then use `codebase_search` when you need implementation content. Use `grep` for exact identifiers or exhaustive matches.";
+  const graphHandoff = includeGraphHandoff
+    ? " before graph tools such as `call_graph`, `call_graph_path`, `pr_impact`, or OMO CodeGraph"
+    : "";
+  return `For this turn, prefer \`codebase_peek\` for local code discovery by behavior or likely location${graphHandoff}. Then use \`codebase_search\` when you need implementation content. Use \`grep\` for exact identifiers or exhaustive matches.`;
 }
 
 export class RoutingHintController {
@@ -150,6 +155,7 @@ export class RoutingHintController {
   constructor(
     private readonly getStatus: () => Promise<Pick<StatusResult, "indexed" | "compatibility">>,
     private readonly maxSessions: number = 200,
+    private readonly includeGraphHandoff: boolean = false,
   ) {}
 
   observeUserMessage(sessionID: string, parts: TextPartLike[]): RoutingAssessment {
@@ -176,7 +182,7 @@ export class RoutingHintController {
     }
 
     const status = await this.safeGetStatus();
-    const hint = buildRoutingHint(state.assessment, status);
+    const hint = buildRoutingHint(state.assessment, status, this.includeGraphHandoff);
 
     return hint ? [hint] : [];
   }

@@ -213,8 +213,9 @@ Final line.`;
       expect(reindexCmd.template).toContain("force=true");
 
       const callGraphCmd = commands.get("call-graph")!;
-      expect(callGraphCmd.description).toBe("Trace callers or callees using the call graph");
+      expect(callGraphCmd.description).toBe("Trace callers, callees, or paths using the call graph");
       expect(callGraphCmd.template).toContain("call_graph");
+      expect(callGraphCmd.template).toContain("call_graph_path");
     });
   });
 });
