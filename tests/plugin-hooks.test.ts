@@ -4,6 +4,7 @@ const mockState = vi.hoisted(() => ({
   config: {
     search: {
       routingHints: true,
+      routingGraphHandoffHints: false,
       routingHintRole: "system" as "system" | "developer",
     },
     indexing: {
@@ -96,6 +97,7 @@ describe("plugin routing hint hook selection", () => {
     mockState.config = {
       search: {
         routingHints: true,
+        routingGraphHandoffHints: false,
         routingHintRole: "system",
       },
       indexing: {

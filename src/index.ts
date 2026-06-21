@@ -89,7 +89,7 @@ const plugin: Plugin = async ({ directory, worktree }) => {
 
     const getProjectIndexer = () => getIndexerForProject(projectRoot);
     const routingHints = config.search.routingHints
-      ? new RoutingHintController(() => getProjectIndexer().getStatus())
+      ? new RoutingHintController(() => getProjectIndexer().getStatus(), 200, config.search.routingGraphHandoffHints)
       : null;
 
     const isHomeDir = path.resolve(projectRoot) === path.resolve(os.homedir());

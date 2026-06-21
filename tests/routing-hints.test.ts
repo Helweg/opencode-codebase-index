@@ -75,10 +75,12 @@ describe("routing hints", () => {
       const hint = buildRoutingHint(
         assessRoutingIntent("Where is the webhook validation logic?"),
         { indexed: true, compatibility: { compatible: true } },
+        true,
       );
 
       expect(hint).toContain("prefer `codebase_peek`");
       expect(hint).toContain("`codebase_search`");
+      expect(hint).toContain("before graph tools such as `call_graph`, `call_graph_path`, `pr_impact`, or OMO CodeGraph");
       expect(hint).toContain("`grep`");
     });
 
@@ -86,10 +88,12 @@ describe("routing hints", () => {
       const hint = buildRoutingHint(
         assessRoutingIntent("Which file handles retry backoff logic?"),
         { indexed: false, compatibility: null },
+        true,
       );
 
       expect(hint).toContain("check `index_status` first");
       expect(hint).toContain("run `index_codebase`");
+      expect(hint).toContain("Use graph tools after semantic discovery identifies relevant symbols");
     });
 
     it("returns null for non-conceptual intents", () => {
@@ -99,6 +103,17 @@ describe("routing hints", () => {
       );
 
       expect(hint).toBeNull();
+    });
+
+    it("omits graph handoff wording by default", () => {
+      const hint = buildRoutingHint(
+        assessRoutingIntent("Where is the webhook validation logic?"),
+        { indexed: true, compatibility: { compatible: true } },
+      );
+
+      expect(hint).toContain("prefer `codebase_peek`");
+      expect(hint).not.toContain("OMO CodeGraph");
+      expect(hint).not.toContain("Use graph tools after semantic discovery");
     });
 
     it("returns a definition-specific hint when the index is ready", () => {
@@ -127,7 +142,7 @@ describe("routing hints", () => {
       const controller = new RoutingHintController(async () => ({
         indexed: true,
         compatibility: { compatible: true },
-      }));
+      }), 200, true);
 
       controller.observeUserMessage("session-1", [{ type: "text", text: "Where is the auth flow implemented?" }]);
 
@@ -138,6 +153,7 @@ describe("routing hints", () => {
       const hints = await controller.getSystemHints("session-1");
       expect(hints).toHaveLength(1);
       expect(hints[0]).toContain("prefer `codebase_peek`");
+      expect(hints[0]).toContain("OMO CodeGraph");
     });
 
     it("stops nudging after a codebase tool is used", async () => {
