@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-22
+
+### Added
+- **PR impact analysis**: Added the `pr_impact` tool, `/pr-impact` slash command, and native call-graph reachability/community analysis so PRs can be ranked by affected symbols, hub nodes, and optional concurrent-PR conflicts (#128).
+- **Opt-in OMO CodeGraph routing hints**: Added `search.routingGraphHandoffHints` plus command routing updates so conceptual discovery can hand off to graph/path tools after semantic lookup identifies the right symbols (#130).
+
+### Fixed
+- **Exported TS/JS symbol indexing**: Restored call-graph symbol persistence for exported declarations so `call_graph`, `call_graph_path`, and `pr_impact` work correctly on fresh indexes (#132).
+
+### Security
+- **Dependency hardening**: Bumped `js-yaml` to 4.2.0 and the transitive `hono` override to 4.12.25 to close shipped dependency vulnerabilities (#127, #131).
+
 ## [0.11.0] - 2026-06-16
 
 ### Added
