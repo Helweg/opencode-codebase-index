@@ -51,6 +51,7 @@ export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "function_declaration",
   "function",
   "arrow_function",
+  "export_statement",
   "method_definition",
   "class_declaration",
   "interface_declaration",
