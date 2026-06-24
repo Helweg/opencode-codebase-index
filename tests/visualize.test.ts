@@ -86,6 +86,25 @@ describe("visualize - transform", () => {
     expect(result.nodes.length).toBe(0);
   });
 
+  it("filters absolute indexed paths by repo-relative directory", () => {
+    const root = "/tmp/example-repo";
+    const absoluteSymbols: SymbolData[] = [
+      makeSymbol("sym1", "handleRequest", `${root}/src/handlers/request.ts`),
+      makeSymbol("sym2", "validateInput", `${root}/src/utils/validate.ts`),
+      makeSymbol("sym3", "logError", `${root}/src/utils/logger.ts`),
+      makeSymbol("sym4", "testHelper", `${root}/tests/helper.ts`),
+    ];
+    const absoluteEdges: CallEdgeData[] = [
+      makeEdge("e1", "sym2", "logError", "sym3", "Call"),
+      makeEdge("e2", "sym4", "handleRequest", "sym1", "Call"),
+    ];
+
+    const result = transformForVisualization(absoluteSymbols, absoluteEdges, { directory: "src" });
+
+    expect(result.nodes.map((node) => node.name).sort()).toEqual(["logError", "validateInput"]);
+    expect(result.edges).toHaveLength(1);
+  });
+
   it("filters by directory with connected nodes", () => {
     // Add an edge between two nodes in the same directory
     const extraEdges = [

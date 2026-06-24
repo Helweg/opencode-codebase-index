@@ -21,8 +21,16 @@ export function transformForVisualization(
   let filteredSymbols = symbols;
   if (directory) {
     const normalizedDir = directory.replace(/\/$/, "");
+    const normalizedDirWithSlash = `${normalizedDir}/`;
+    const normalizedAbsoluteSuffix = `/${normalizedDirWithSlash}`;
     filteredSymbols = symbols.filter(
-      (s) => s.filePath.startsWith(normalizedDir + "/") || s.filePath === normalizedDir,
+      (s) => {
+        const normalizedPath = s.filePath.replace(/\\/g, "/");
+        return normalizedPath === normalizedDir
+          || normalizedPath.startsWith(normalizedDirWithSlash)
+          || normalizedPath.endsWith(`/${normalizedDir}`)
+          || normalizedPath.includes(normalizedAbsoluteSuffix);
+      },
     );
   }
 
