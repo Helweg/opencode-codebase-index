@@ -402,6 +402,17 @@ Find the shortest known call-graph path between two symbols. Use it after `codeb
 Analyzes a PR's changed files to determine impact scope within the codebase.
 - **Use for**: Understanding which symbols are affected by a PR, their call-graph reach, risk level, and community/cluster detection.
 - **Parameters**: `checkConflicts` (optional, default `false`) — when `true`, detects overlapping concurrent PRs sharing affected symbols and returns `conflictingPRs`.
+
+### `index_visualize`
+Generate a self-contained HTML call graph view for browser-based exploration.
+
+- **Use for**: Onboarding, architecture walkthroughs, and drilling from module-level structure into symbol relationships.
+- **What it shows**: A module overview by default, a clustered symbol exploration view, and a focus view with callers/callees for a selected module or symbol.
+- **Parameters**: `directory` (optional folder filter), `maxNodes` (default `5000`), `includeOrphans` (include disconnected symbols).
+- **Output**: Writes a temporary HTML file you can open in any browser.
+- **Example**: `index_visualize(directory="src/tools", maxNodes=1500)`
+
+
 ### `add_knowledge_base`
 Add a folder as a knowledge base to be indexed alongside project code.
 - **Use for**: Indexing external documentation, API references, example programs.
@@ -430,6 +441,7 @@ The plugin automatically registers these slash commands:
 | `/find <query>` | **Hybrid Search**. Combines semantic search + grep. Best for "Find usage of X". |
 | `/call-graph <query>` | **Call Graph Trace**. Find callers/callees to understand execution flow. |
 | `/pr-impact <PR number or branch>` | **PR Impact Analysis**. Analyze changed files, affected symbols, communities, hub nodes, and risk. |
+| `/visualize [directory|max=N|orphans]` | **Call Graph Visualization**. Open a module overview and symbol exploration view in a browser-ready HTML file. |
 | `/index` | **Update Index**. Runs incremental indexing by default; use `/index force` for a full rebuild. |
 | `/status` | **Check Status**. Shows if indexed, chunk count, and provider info. |
 

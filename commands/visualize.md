@@ -2,7 +2,7 @@
 description: Generate interactive HTML call graph visualization
 ---
 
-Generate an interactive force-directed visualization of the call graph.
+Generate an interactive call graph visualization with a module overview by default and a clustered symbol exploration mode.
 
 User input: $ARGUMENTS
 
@@ -15,7 +15,7 @@ Parse input for optional parameters:
 Call `index_visualize` with parsed parameters.
 
 Examples:
-- `/visualize` → full call graph
+- `/visualize` → full call graph with module overview + symbol exploration views
 - `/visualize src/tools` → only symbols in src/tools/
 - `/visualize max=1000` → limit to 1000 nodes
 - `/visualize src/indexer orphans` → include disconnected nodes

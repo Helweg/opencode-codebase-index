@@ -538,8 +538,9 @@ export { pr_impact };
 
 export const index_visualize: ToolDefinition = tool({
   description:
-    "Generate a self-contained HTML call graph view for browser-based exploration. " +
-    "Shows a module overview by default, clustered symbol exploration, and a focus view for selected modules.",
+    "Generate an interactive HTML visualization of the call graph. " +
+    "Starts with a module overview and includes a clustered symbol exploration view. " +
+    "Clickable modules and symbols show relationship details. Supports search and drill-down.",
   args: {
     directory: z.string().optional().describe("Filter to symbols in this directory (e.g., 'src/services')"),
     maxNodes: z.number().optional().default(5000).describe("Maximum nodes to include (default 5000)"),
