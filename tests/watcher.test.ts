@@ -14,6 +14,7 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
   indexing: {
     autoIndex: false,
     watchFiles: true,
+    concurrentReindexRuns: 1,
     maxFileSize: 1048576,
     maxChunksPerFile: 100,
     semanticOnly: false,
@@ -29,7 +30,13 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
     minScore: 0.1,
     includeContext: true,
     hybridWeight: 0.5,
+    fusionStrategy: "rrf",
+    rrfK: 60,
+    rerankTopN: 20,
     contextLines: 0,
+    routingHints: true,
+    routingGraphHandoffHints: false,
+    routingHintRole: "system",
   },
   debug: {
     enabled: false,
@@ -139,6 +146,92 @@ describe("FileWatcher", () => {
   });
 
   describe("createWatcherWithIndexer", () => {
+    it("handles file-triggered reindexing in the background", async () => {
+      vi.setConfig({ testTimeout: 4000 });
+      let resolveIndex: (() => void) | null = null;
+      const indexer = {
+        index: vi.fn(() => new Promise<void>((resolve) => {
+          resolveIndex = resolve;
+        })),
+      };
+      const combinedWatcher = createWatcherWithIndexer(
+        () => indexer,
+        tempDir,
+        createTestConfig()
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+      fs.writeFileSync(path.join(tempDir, "src", "background.ts"), "export const value = 1;");
+      await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+      expect(indexer.index).toHaveBeenCalledTimes(1);
+      expect(resolveIndex).toBeTypeOf("function");
+
+      combinedWatcher.stop();
+      resolveIndex?.();
+    });
+
+    it("coalesces file-triggered reindex requests while one is running", async () => {
+      vi.setConfig({ testTimeout: 6000 });
+      const pendingResolves: Array<() => void> = [];
+      const indexer = {
+        index: vi.fn(() => new Promise<void>((resolve) => {
+          pendingResolves.push(resolve);
+        })),
+      };
+      const combinedWatcher = createWatcherWithIndexer(
+        () => indexer,
+        tempDir,
+        createTestConfig()
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+      fs.writeFileSync(path.join(tempDir, "src", "first.ts"), "export const first = 1;");
+      await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledTimes(1), { timeout: 2500 });
+      fs.writeFileSync(path.join(tempDir, "src", "second.ts"), "export const second = 2;");
+      await new Promise((r) => setTimeout(r, 1500));
+
+      expect(indexer.index).toHaveBeenCalledTimes(1);
+      pendingResolves[0]?.();
+      await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledTimes(2));
+
+      combinedWatcher.stop();
+      pendingResolves[1]?.();
+    });
+
+    it("honors configured concurrent file-triggered reindex runs", async () => {
+      vi.setConfig({ testTimeout: 6000 });
+      const pendingResolves: Array<() => void> = [];
+      const indexer = {
+        index: vi.fn(() => new Promise<void>((resolve) => {
+          pendingResolves.push(resolve);
+        })),
+      };
+      const config = createTestConfig();
+      config.indexing.concurrentReindexRuns = 2;
+      const combinedWatcher = createWatcherWithIndexer(
+        () => indexer,
+        tempDir,
+        config
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+      fs.writeFileSync(path.join(tempDir, "src", "parallel-one.ts"), "export const one = 1;");
+      await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledTimes(1), { timeout: 2500 });
+      fs.writeFileSync(path.join(tempDir, "src", "parallel-two.ts"), "export const two = 2;");
+      await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledTimes(2), { timeout: 2500 });
+      fs.writeFileSync(path.join(tempDir, "src", "parallel-three.ts"), "export const three = 3;");
+      await new Promise((r) => setTimeout(r, 1500));
+
+      expect(indexer.index).toHaveBeenCalledTimes(2);
+      pendingResolves[0]?.();
+      await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledTimes(3));
+
+      combinedWatcher.stop();
+      pendingResolves[1]?.();
+      pendingResolves[2]?.();
+    });
+
     it("uses the latest indexer instance for file-triggered reindexing", async () => {
       const staleIndexer = {
         index: vi.fn().mockResolvedValue(undefined),
