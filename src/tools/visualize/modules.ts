@@ -17,6 +17,10 @@ function stripToProjectRelative(filePath: string): string {
   let bestIndex = Number.POSITIVE_INFINITY;
   let bestRoot: string | null = null;
   for (const root of KNOWN_ROOTS) {
+    if (normalized === root || normalized.startsWith(`${root}/`)) {
+      return normalized;
+    }
+
     const marker = `/${root}/`;
     const rootIndex = normalized.indexOf(marker);
     if (rootIndex !== -1 && rootIndex < bestIndex) {
@@ -95,6 +99,46 @@ function shortLabel(prefix: string, allPrefixes: Set<string>): string {
   return prefix;
 }
 
+function classifyModulePrefix(prefix: string): VisualizationModule["category"] {
+  if (prefix.startsWith("tests/fixtures")) return "fixture";
+  if (prefix.startsWith("tests")) return "test";
+  if (prefix === "native" || prefix.startsWith("native/")) return "native";
+  if (prefix === "commands" || prefix.startsWith("commands/")) return "command";
+  if (prefix === "scripts" || prefix.startsWith("scripts/")) return "script";
+  if (prefix === "docs" || prefix.startsWith("docs/")) return "doc";
+  if (prefix === "benchmarks" || prefix.startsWith("benchmarks/")) return "benchmark";
+  if (prefix === "src" || prefix.startsWith("src/")) return "source";
+  return "other";
+}
+
+function displayLabelForPrefix(prefix: string, allPrefixes: Set<string>): string {
+  const short = shortLabel(prefix, allPrefixes);
+
+  if (prefix.startsWith("tests/fixtures/")) {
+    const fixtureName = prefix.slice("tests/fixtures/".length);
+    return `fixture: ${fixtureName}`;
+  }
+
+  if (prefix === "tests/fixtures") {
+    return "fixtures";
+  }
+
+  if (prefix.startsWith("tests/")) {
+    const testArea = prefix.slice("tests/".length);
+    return `tests: ${testArea}`;
+  }
+
+  if (prefix === "tests") {
+    return "tests";
+  }
+
+  if (prefix === "native") {
+    return "native";
+  }
+
+  return short;
+}
+
 function compactModules(prefixToNodes: Map<string, VisualizationNode[]>): Map<string, VisualizationNode[]> {
   const grouped = new Map(prefixToNodes);
   while (grouped.size > MAX_MODULES) {
@@ -142,7 +186,8 @@ export function deriveModules(nodes: VisualizationNode[]): VisualizationModule[]
         kinds[node.kind] = (kinds[node.kind] ?? 0) + 1;
       }
 
-      const label = shortLabel(prefix, allPrefixes);
+      const label = displayLabelForPrefix(prefix, allPrefixes);
+      const category = classifyModulePrefix(prefix);
       const id = `module-${prefix.replace(/[^a-zA-Z0-9]+/g, "-")}`;
 
       for (const node of members) {
@@ -154,6 +199,7 @@ export function deriveModules(nodes: VisualizationNode[]): VisualizationModule[]
         id,
         label,
         pathPrefix: prefix,
+        category,
         symbolCount: members.length,
         symbols: members.map((node) => node.id),
         kinds,

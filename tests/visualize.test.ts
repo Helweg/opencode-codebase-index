@@ -142,6 +142,24 @@ describe("visualize - transform", () => {
     expect(result.modules.length).toBeGreaterThan(0);
     expect(result.nodes.every((node) => node.moduleId.length > 0)).toBe(true);
     expect(result.nodes.every((node) => node.moduleLabel.length > 0)).toBe(true);
+    expect(result.modules.every((module) => module.category.length > 0)).toBe(true);
+  });
+
+  it("labels fixture-derived modules explicitly", () => {
+    const fixtureSymbols: SymbolData[] = [
+      makeSymbol("fixture1", "fixtureFn", "tests/fixtures/call-graph/sample.ts"),
+      makeSymbol("runtime1", "runtimeFn", "src/indexer/runtime.ts"),
+    ];
+
+    const fixtureEdges: CallEdgeData[] = [
+      makeEdge("e1", "fixture1", "runtimeFn", "runtime1", "Call"),
+    ];
+
+    const result = transformForVisualization(fixtureSymbols, fixtureEdges, { includeOrphans: true });
+    const fixtureModule = result.modules.find((module) => module.pathPrefix === "tests/fixtures/call-graph");
+
+    expect(fixtureModule?.label).toBe("fixture: call-graph");
+    expect(fixtureModule?.category).toBe("fixture");
   });
 
   it("aggregates module-level edges", () => {

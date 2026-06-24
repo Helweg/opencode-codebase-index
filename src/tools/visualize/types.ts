@@ -21,6 +21,7 @@ export interface VisualizationModule {
   id: string;
   label: string;
   pathPrefix: string;
+  category: "source" | "native" | "test" | "fixture" | "command" | "script" | "doc" | "benchmark" | "other";
   symbolCount: number;
   symbols: string[];
   kinds: Record<string, number>;
