@@ -4903,7 +4903,6 @@ export class Indexer {
     return shortest;
   }
 
-
   async getSymbolsForBranch(branch?: string): Promise<SymbolData[]> {
     const { database } = await this.ensureInitialized();
     const resolvedBranch = branch ?? this.getBranchCatalogKey();
@@ -5123,6 +5122,70 @@ export class Indexer {
       direction,
       conflictingPRs,
     };
+  }
+
+  async getVisualizationData(options?: { directory?: string; maxNodes?: number }): Promise<{
+    symbols: SymbolData[];
+    edges: CallEdgeData[];
+    truncated: boolean;
+  }> {
+    const { database, store } = await this.ensureInitialized();
+    const seenSymbols = new Map<string, SymbolData>();
+    const seenEdges = new Map<string, CallEdgeData>();
+
+    for (const branchKey of this.getBranchCatalogKeys()) {
+      // Get all symbol IDs on this branch
+      const symbolIds = database.getBranchSymbolIds(branchKey);
+      const symbolIdSet = new Set(symbolIds);
+
+      // Get unique file paths from branch chunks' metadata
+      const chunkIds = database.getBranchChunkIds(branchKey);
+      const metadataMap = chunkIds.length > 0 ? store.getMetadataBatch(chunkIds) : new Map<string, import("../native/index.js").ChunkMetadata>();
+      const filePaths = new Set<string>();
+      for (const [, meta] of metadataMap) {
+        if (meta.filePath) filePaths.add(meta.filePath);
+      }
+
+      const directory = options?.directory?.replace(/\/$/, "");
+      const absoluteDirectoryFilter = directory
+        ? path.resolve(this.projectRoot, directory)
+        : undefined;
+
+      // Gather symbols from each file
+      for (const filePath of filePaths) {
+        if (directory) {
+          const absoluteFilePath = path.resolve(filePath);
+          const matchesRelative = filePath === directory || filePath.startsWith(directory + "/");
+          const matchesProjectRelative = absoluteDirectoryFilter !== undefined && (
+            absoluteFilePath === absoluteDirectoryFilter || absoluteFilePath.startsWith(absoluteDirectoryFilter + path.sep)
+          );
+          if (!matchesRelative && !matchesProjectRelative) {
+            continue;
+          }
+        }
+        for (const sym of database.getSymbolsByFile(filePath)) {
+          if (symbolIdSet.has(sym.id) && !seenSymbols.has(sym.id)) {
+            seenSymbols.set(sym.id, sym);
+          }
+        }
+      }
+
+      // Gather edges from each symbol
+      for (const symbolId of seenSymbols.keys()) {
+        for (const edge of database.getCallees(symbolId, branchKey)) {
+          if (!seenEdges.has(edge.id)) {
+            seenEdges.set(edge.id, edge);
+          }
+        }
+      }
+    }
+
+    const symbols = [...seenSymbols.values()];
+    const edges = [...seenEdges.values()];
+    const maxNodes = options?.maxNodes ?? 5000;
+    const truncated = symbols.length > maxNodes;
+
+    return { symbols, edges, truncated };
   }
 
   async close(): Promise<void> {

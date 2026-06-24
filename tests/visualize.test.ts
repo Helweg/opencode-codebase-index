@@ -1,0 +1,195 @@
+import { describe, it, expect } from "vitest";
+import { transformForVisualization } from "../src/tools/visualize/transform.js";
+import { generateVisualizationHtml } from "../src/tools/visualize/template.js";
+import type { SymbolData, CallEdgeData } from "../src/native/index.js";
+
+function makeSymbol(id: string, name: string, filePath: string, kind = "function"): SymbolData {
+  return {
+    id,
+    name,
+    filePath,
+    kind,
+    startLine: 1,
+    startCol: 0,
+    endLine: 10,
+    endCol: 1,
+    language: "typescript",
+  };
+}
+
+function makeEdge(
+  id: string,
+  fromSymbolId: string,
+  targetName: string,
+  toSymbolId: string | undefined,
+  callType = "Call",
+  isResolved = true,
+): CallEdgeData {
+  return {
+    id,
+    fromSymbolId,
+    fromSymbolName: undefined,
+    fromSymbolFilePath: undefined,
+    targetName,
+    toSymbolId,
+    callType,
+    confidence: "Direct",
+    line: 5,
+    col: 10,
+    isResolved,
+  };
+}
+
+describe("visualize - transform", () => {
+  const symbols: SymbolData[] = [
+    makeSymbol("sym1", "handleRequest", "src/handlers/request.ts"),
+    makeSymbol("sym2", "validateInput", "src/utils/validate.ts"),
+    makeSymbol("sym3", "logError", "src/utils/logger.ts"),
+    makeSymbol("sym4", "parseConfig", "src/config/parser.ts"),
+    makeSymbol("sym5", "orphanFn", "src/orphan.ts"),
+  ];
+
+  const edges: CallEdgeData[] = [
+    makeEdge("e1", "sym1", "validateInput", "sym2", "Call"),
+    makeEdge("e2", "sym1", "logError", "sym3", "Call"),
+    makeEdge("e3", "sym2", "parseConfig", "sym4", "Call"),
+    makeEdge("e4", "sym1", "unresolvedFn", undefined, "Call", false),
+  ];
+
+  it("filters unresolved edges", () => {
+    const result = transformForVisualization(symbols, edges);
+    // e4 is unresolved, should be excluded
+    expect(result.edges.length).toBe(3);
+    expect(result.edges.every((e) => e.source && e.target)).toBe(true);
+  });
+
+  it("excludes orphan nodes by default", () => {
+    const result = transformForVisualization(symbols, edges);
+    // sym5 has no edges, should be excluded
+    expect(result.nodes.find((n) => n.id === "sym5")).toBeUndefined();
+    expect(result.nodes.length).toBe(4);
+  });
+
+  it("includes orphan nodes when requested", () => {
+    const result = transformForVisualization(symbols, edges, { includeOrphans: true });
+    expect(result.nodes.find((n) => n.id === "sym5")).toBeDefined();
+    expect(result.nodes.length).toBe(5);
+  });
+
+  it("filters by directory", () => {
+    const result = transformForVisualization(symbols, edges, { directory: "src/utils" });
+    // Only sym2 and sym3 are in src/utils, and only edge e3 connects sym2→sym4 (sym4 not in src/utils)
+    // Edge e1: sym1→sym2 (sym1 not in src/utils, filtered)
+    // Edge e2: sym1→sym3 (sym1 not in src/utils, filtered)
+    // Edge e3: sym2→sym4 (sym4 not in src/utils, filtered)
+    // No edges remain with both ends in src/utils
+    expect(result.nodes.length).toBe(0);
+  });
+
+  it("filters by directory with connected nodes", () => {
+    // Add an edge between two nodes in the same directory
+    const extraEdges = [
+      ...edges,
+      makeEdge("e5", "sym2", "logError", "sym3", "Call"),
+    ];
+    const result = transformForVisualization(symbols, extraEdges, { directory: "src/utils" });
+    expect(result.nodes.length).toBe(2);
+    expect(result.edges.length).toBe(1);
+  });
+
+  it("truncates to maxNodes keeping most-connected", () => {
+    const result = transformForVisualization(symbols, edges, { maxNodes: 2 });
+    // sym1 has 2 outgoing edges (most connected), sym2 has 1 in + 1 out
+    expect(result.nodes.length).toBeLessThanOrEqual(2);
+    expect(result.metadata.truncated).toBe(true);
+  });
+
+  it("sets correct metadata", () => {
+    const result = transformForVisualization(symbols, edges);
+    expect(result.metadata.totalSymbols).toBe(5);
+    expect(result.metadata.totalEdges).toBe(4);
+    expect(result.metadata.truncated).toBe(false);
+  });
+
+  it("extracts directory from filePath", () => {
+    const result = transformForVisualization(symbols, edges);
+    const reqNode = result.nodes.find((n) => n.name === "handleRequest");
+    expect(reqNode?.directory).toBe("src/handlers");
+  });
+});
+
+describe("visualize - HTML template", () => {
+  it("generates valid HTML", () => {
+    const data = transformForVisualization(
+      [
+        makeSymbol("s1", "foo", "src/a.ts"),
+        makeSymbol("s2", "bar", "src/b.ts"),
+      ],
+      [makeEdge("e1", "s1", "bar", "s2")],
+      { includeOrphans: true },
+    );
+
+    const html = generateVisualizationHtml(data);
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain("<canvas");
+    expect(html).toContain("Call Graph Visualization");
+    expect(html).toContain('"name":"foo"');
+    expect(html).toContain('"name":"bar"');
+  });
+
+  it("handles empty data", () => {
+    const data = {
+      nodes: [],
+      edges: [],
+      metadata: { totalSymbols: 0, totalEdges: 0, truncated: false },
+    };
+    const html = generateVisualizationHtml(data);
+    expect(html).toContain("<!DOCTYPE html>");
+    // Data is embedded as JSON, stats are computed at runtime from nodes.length
+    expect(html).toContain('"nodes":[]');
+  });
+
+  it("escapes special characters in symbol names", () => {
+    const data = transformForVisualization(
+      [
+        makeSymbol("s1", '<script>alert("xss")</script>', "src/a.ts"),
+        makeSymbol("s2", "normalFn", "src/b.ts"),
+      ],
+      [makeEdge("e1", "s1", "normalFn", "s2")],
+    );
+
+    const html = generateVisualizationHtml(data);
+    // JSON.stringify should escape the angle brackets
+    expect(html).not.toContain("<script>alert");
+    expect(html).toContain("\\u003c"); // JSON-escaped <
+  });
+
+  it("includes truncation warning data when truncated", () => {
+    const data = {
+      nodes: [{ id: "s1", name: "fn1", filePath: "a.ts", kind: "function", line: 1, directory: "." }],
+      edges: [],
+      metadata: { totalSymbols: 10000, totalEdges: 5000, truncated: true },
+    };
+    const html = generateVisualizationHtml(data);
+    expect(html).toContain('"truncated":true');
+  });
+
+  it("generates visualization with multiple edge types", () => {
+    const symbols: SymbolData[] = [
+      makeSymbol("s1", "ClassA", "src/a.ts", "class"),
+      makeSymbol("s2", "ClassB", "src/b.ts", "class"),
+      makeSymbol("s3", "helper", "src/c.ts", "function"),
+    ];
+    const edges: CallEdgeData[] = [
+      makeEdge("e1", "s1", "ClassB", "s2", "Constructor"),
+      makeEdge("e2", "s1", "helper", "s3", "Call"),
+      makeEdge("e3", "s2", "helper", "s3", "MethodCall"),
+    ];
+    const data = transformForVisualization(symbols, edges);
+    const html = generateVisualizationHtml(data);
+
+    expect(html).toContain('"callType":"Constructor"');
+    expect(html).toContain('"callType":"Call"');
+    expect(html).toContain('"callType":"MethodCall"');
+  });
+});
