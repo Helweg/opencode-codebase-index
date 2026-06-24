@@ -1,12 +1,13 @@
 import type { VisualizationData } from "./types.js";
 
 /**
- * Generate a self-contained HTML file with a module-first architecture map.
+ * Generate a self-contained HTML file with a module-first codebase map.
  *
  * Interaction model:
  * - Overview mode: modules/directories as the primary graph
+ * - Explore mode: community-clustered symbol graph for relationship browsing
  * - Focus mode: selected module centered, callers on the left, callees on the right
- * - Symbol detail appears only inside the focused module
+ * - Symbol detail appears inside the explore/focus views
  */
 export function generateVisualizationHtml(data: VisualizationData): string {
   const jsonData = JSON.stringify(data)
@@ -57,6 +58,41 @@ canvas { display: block; }
   flex-wrap: wrap;
   max-width: 620px;
 }
+#options-menu {
+  position: relative;
+}
+#options-summary {
+  list-style: none;
+}
+#options-summary::-webkit-details-marker {
+  display: none;
+}
+#options-summary::after {
+  content: " ▾";
+  color: #7f88a8;
+}
+#options-menu[open] #options-summary::after {
+  content: " ▴";
+}
+#options-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 198px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid #2a3050;
+  background: rgba(14,18,31,0.96);
+  box-shadow: 0 12px 36px rgba(0,0,0,0.34);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#options-panel .button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
 #search {
   padding: 9px 12px;
   border-radius: 8px;
@@ -80,6 +116,11 @@ canvas { display: block; }
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s ease;
+}
+.button-secondary {
+  background: rgba(23,27,45,0.74);
+  color: #aab3cf;
+  border-color: #252c46;
 }
 .button:hover {
   background: #202744;
@@ -227,10 +268,16 @@ canvas { display: block; }
   <div id="controls">
     <input id="search" type="text" placeholder="Search symbols or modules..." autocomplete="off">
     <button class="button" id="btn-overview">Overview</button>
-    <button class="button active" id="btn-labels">Labels</button>
-    <button class="button active" id="btn-weights">Weights</button>
-    <button class="button" id="btn-blast">Blast Radius</button>
-    <button class="button" id="btn-fit" title="Recompute the overview layout for the current window size">Reset Overview Layout</button>
+    <button class="button" id="btn-explore">Explore Symbols</button>
+    <details id="options-menu">
+      <summary class="button button-secondary" id="options-summary">View Options</summary>
+      <div id="options-panel">
+        <button class="button button-secondary active" id="btn-labels">Labels</button>
+        <button class="button button-secondary active" id="btn-weights">Weights</button>
+        <button class="button button-secondary" id="btn-blast">Blast Radius</button>
+        <button class="button button-secondary" id="btn-fit" title="Recompute the overview layout for the current window size">Reset Layout</button>
+      </div>
+    </details>
   </div>
   <div id="mode-badge"></div>
   <div id="truncation-warning"></div>
@@ -249,7 +296,7 @@ canvas { display: block; }
       <div class="row"><div class="k">Blast radius</div><div class="v" id="detail-blast"></div></div>
     </div>
   </div>
-  <div id="legend"><h4>Modules</h4><div id="legend-items"></div></div>
+  <div id="legend"><h4 id="legend-title">Modules</h4><div id="legend-items"></div></div>
 </div>
 <script>
 (function () {
@@ -329,6 +376,17 @@ function shortNodeLabel(name) {
   return name.length > 18 ? name.slice(0, 15) + "…" : name;
 }
 
+function moduleCategorySummary(category) {
+  if (category === "fixture") return "Fixture-derived module";
+  if (category === "test") return "Test-only module";
+  if (category === "native") return "Native/runtime module";
+  if (category === "command") return "Command module";
+  if (category === "script") return "Script module";
+  if (category === "doc") return "Documentation module";
+  if (category === "benchmark") return "Benchmark module";
+  return "Source module";
+}
+
 // ────────────────────────────────────────────────────────────
 // Build graph models
 // ────────────────────────────────────────────────────────────
@@ -360,6 +418,9 @@ for (const node of allNodes) {
 const moduleList = [...modules.values()].sort((a, b) => b.symbolCount - a.symbolCount || a.label.localeCompare(b.label));
 moduleList.forEach((m, i) => { m.color = hashColor(i); });
 
+const communityList = [...moduleList].sort((a, b) => a.label.localeCompare(b.label));
+const communityById = new Map(communityList.map((community) => [community.id, community]));
+
 for (const edge of resolvedEdges) {
   const src = edge.sourceNode.moduleId;
   const tgt = edge.targetNode.moduleId;
@@ -382,6 +443,70 @@ for (const edge of moduleEdges) {
 
 for (const mod of moduleList) {
   mod.totalWeight = [...mod.incoming.values(), ...mod.outgoing.values()].reduce((a, b) => a + b, 0) + mod.internalEdgeCount;
+}
+
+const exploreNodePositions = new Map();
+const exploreCommunities = new Map();
+const exploreCommunityBounds = new Map();
+
+function edgeWeightForNode(nodeId) {
+  let weight = 0;
+  for (const edge of resolvedEdges) {
+    if (edge.source === nodeId || edge.target === nodeId) weight += 1;
+  }
+  return weight;
+}
+
+function layoutExploreGraph() {
+  exploreNodePositions.clear();
+  exploreCommunities.clear();
+  exploreCommunityBounds.clear();
+
+  const cols = Math.max(1, Math.min(3, Math.ceil(Math.sqrt(Math.max(1, communityList.length)))));
+  const cellWidth = Math.max(280, Math.floor((width - 120) / cols));
+  const cellHeight = 250;
+  const startX = 56;
+  const startY = 108;
+
+  communityList.forEach((community, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const centerX = startX + col * cellWidth + cellWidth / 2;
+    const centerY = startY + row * cellHeight + cellHeight / 2;
+    const members = [...community.nodes].sort((a, b) => edgeWeightForNode(b.id) - edgeWeightForNode(a.id) || a.name.localeCompare(b.name));
+    const communityRadius = Math.max(58, Math.min(104, 44 + members.length * 4));
+    const bounds = {
+      x: centerX - cellWidth / 2 + 16,
+      y: centerY - cellHeight / 2 + 12,
+      w: cellWidth - 32,
+      h: cellHeight - 24,
+      centerX,
+      centerY,
+      radius: communityRadius,
+      community,
+    };
+
+    exploreCommunities.set(community.id, { centerX, centerY, radius: communityRadius, community });
+    exploreCommunityBounds.set(community.id, bounds);
+
+    const orbitRadius = Math.max(34, Math.min(communityRadius - 16, 26 + members.length * 3));
+    const count = Math.max(members.length, 1);
+
+    members.forEach((node, memberIndex) => {
+      if (members.length === 1) {
+        exploreNodePositions.set(node.id, { x: centerX, y: centerY });
+        return;
+      }
+
+      const angle = (Math.PI * 2 * memberIndex) / count;
+      const band = 0.55 + 0.35 * ((memberIndex % 3) / 2);
+      const radius = orbitRadius * band;
+      exploreNodePositions.set(node.id, {
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius,
+      });
+    });
+  });
 }
 
 // ────────────────────────────────────────────────────────────
@@ -653,9 +778,12 @@ const legendItemsEl = document.getElementById("legend-items");
 const statsEl = document.getElementById("stats");
 const detailEl = document.getElementById("detail");
 const modeBadgeEl = document.getElementById("mode-badge");
+const legendTitleEl = document.getElementById("legend-title");
 const overviewButton = document.getElementById("btn-overview");
+const exploreButton = document.getElementById("btn-explore");
 const fitButton = document.getElementById("btn-fit");
 const interactionHintEl = document.getElementById("interaction-hint");
+const optionsMenuEl = document.getElementById("options-menu");
 
 if (meta.truncated) {
   const warning = document.getElementById("truncation-warning");
@@ -663,14 +791,34 @@ if (meta.truncated) {
   warning.textContent = "⚠ Graph truncated to " + allNodes.length + " nodes (source total: " + meta.totalSymbols + ")";
 }
 
-for (const mod of moduleList) {
-  const item = document.createElement("div");
-  item.className = "legend-item";
-  item.innerHTML = '<div class="legend-swatch" style="background:' + mod.color + '"></div>' +
-    '<div class="legend-text" title="' + mod.pathPrefix + '">' + mod.label + ' (' + mod.nodes.length + ')</div>';
-  item.addEventListener("click", () => enterFocus(mod.id));
-  legendItemsEl.appendChild(item);
+function renderLegend() {
+  legendItemsEl.innerHTML = "";
+
+  if (mode === "explore") {
+    legendTitleEl.textContent = "Communities";
+    for (const community of communityList) {
+      const item = document.createElement("div");
+      item.className = "legend-item";
+      item.innerHTML = '<div class="legend-swatch" style="background:' + community.color + '"></div>' +
+        '<div class="legend-text" title="' + community.pathPrefix + '">' + community.label + ' (' + community.nodes.length + ')</div>';
+      item.addEventListener("click", () => enterFocus(community.id, "Community selected from clustered exploration view"));
+      legendItemsEl.appendChild(item);
+    }
+    return;
+  }
+
+  legendTitleEl.textContent = "Modules";
+  for (const mod of moduleList) {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = '<div class="legend-swatch" style="background:' + mod.color + '"></div>' +
+      '<div class="legend-text" title="' + mod.pathPrefix + '">' + mod.label + ' (' + mod.nodes.length + ')</div>';
+    item.addEventListener("click", () => enterFocus(mod.id, "Selected from module list"));
+    legendItemsEl.appendChild(item);
+  }
 }
+
+renderLegend();
 
 function updateStats() {
   if (mode === "overview") {
@@ -680,7 +828,21 @@ function updateStats() {
       '<br><span class="label">Module edges</span> ' + moduleEdges.length +
       '<br><span class="label">Symbols</span> ' + allNodes.length +
       '<br><span class="label">Files</span> ' + new Set(allNodes.map((n) => n.filePath)).size;
+    if (moduleEdges.length === 0) {
+      modeBadgeEl.style.display = "block";
+      modeBadgeEl.textContent = "This slice only has intra-module calls.";
+    } else {
       modeBadgeEl.style.display = "none";
+    }
+  } else if (mode === "explore") {
+    statsEl.innerHTML =
+      '<span class="label">Mode</span> explore' +
+      '<br><span class="label">Communities</span> ' + communityList.length +
+      '<br><span class="label">Symbols</span> ' + allNodes.length +
+      '<br><span class="label">Edges</span> ' + resolvedEdges.length +
+      '<br><span class="label">Fixtures/tests</span> ' + communityList.filter((community) => community.category === "fixture" || community.category === "test").length;
+    modeBadgeEl.style.display = "block";
+    modeBadgeEl.textContent = "Explore mode: clustered symbol relationships";
   } else {
     const focus = modules.get(focusedModuleId);
     statsEl.innerHTML =
@@ -695,23 +857,41 @@ function updateStats() {
 }
 
 function updateControls() {
-  overviewButton.textContent = mode === "overview" ? "Overview Map" : "Back to Overview";
+  overviewButton.textContent = mode === "overview" ? "Module Overview" : "Back to Overview";
   overviewButton.title = mode === "overview"
-    ? "You are viewing the top-level architecture map"
-    : "Return to the top-level architecture map";
+    ? "You are viewing the top-level module overview"
+    : "Return to the top-level module overview";
   overviewButton.classList.toggle("active", mode === "overview");
   overviewButton.disabled = mode === "overview";
 
-  fitButton.textContent = mode === "overview" ? "Reset Overview Layout" : "Overview Layout Only";
-  fitButton.title = mode === "overview"
-    ? "Recompute the overview layout for the current window size"
-    : "This control only affects the overview map. Click Overview to return there first.";
-  fitButton.disabled = mode !== "overview";
+  exploreButton.classList.toggle("active", mode === "explore");
+  exploreButton.disabled = mode === "explore";
+  exploreButton.textContent = mode === "explore" ? "Exploring Symbols" : "Explore Symbols";
+  exploreButton.title = mode === "explore"
+    ? "You are browsing clustered symbol relationships"
+    : "Switch to a clustered symbol exploration view";
 
-  interactionHintEl.style.display = mode === "focus" ? "block" : "none";
+  fitButton.textContent = mode === "overview"
+    ? "Reset Overview"
+    : mode === "explore"
+      ? "Reset Explore"
+      : "Overview Only";
+  fitButton.title = mode === "overview"
+    ? "Recompute the module overview layout for the current window size"
+    : mode === "explore"
+      ? "Recompute the clustered exploration layout for the current window size"
+      : "This control only affects the module overview. Click Overview to return there first.";
+  fitButton.disabled = mode === "focus";
+  optionsMenuEl.open = false;
+
+  interactionHintEl.style.display = mode === "focus" || mode === "explore" ? "block" : "none";
   interactionHintEl.textContent = mode === "focus"
     ? "Scroll to pan vertically inside focus mode"
-    : "";
+    : mode === "explore"
+      ? "Explore connected symbols by cluster, then click a community to drill into focus mode"
+      : "";
+
+  renderLegend();
 }
 
 function getFocusPanBounds() {
@@ -741,7 +921,7 @@ function setDetailForModule(mod, note) {
     "incoming " + [...mod.incoming.values()].reduce((a, b) => a + b, 0) +
     ", outgoing " + [...mod.outgoing.values()].reduce((a, b) => a + b, 0) +
     ", internal " + mod.internalEdgeCount;
-  document.getElementById("detail-notes").textContent = note;
+  document.getElementById("detail-notes").textContent = moduleCategorySummary(mod.category) + (note ? " • " + note : "");
   document.getElementById("detail-callers").textContent = [...mod.incoming.keys()].map((id) => modules.get(id)?.label).filter(Boolean).join(", ") || "none";
   document.getElementById("detail-callees").textContent = [...mod.outgoing.keys()].map((id) => modules.get(id)?.label).filter(Boolean).join(", ") || "none";
   document.getElementById("detail-edge-types").textContent = mod.internalEdgeCount > 0 ? ("internal " + mod.internalEdgeCount) : "n/a";
@@ -792,11 +972,23 @@ function clearDetail() {
   detailEl.style.display = "none";
 }
 
-function enterFocus(moduleId) {
+function enterFocus(moduleId, note) {
   mode = "focus";
   focusedModuleId = moduleId;
   focusedSymbolId = null;
   focusPanY = 0;
+  updateStats();
+  updateControls();
+  setDetailForModule(modules.get(moduleId), note || "Focused module view");
+  draw();
+}
+
+function enterExplore() {
+  mode = "explore";
+  focusedModuleId = null;
+  focusedSymbolId = null;
+  focusPanY = 0;
+  clearDetail();
   updateStats();
   updateControls();
   draw();
@@ -1014,6 +1206,104 @@ function drawOverview() {
   if (overviewLayout.sparse) drawOverviewEdges();
 }
 
+function drawExplore() {
+  const matches = getSearchMatches();
+  const blast = computeBlastRadius();
+
+  ctx.fillStyle = "#647095";
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("community view", 48, 82);
+
+  for (const community of communityList) {
+    const bounds = exploreCommunityBounds.get(community.id);
+    const searched = !matches.modules.size || matches.modules.has(community.id);
+    const inBlast = !blast.modules.size || blast.modules.has(community.id);
+    const emphasized = searched && inBlast;
+
+    ctx.fillStyle = emphasized ? community.color + "16" : "rgba(24,28,44,0.46)";
+    ctx.strokeStyle = emphasized ? community.color + "55" : "rgba(64,72,104,0.6)";
+    ctx.lineWidth = 1.2;
+    roundRect(ctx, bounds.x, bounds.y, bounds.w, bounds.h, 16);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = emphasized ? "#ffffff" : "#c5cbe0";
+    ctx.font = "600 12px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(community.label, bounds.x + 14, bounds.y + 20);
+    ctx.fillStyle = "#90a0c8";
+    ctx.font = "10px sans-serif";
+    const subtitle = community.category === "fixture"
+      ? "fixture community"
+      : community.category === "test"
+        ? "test community"
+        : community.category === "native"
+          ? "native community"
+          : "module community";
+    ctx.fillText(subtitle + " • " + community.nodes.length + " symbols", bounds.x + 14, bounds.y + 36);
+  }
+
+  for (const edge of resolvedEdges) {
+    const sourcePos = exploreNodePositions.get(edge.source);
+    const targetPos = exploreNodePositions.get(edge.target);
+    const sourceNode = nodeById.get(edge.source);
+    const targetNode = nodeById.get(edge.target);
+    if (!sourcePos || !targetPos || !sourceNode || !targetNode) continue;
+
+    const searched = !matches.nodes.size || matches.nodes.has(edge.source) || matches.nodes.has(edge.target);
+    const inBlast = !blast.nodes.size || blast.nodes.has(edge.source) || blast.nodes.has(edge.target);
+    const crossCommunity = sourceNode.moduleId !== targetNode.moduleId;
+
+    ctx.strokeStyle = searched && inBlast
+      ? crossCommunity ? "rgba(123,145,255,0.34)" : "rgba(74,215,166,0.26)"
+      : "rgba(80,88,118,0.12)";
+    ctx.lineWidth = crossCommunity ? 1.4 : 0.9;
+    ctx.beginPath();
+    ctx.moveTo(sourcePos.x, sourcePos.y);
+    ctx.lineTo(targetPos.x, targetPos.y);
+    ctx.stroke();
+  }
+
+  for (const node of allNodes) {
+    const pos = exploreNodePositions.get(node.id);
+    if (!pos) continue;
+    const nodeModule = communityById.get(node.moduleId);
+    const match = (!matches.nodes.size || matches.nodes.has(node.id)) && (!blast.nodes.size || blast.nodes.has(node.id));
+    const selected = focusedSymbolId === node.id;
+    const hovered = hoverTarget && hoverTarget.type === "symbol" && hoverTarget.node.id === node.id;
+    const degree = edgeWeightForNode(node.id);
+    const radius = selected ? 8 : Math.min(7, 3.5 + degree * 0.4);
+    const color = match ? kindColor(node.kind, nodeModule?.color || "#7b91ff") : "#4f5677";
+
+    drawSymbolGlyph(ctx, node, pos.x, pos.y, radius, color);
+    if (selected || hovered) {
+      ctx.strokeStyle = selected ? "#ffffff" : "rgba(255,255,255,0.72)";
+      ctx.lineWidth = selected ? 2 : 1.3;
+      ctx.stroke();
+    }
+
+    if (showLabels && (selected || hovered || match && degree >= 3)) {
+      const label = shortNodeLabel(node.name);
+      ctx.font = selected ? "600 10px sans-serif" : "9px sans-serif";
+      ctx.textAlign = "center";
+      const textWidth = ctx.measureText(label).width;
+      const chipW = textWidth + 10;
+      const chipH = 16;
+      const chipX = pos.x - chipW / 2;
+      const chipY = pos.y - (radius + 20);
+      ctx.fillStyle = selected ? "rgba(255,255,255,0.16)" : "rgba(18,22,36,0.9)";
+      roundRect(ctx, chipX, chipY, chipW, chipH, 6);
+      ctx.fill();
+      ctx.strokeStyle = selected ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = selected ? "#fff" : "#dce2f4";
+      ctx.fillText(label, pos.x, chipY + 11);
+    }
+  }
+}
+
 function drawFocus() {
   const state = layoutFocus(focusedModuleId);
   if (!state) return;
@@ -1196,6 +1486,7 @@ function drawAggregateConnector(x1, y1, x2, y2, weight, color, leftToCenter) {
 function draw() {
   ctx.clearRect(0, 0, width, height);
   if (mode === "overview") drawOverview();
+  else if (mode === "explore") drawExplore();
   else drawFocus();
 }
 
@@ -1207,6 +1498,26 @@ function hitTestOverview(x, y) {
     const b = moduleBounds.get(mod.id);
     if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return { type: "module", moduleId: mod.id };
   }
+  return null;
+}
+
+function hitTestExplore(x, y) {
+  for (const node of allNodes) {
+    const pos = exploreNodePositions.get(node.id);
+    if (!pos) continue;
+    const dx = x - pos.x;
+    const dy = y - pos.y;
+    if (dx * dx + dy * dy <= 64) return { type: "symbol", node };
+  }
+
+  for (const community of communityList) {
+    const bounds = exploreCommunityBounds.get(community.id);
+    if (!bounds) continue;
+    if (x >= bounds.x && x <= bounds.x + bounds.w && y >= bounds.y && y <= bounds.y + bounds.h) {
+      return { type: "module", moduleId: community.id };
+    }
+  }
+
   return null;
 }
 
@@ -1248,7 +1559,11 @@ canvas.addEventListener("mousemove", (event) => {
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
   const previousHover = hoverTarget;
-  hoverTarget = mode === "overview" ? hitTestOverview(x, y) : hitTestFocus(x, y);
+  hoverTarget = mode === "overview"
+    ? hitTestOverview(x, y)
+    : mode === "explore"
+      ? hitTestExplore(x, y)
+      : hitTestFocus(x, y);
   canvas.style.cursor = hoverTarget ? "pointer" : "default";
   if ((previousHover?.type || null) !== (hoverTarget?.type || null)
     || (previousHover?.node?.id || null) !== (hoverTarget?.node?.id || null)
@@ -1261,22 +1576,29 @@ canvas.addEventListener("click", (event) => {
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
-  const hit = mode === "overview" ? hitTestOverview(x, y) : hitTestFocus(x, y);
+  const hit = mode === "overview"
+    ? hitTestOverview(x, y)
+    : mode === "explore"
+      ? hitTestExplore(x, y)
+      : hitTestFocus(x, y);
   if (!hit) return;
 
   if (hit.type === "module") {
+    if (mode === "explore") {
+      enterFocus(hit.moduleId, "Community selected from clustered exploration view");
+      return;
+    }
+
     if (mode === "focus" && hit.moduleId === focusedModuleId) {
       setDetailForModule(modules.get(hit.moduleId), "Selected module overview");
       draw();
       return;
     }
     if (mode === "focus" && hit.moduleId !== focusedModuleId) {
-      enterFocus(hit.moduleId);
-      setDetailForModule(modules.get(hit.moduleId), "Drilled into connected module");
+      enterFocus(hit.moduleId, "Drilled into connected module");
       return;
     }
-    enterFocus(hit.moduleId);
-    setDetailForModule(modules.get(hit.moduleId), "Click Overview to return to the architecture map");
+    enterFocus(hit.moduleId, "Click Overview to return to the module overview");
     return;
   }
 
@@ -1298,6 +1620,10 @@ document.getElementById("btn-overview").addEventListener("click", () => {
   backToOverview();
 });
 
+document.getElementById("btn-explore").addEventListener("click", () => {
+  enterExplore();
+});
+
 document.getElementById("btn-labels").addEventListener("click", function () {
   showLabels = !showLabels;
   this.classList.toggle("active", showLabels);
@@ -1317,8 +1643,9 @@ document.getElementById("btn-blast").addEventListener("click", function () {
 });
 
 document.getElementById("btn-fit").addEventListener("click", () => {
-  if (mode !== "overview") return;
-  overviewLayout = layoutOverview();
+  if (mode === "focus") return;
+  if (mode === "overview") overviewLayout = layoutOverview();
+  if (mode === "explore") layoutExploreGraph();
   clearDetail();
   draw();
 });
@@ -1326,9 +1653,11 @@ document.getElementById("btn-fit").addEventListener("click", () => {
 window.addEventListener("resize", () => {
   resizeCanvas();
   overviewLayout = layoutOverview();
+  layoutExploreGraph();
   draw();
 });
 
+layoutExploreGraph();
 updateStats();
 updateControls();
 draw();

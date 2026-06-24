@@ -275,4 +275,43 @@ describe("visualize - HTML template", () => {
     expect(html).toContain("Scroll to pan vertically inside focus mode");
     expect(html).toContain('canvas.addEventListener("wheel"');
   });
+
+  it("includes clustered exploration controls", () => {
+    const data = transformForVisualization(
+      [
+        makeSymbol("s1", "foo", "src/a.ts"),
+        makeSymbol("s2", "bar", "src/b.ts"),
+      ],
+      [makeEdge("e1", "s1", "bar", "s2")],
+      { includeOrphans: true },
+    );
+
+    const html = generateVisualizationHtml(data);
+
+    expect(html).toContain("Explore Symbols");
+    expect(html).toContain("Explore mode: clustered symbol relationships");
+    expect(html).toContain("clustered symbol exploration view");
+    expect(html).toContain("Module Overview");
+    expect(html).toContain("View Options");
+  });
+
+  it("includes zero-edge overview guidance and focus detail behavior", () => {
+    const data = transformForVisualization(
+      [
+        makeSymbol("s1", "soloA", "src/a.ts"),
+        makeSymbol("s2", "soloB", "src/b.ts"),
+      ],
+      [makeEdge("e1", "s1", "soloB", "s2")],
+      { includeOrphans: true },
+    );
+
+    const html = generateVisualizationHtml({
+      ...data,
+      moduleEdges: [],
+    });
+
+    expect(html).toContain("This slice only has intra-module calls.");
+    expect(html).toContain("Focused module view");
+    expect(html).toContain("Selected from module list");
+  });
 });
