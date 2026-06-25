@@ -95,8 +95,8 @@ async function handleVisualizeCommand(argv: string[], cwd: string): Promise<numb
       console.log(`Graph truncated to ${args.maxNodes} most-connected nodes.`);
     }
     return 0;
-  } catch (error: unknown) {
-    console.error(error instanceof Error ? error.message : String(error));
+  } catch {
+    console.error("Failed to generate visualization. Check the project, config, and arguments, then retry.");
     return 1;
   }
 }
