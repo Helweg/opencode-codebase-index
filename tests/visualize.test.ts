@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { attachRecentActivity } from "../src/tools/visualize/activity.js";
 import { transformForVisualization } from "../src/tools/visualize/transform.js";
 import { generateVisualizationHtml } from "../src/tools/visualize/template.js";
 import type { SymbolData, CallEdgeData } from "../src/native/index.js";
@@ -131,6 +132,17 @@ describe("visualize - transform", () => {
     expect(result.metadata.moduleCount).toBeGreaterThan(0);
   });
 
+  it("adds graph-derived change lenses when git activity is unavailable", () => {
+    const result = attachRecentActivity(
+      transformForVisualization(symbols, edges),
+      "/path/that/does/not/exist",
+    );
+
+    expect(result.changes?.length).toBeGreaterThan(0);
+    expect(result.changes?.[0]?.source).toBe("call graph");
+    expect(result.changes?.[0]?.focusNodeId).toBeTruthy();
+  });
+
   it("extracts directory from filePath", () => {
     const result = transformForVisualization(symbols, edges);
     const reqNode = result.nodes.find((n) => n.name === "handleRequest");
@@ -195,6 +207,8 @@ describe("visualize - HTML template", () => {
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain("<canvas");
     expect(html).toContain("Call Graph Visualization");
+    expect(html).toContain("Moving lately");
+    expect(html).toContain("change lenses");
     expect(html).toContain('"name":"foo"');
     expect(html).toContain('"name":"bar"');
     expect(html).toContain('"modules"');

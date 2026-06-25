@@ -29,6 +29,7 @@ import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config
 import { resolveWorktreeMainRepoRoot } from "../git/index.js";
 import { getConfigPath, loadEditableConfig, loadRuntimeConfig, saveConfig } from "./config-state.js";
 import * as os from "os";
+import { attachRecentActivity } from "./visualize/activity.js";
 import { generateVisualizationHtml, transformForVisualization } from "./visualize/index.js";
 
 function ensureStringArray(value: unknown): string[] {
@@ -538,9 +539,8 @@ export { pr_impact };
 
 export const index_visualize: ToolDefinition = tool({
   description:
-    "Generate an interactive HTML visualization of the call graph. " +
-    "Starts with a module overview and includes a clustered symbol exploration view. " +
-    "Clickable modules and symbols show relationship details. Supports search and drill-down.",
+    "Generate an interactive HTML visualization of recent code movement and the call graph. " +
+    "Starts with temporal onboarding context from Git history, then supports module, symbol, hotspot, and cycle drill-down.",
   args: {
     directory: z.string().optional().describe("Filter to symbols in this directory (e.g., 'src/services')"),
     maxNodes: z.number().optional().default(5000).describe("Maximum nodes to include (default 5000)"),
@@ -557,11 +557,11 @@ export const index_visualize: ToolDefinition = tool({
       return "No call graph data found. Run index_codebase first to build the call graph.";
     }
 
-    const vizData = transformForVisualization(rawData.symbols, rawData.edges, {
+    const vizData = attachRecentActivity(transformForVisualization(rawData.symbols, rawData.edges, {
       includeOrphans: args.includeOrphans,
       directory: args.directory,
       maxNodes: args.maxNodes,
-    });
+    }), context?.worktree ?? defaultProjectRoot);
 
     if (vizData.nodes.length === 0) {
       return "No connected symbols found for visualization. Try including orphans with includeOrphans=true, or check that the call graph has resolved edges.";
@@ -571,8 +571,9 @@ export const index_visualize: ToolDefinition = tool({
     const outputPath = path.join(os.tmpdir(), `call-graph-${Date.now()}.html`);
     writeFileSync(outputPath, html, "utf-8");
 
-    let result = `Visualization generated: ${outputPath}\n\n`;
+    let result = `Temporal call graph visualization generated: ${outputPath}\n\n`;
     result += `Nodes: ${vizData.nodes.length} | Edges: ${vizData.edges.length}\n`;
+    result += `Recent change lenses: ${vizData.changes?.length ?? 0}\n`;
     result += `Files: ${new Set(vizData.nodes.map(n => n.filePath)).size}\n`;
     result += `Directories: ${new Set(vizData.nodes.map(n => n.directory)).size}`;
     if (rawData.truncated) {

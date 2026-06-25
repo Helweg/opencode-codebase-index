@@ -34,11 +34,29 @@ export interface VisualizationModuleEdge {
   callTypes: Record<string, number>;
 }
 
+export interface VisualizationChange {
+  id: string;
+  title: string;
+  kind: "hot" | "risk" | "legacy";
+  when: string;
+  source: string;
+  intent: string;
+  summary: string;
+  why: string;
+  calls: number;
+  churn: number;
+  risk: "low" | "medium" | "high";
+  moduleId: string;
+  focusNodeId?: string;
+  filePaths: string[];
+}
+
 export interface VisualizationData {
   nodes: VisualizationNode[];
   edges: VisualizationEdge[];
   modules: VisualizationModule[];
   moduleEdges: VisualizationModuleEdge[];
+  changes?: VisualizationChange[];
   metadata: {
     totalSymbols: number;
     totalEdges: number;

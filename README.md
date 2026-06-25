@@ -404,13 +404,24 @@ Analyzes a PR's changed files to determine impact scope within the codebase.
 - **Parameters**: `checkConflicts` (optional, default `false`) — when `true`, detects overlapping concurrent PRs sharing affected symbols and returns `conflictingPRs`.
 
 ### `index_visualize`
-Generate a self-contained HTML call graph view for browser-based exploration.
+Generate a self-contained temporal call graph view for browser-based exploration.
 
-- **Use for**: Onboarding, architecture walkthroughs, and drilling from module-level structure into symbol relationships.
-- **What it shows**: A module overview by default, a clustered symbol exploration view, and a focus view with callers/callees for a selected module or symbol.
+- **Use for**: Onboarding, architecture walkthroughs, and understanding what moved recently before drilling into call relationships.
+- **What it shows**: Recent change lenses, module overview, symbol exploration, hotspots, and cycles.
+- **Concepts**: Modules are path-based code areas such as `src/tools` or `native`; symbols are indexed functions, classes, methods, or similar named code units; edges are caller/callee relationships.
 - **Parameters**: `directory` (optional folder filter), `maxNodes` (default `5000`), `includeOrphans` (include disconnected symbols).
 - **Output**: Writes a temporary HTML file you can open in any browser.
 - **Example**: `index_visualize(directory="src/tools", maxNodes=1500)`
+
+CLI shortcut after building locally:
+
+```bash
+npm run build
+npm run visualize
+npm run visualize -- native
+npm run visualize -- src/tools max=1000
+npm run visualize -- src/indexer orphans
+```
 
 
 ### `add_knowledge_base`
@@ -441,7 +452,7 @@ The plugin automatically registers these slash commands:
 | `/find <query>` | **Hybrid Search**. Combines semantic search + grep. Best for "Find usage of X". |
 | `/call-graph <query>` | **Call Graph Trace**. Find callers/callees to understand execution flow. |
 | `/pr-impact <PR number or branch>` | **PR Impact Analysis**. Analyze changed files, affected symbols, communities, hub nodes, and risk. |
-| `/visualize [directory|max=N|orphans]` | **Call Graph Visualization**. Open a module overview and symbol exploration view in a browser-ready HTML file. |
+| `/visualize [directory|max=N|orphans]` | **Temporal Call Graph Visualization**. Open recent changes, module overview, symbol exploration, hotspots, and cycles in a browser-ready HTML file. |
 | `/index` | **Update Index**. Runs incremental indexing by default; use `/index force` for a full rebuild. |
 | `/status` | **Check Status**. Shows if indexed, chunk count, and provider info. |
 

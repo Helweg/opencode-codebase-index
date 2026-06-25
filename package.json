@@ -38,6 +38,7 @@
     "build:ts": "tsup",
     "build:native": "cd native && cargo build --release && napi build --release --platform",
     "build:native:all": "cd native && napi build --release --platform --target x86_64-apple-darwin --target aarch64-apple-darwin --target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu --target x86_64-pc-windows-msvc",
+    "visualize": "node dist/cli.js visualize",
     "dev": "tsup --watch",
     "eval": "npx tsx src/cli.ts eval run",
     "eval:smoke": "npx tsx src/cli.ts eval run --config .github/eval-config.json --reindex --dataset benchmarks/golden/small.json",

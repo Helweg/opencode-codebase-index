@@ -1,14 +1,5 @@
 import type { VisualizationData } from "./types.js";
 
-/**
- * Generate a self-contained HTML file with a module-first codebase map.
- *
- * Interaction model:
- * - Overview mode: modules/directories as the primary graph
- * - Explore mode: community-clustered symbol graph for relationship browsing
- * - Focus mode: selected module centered, callers on the left, callees on the right
- * - Symbol detail appears inside the explore/focus views
- */
 export function generateVisualizationHtml(data: VisualizationData): string {
   const jsonData = JSON.stringify(data)
     .replace(/</g, "\\u003c")
@@ -22,1647 +13,248 @@ export function generateVisualizationHtml(data: VisualizationData): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'">
 <title>Call Graph Visualization</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #0d0f1a;
-  color: #e6e8ef;
-  overflow: hidden;
-}
-#container { width: 100vw; height: 100vh; position: relative; }
-canvas { display: block; }
-.interaction-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 12px;
-  transform: translateX(-50%);
-  z-index: 20;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(23,27,45,0.92);
-  border: 1px solid #2a3050;
-  color: #aeb7d4;
-  font-size: 11px;
-  display: none;
-  pointer-events: none;
-}
-
-#controls {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  z-index: 20;
-  flex-wrap: wrap;
-  max-width: 620px;
-}
-#options-menu {
-  position: relative;
-}
-#options-summary {
-  list-style: none;
-}
-#options-summary::-webkit-details-marker {
-  display: none;
-}
-#options-summary::after {
-  content: " ▾";
-  color: #7f88a8;
-}
-#options-menu[open] #options-summary::after {
-  content: " ▴";
-}
-#options-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  min-width: 198px;
-  padding: 8px;
-  border-radius: 10px;
-  border: 1px solid #2a3050;
-  background: rgba(14,18,31,0.96);
-  box-shadow: 0 12px 36px rgba(0,0,0,0.34);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-#options-panel .button {
-  width: 100%;
-  justify-content: flex-start;
-  text-align: left;
-}
-#search {
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: 1px solid #2a3050;
-  background: #171b2d;
-  color: #e6e8ef;
-  font-size: 13px;
-  width: 220px;
-  outline: none;
-}
-#search:focus {
-  border-color: #5574ff;
-  box-shadow: 0 0 0 2px rgba(85,116,255,0.22);
-}
-.button {
-  padding: 8px 11px;
-  border-radius: 8px;
-  border: 1px solid #2a3050;
-  background: #171b2d;
-  color: #c4c9da;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-.button-secondary {
-  background: rgba(23,27,45,0.74);
-  color: #aab3cf;
-  border-color: #252c46;
-}
-.button:hover {
-  background: #202744;
-  color: #fff;
-}
-.button.active {
-  background: #26305c;
-  border-color: #5a74ff;
-  color: #fff;
-}
-.button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-#stats {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 20;
-  background: rgba(23,27,45,0.92);
-  border: 1px solid #2a3050;
-  border-radius: 10px;
-  padding: 12px 14px;
-  font-size: 11px;
-  line-height: 1.65;
-  min-width: 120px;
-}
-#stats .label { color: #7f88a8; }
-
-#legend {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 20;
-  background: rgba(23,27,45,0.94);
-  border: 1px solid #2a3050;
-  border-radius: 10px;
-  padding: 12px 14px;
-  width: 260px;
-  max-height: 260px;
-  overflow-y: auto;
-}
-#legend h4 {
-  font-size: 11px;
-  color: #8f97b3;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.legend-item:hover { background: #202744; }
-.legend-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  flex: 0 0 auto;
-}
-.legend-text {
-  color: #c6cce0;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-#detail {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  z-index: 20;
-  max-width: 520px;
-  background: rgba(23,27,45,0.94);
-  border: 1px solid #2a3050;
-  border-radius: 10px;
-  padding: 14px 16px;
-  display: none;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.35);
-}
-#detail h3 {
-  font-size: 14px;
-  margin-bottom: 10px;
-  color: #ffffff;
-}
-#detail .row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-size: 12px;
-}
-#detail .k {
-  min-width: 92px;
-  color: #7f88a8;
-}
-#detail .v {
-  color: #dbe1f1;
-  word-break: break-word;
-}
-#detail .section {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255,255,255,0.08);
-}
-
-#mode-badge {
-  position: absolute;
-  top: 58px;
-  left: 12px;
-  z-index: 20;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(34,41,70,0.92);
-  border: 1px solid #36406a;
-  color: #dbe1f1;
-  font-size: 11px;
-  display: none;
-}
-
-#truncation-warning {
-  position: absolute;
-  top: 58px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(70,50,10,0.94);
-  border: 1px solid #8a6d15;
-  color: #ffd86a;
-  font-size: 11px;
-  display: none;
-}
+*{box-sizing:border-box}body{margin:0;background:#0d1118;color:#c4cfe6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;overflow:hidden}
+#app{height:100vh;display:grid;grid-template-columns:300px minmax(0,1fr) 320px;grid-template-rows:auto 1fr;gap:12px;padding:14px}
+.top{grid-column:1/-1;display:flex;align-items:center;gap:10px;min-width:0}.search{width:300px;max-width:40vw;padding:8px 11px;border:1px solid #203149;border-radius:6px;background:#141e2e;color:#c4cfe6;outline:none}.search:focus{border-color:#5577d8}
+.tabs{display:flex;gap:6px;min-width:0;overflow:auto}.tab{border:1px solid #203149;background:#141e2e;color:#6f83a4;border-radius:6px;padding:7px 10px;cursor:pointer;white-space:nowrap}.tab.active{border-color:#5577d8;color:#fff;background:#111c30}
+.stats{margin-left:auto;color:#334966;font-size:12px;white-space:nowrap;border:1px solid #203149;background:#141e2e;border-radius:6px;padding:7px 11px}.stats b{color:#7f94b8}
+.panel{background:rgba(13,17,24,.86);border:1px solid #203149;border-radius:8px;min-height:0}.left,.right{padding:14px;overflow:auto;overflow-x:hidden}.title{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#334966;margin:0 0 10px}
+.results,.list{display:grid;gap:7px;min-width:0}.result,.row,.node,.change{min-width:0;border:1px solid #203149;background:#101722;border-radius:7px;padding:9px 10px;cursor:pointer;overflow:hidden}.result:hover,.row:hover,.node:hover,.change:hover{border-color:#375171;background:#121c2a}.result.active,.node.active,.change.active{border-color:#8b6cf6;background:#15172a}
+.name{font-family:"SF Mono","Cascadia Code",Consolas,monospace;font-size:12px;color:#e0e6f7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta{min-width:0;max-width:100%;font-size:11px;color:#6f83a4;margin-top:4px;display:flex;gap:8px;align-items:center;overflow:hidden}.meta span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{font-family:"SF Mono",Consolas,monospace;font-size:10px;border-radius:4px;padding:2px 5px;background:#1b2940;color:#7890ac;flex:0 0 auto}.badge.function,.badge.fn{background:#18264a;color:#7896ff}.badge.class{background:#271f4b;color:#a48cff}.badge.type,.badge.interface{background:#172d36;color:#5fc4d4}.badge.enum{background:#382812;color:#e3a348}
+.main{position:relative;overflow:hidden;padding:14px}.flow{position:relative;height:100%;display:grid;grid-template-columns:minmax(220px,1fr) minmax(300px,1.15fr) minmax(220px,1fr);gap:24px;align-items:center}.lane{height:min(640px,calc(100vh - 150px));min-height:360px;border:1px solid #203149;border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto;background:rgba(16,23,34,.5)}.lane .node,.lane .row{flex:0 0 auto}.lane h3,.module-symbols h3{margin:0 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#334966;text-align:center}.center{align-self:center;min-width:0}.center .node{cursor:default;border-color:#8b6cf6;background:#15172a;box-shadow:0 0 0 1px rgba(139,108,246,.2)}.module-board{height:100%;display:grid;grid-template-rows:auto 260px minmax(260px,1fr);gap:12px;overflow:hidden}.module-summary .node{cursor:default;border-color:#8b6cf6;background:#15172a}.module-lanes{min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:12px}.module-board .lane{height:auto;min-height:0}.module-symbols{min-height:0;border:1px solid #203149;border-radius:8px;padding:14px;background:rgba(16,23,34,.5);display:flex;flex-direction:column;gap:10px;overflow:hidden}.module-symbols .list{display:block;overflow:auto;min-height:0}.module-symbols .row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;margin:0 0 6px;padding:8px 10px}.module-symbols .row .meta{margin-top:0;justify-content:flex-end}.weight{margin-left:auto;color:#334966;font-variant-numeric:tabular-nums}.edges{position:absolute;inset:0;pointer-events:none;z-index:1}.node{position:relative;z-index:2}
+.details{display:grid;gap:8px}.kv{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #17243a;padding-bottom:7px;color:#6f83a4;font-size:12px}.kv span:first-child{color:#334966;text-transform:uppercase;font-size:10px;letter-spacing:.08em}.mini{display:flex;align-items:center;gap:8px;color:#6f83a4;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}.empty{height:100%;display:grid;place-items:center;color:#334966;font-size:12px;text-align:center;line-height:1.5}.guide{border:1px solid #203149;border-radius:7px;background:#101722;padding:10px;color:#6f83a4;font-size:12px;line-height:1.45}.guide b{display:block;color:#e0e6f7;margin-bottom:4px}.guide span{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;align-content:start}.rank{font-size:20px;color:#8b6cf6;font-variant-numeric:tabular-nums}.change-grid{display:grid;grid-template-columns:minmax(280px,.95fr) minmax(320px,1.2fr);gap:12px;height:100%;min-height:0}.change-list,.why{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;overflow-x:hidden}.change-top{display:flex;align-items:center;gap:8px;margin-bottom:7px;min-width:0}.pill{font-size:10px;text-transform:uppercase;letter-spacing:.08em;border:1px solid #203149;border-radius:999px;padding:3px 7px;color:#6f83a4;flex:0 0 auto}.pill.hot{color:#d5c9ff;border-color:#634bc2}.pill.risk{color:#ffbab7;border-color:#8d3d3a}.pill.legacy{color:#c5d1df;border-color:#41536c}.why-card{min-width:0;border:1px solid #203149;background:rgba(16,23,34,.65);border-radius:8px;padding:14px;overflow:hidden}.why-card h3{margin:0 0 8px;font-size:13px}.why-card p{margin:0;color:#6f83a4;font-size:13px;line-height:1.55}.impact{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}.impact div{border:1px solid #17243a;border-radius:7px;padding:8px}.impact b{display:block;font-size:16px;color:#e0e6f7}.impact span{font-size:10px;color:#334966;text-transform:uppercase;letter-spacing:.08em}
+.hint{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);font-size:11px;color:#334966;border:1px solid #203149;background:rgba(13,17,24,.9);border-radius:6px;padding:6px 12px;white-space:nowrap}
+#legacy-canvas{display:none}
+@media(max-width:1500px){body{overflow:auto}#app{height:auto;min-height:100vh;grid-template-columns:1fr;grid-template-rows:auto auto auto auto}.top{flex-wrap:wrap}.tabs{flex-wrap:wrap;overflow:visible}.search{width:100%;max-width:none}.stats{margin-left:0;width:100%}.main{order:1;min-height:820px}.right{order:2}.left{order:3}.flow{grid-template-columns:minmax(220px,1fr) minmax(300px,1.15fr) minmax(220px,1fr);gap:16px;align-items:center}.change-grid{grid-template-columns:1fr;gap:12px;align-items:stretch}.why{order:1}.change-list{order:2}.lane{height:min(560px,calc(100vh - 180px));min-height:260px}.impact{grid-template-columns:1fr}.edges{display:none}.hint{position:static;transform:none;margin-top:10px;text-align:center}}
+@media(max-width:900px){.flow,.module-lanes{grid-template-columns:1fr;gap:12px;align-items:stretch}.lane{height:auto;max-height:360px;min-height:160px}.module-board{grid-template-rows:auto auto minmax(260px,1fr);overflow:visible}.module-symbols{max-height:420px}.module-symbols .row{grid-template-columns:1fr}.module-symbols .row .meta{justify-content:flex-start;margin-top:4px}}
 </style>
 </head>
 <body>
-<div id="container">
-  <canvas id="graph"></canvas>
-  <div id="controls">
-    <input id="search" type="text" placeholder="Search symbols or modules..." autocomplete="off">
-    <button class="button" id="btn-overview">Overview</button>
-    <button class="button" id="btn-explore">Explore Symbols</button>
-    <details id="options-menu">
-      <summary class="button button-secondary" id="options-summary">View Options</summary>
-      <div id="options-panel">
-        <button class="button button-secondary active" id="btn-labels">Labels</button>
-        <button class="button button-secondary active" id="btn-weights">Weights</button>
-        <button class="button button-secondary" id="btn-blast">Blast Radius</button>
-        <button class="button button-secondary" id="btn-fit" title="Recompute the overview layout for the current window size">Reset Layout</button>
-      </div>
-    </details>
+<div id="app">
+  <div class="top">
+    <input id="search" class="search" placeholder="Search changes, symbols, modules, files..." autocomplete="off">
+    <div class="tabs" id="tabs"></div>
+    <div class="stats"><b id="modeName">Changes</b> | <b id="nodeCount">0</b> nodes | <b id="edgeCount">0</b> edges | <b id="changeCount">0</b> change lenses</div>
   </div>
-  <div id="mode-badge"></div>
-  <div id="truncation-warning"></div>
-  <div id="interaction-hint" class="interaction-hint"></div>
-  <div id="stats"></div>
-  <div id="detail">
-    <h3 id="detail-title"></h3>
-    <div class="row"><div class="k">Type</div><div class="v" id="detail-type"></div></div>
-    <div class="row"><div class="k">Location</div><div class="v" id="detail-location"></div></div>
-    <div class="row"><div class="k">Connections</div><div class="v" id="detail-connections"></div></div>
-    <div class="row"><div class="k">Notes</div><div class="v" id="detail-notes"></div></div>
-    <div class="section">
-      <div class="row"><div class="k">Callers</div><div class="v" id="detail-callers"></div></div>
-      <div class="row"><div class="k">Callees</div><div class="v" id="detail-callees"></div></div>
-      <div class="row"><div class="k">Edge types</div><div class="v" id="detail-edge-types"></div></div>
-      <div class="row"><div class="k">Blast radius</div><div class="v" id="detail-blast"></div></div>
-    </div>
-  </div>
-  <div id="legend"><h4 id="legend-title">Modules</h4><div id="legend-items"></div></div>
+  <aside class="panel left"><h2 class="title">Search / jump</h2><div id="results" class="results"></div></aside>
+  <main class="panel main"><canvas id="legacy-canvas"></canvas><svg id="edges" class="edges"></svg><div id="stage" class="flow"></div><div class="hint" id="hint">Scroll to pan vertically inside focus mode</div></main>
+  <aside class="panel right"><h2 class="title">Details</h2><div id="details" class="details"></div></aside>
 </div>
 <script>
-(function () {
-"use strict";
+const graphData = ${jsonData};
+const canvas = document.getElementById("legacy-canvas");
+canvas.addEventListener("wheel", function () {});
+const nodes = graphData.nodes || [];
+const edges = graphData.edges || [];
+const modules = graphData.modules || [];
+const moduleEdges = graphData.moduleEdges || [];
+const changes = graphData.changes || [];
+const modes = ["Changes", "Module Overview", "Explore Symbols", "Hotspots", "Cycles"];
+let mode = changes.length > 0 ? "Changes" : "Module Overview";
+let selected = nodes[0] ? { type: "symbol", id: nodes[0].id } : { type: "module", id: modules[0] && modules[0].id };
+let selectedChange = changes[0] && changes[0].id;
+let query = "";
 
-const DATA = ${jsonData};
-const allNodes = DATA.nodes;
-const allEdges = DATA.edges;
-const allModules = DATA.modules || [];
-const allModuleEdges = DATA.moduleEdges || [];
-const meta = DATA.metadata;
-
-// ────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────
-function shortPath(path) {
-  return path.length > 36 ? "..." + path.slice(-33) : path;
+function esc(value){return String(value == null ? "" : value).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c];});}
+function nodeById(id){return nodes.find(function(node){return node.id === id;});}
+function moduleById(id){return modules.find(function(item){return item.id === id;});}
+function colorFor(id){const moduleId = nodeById(id) ? nodeById(id).moduleId : id; const index = Math.max(0, modules.findIndex(function(item){return item.id === moduleId;})); return ["#8b6cf6","#5577d8","#4aa46c","#ce6764","#d0933a","#41a6bd","#c667a4","#7890ac"][index % 8];}
+function shortPath(filePath){const parts = String(filePath || "").split(/[\\\\/]/).filter(Boolean); if(parts.length <= 3)return String(filePath || ""); return ".../" + parts.slice(-3).join("/");}
+function badge(kind){return '<span class="badge ' + esc(kind) + '">' + esc(kind) + '</span>';}
+function edgeWeight(edge){return edge.weight || 1;}
+function incomingSymbol(id){return edges.filter(function(edge){return edge.target === id;}).sort(function(a,b){return edgeWeight(b)-edgeWeight(a);});}
+function outgoingSymbol(id){return edges.filter(function(edge){return edge.source === id;}).sort(function(a,b){return edgeWeight(b)-edgeWeight(a);});}
+function incomingModule(id){return moduleEdges.filter(function(edge){return edge.target === id;}).sort(function(a,b){return b.weight-a.weight;});}
+function outgoingModule(id){return moduleEdges.filter(function(edge){return edge.source === id;}).sort(function(a,b){return b.weight-a.weight;});}
+function labelOf(id){const node = nodeById(id); if(node)return node.name; const mod = moduleById(id); return mod ? mod.label : id;}
+function nodeCard(title, meta, id, type, color, active){return '<div class="node ' + (active ? 'active' : '') + '" data-id="' + esc(id || '') + '" data-type="' + esc(type || 'symbol') + '" style="border-color:' + esc(color || "#203149") + '"><div class="name">' + esc(title) + '</div><div class="meta">' + meta + '</div></div>';}
+function symbolCard(id, weight){const node = nodeById(id); if(!node)return ""; return nodeCard(node.name, badge(node.kind) + '<span>' + esc(shortPath(node.filePath)) + '</span><span class="weight">' + weight + '</span>', node.id, "symbol", colorFor(node.id), false);}
+function moduleCard(id, weight){const item = moduleById(id); if(!item)return ""; return nodeCard(item.label, '<span>' + item.symbolCount + ' symbols</span><span class="weight">' + weight + '</span>', item.id, "module", colorFor(item.id), false);}
+function empty(a,b){return '<div class="empty"><div>' + esc(a) + '<br>' + esc(b) + '</div></div>';}
+function emptyCycleState(){return '<div class="empty"><div><b>No cycles found</b><br>This graph slice has no resolved module loops or symbol recursion.<br><br>A cycle means A calls B, B calls C, and C calls A.</div></div>';}
+function guideForMode(){
+  if(mode === "Module Overview")return '<div class="guide"><b>How to read</b><span>Module = code area. Symbol = named code item. Counts on caller/callee cards are call edges. Grouped symbol rows collapse repeated indexed ranges.</span></div>';
+  if(mode === "Explore Symbols")return '<div class="guide"><b>How to read</b><span>Focused symbol is in the middle. Left calls it. Right is what it calls.</span></div>';
+  if(mode === "Hotspots")return '<div class="guide"><b>How to read</b><span>Higher score means more incoming plus outgoing call edges, often more load-bearing.</span></div>';
+  if(mode === "Cycles")return '<div class="guide"><b>How to read</b><span>Cycles include module dependency loops and direct or short symbol recursion.</span></div>';
+  return '<div class="guide"><b>How to read</b><span>Recent Git movement is shown first; open a change to see affected module, churn, and call context.</span></div>';
 }
-
-function hashColor(index) {
-  const palette = [
-    "#5c7cfa", "#20c997", "#ff6b6b", "#fcc419", "#cc5de8", "#51cf66",
-    "#339af0", "#f06595", "#ff922b", "#66d9e8", "#845ef7", "#94d82d",
-    "#748ffc", "#3bc9db", "#ffa94d", "#69db7c", "#e64980", "#f76707"
-  ];
-  return palette[index % palette.length];
+function groupedSymbolCards(edgeList, pickId, limit){
+  const groups = new Map();
+  edgeList.forEach(function(edge){const id = pickId(edge); const node = nodeById(id); if(!node)return; const key = node.name + "|" + node.kind + "|" + node.filePath; const group = groups.get(key) || { id:id, count:0 }; group.count += edgeWeight(edge); groups.set(key, group);});
+  return [...groups.values()].sort(function(a,b){return b.count-a.count;}).slice(0, limit || groups.size).map(function(group){return symbolCard(group.id, group.count);}).join("");
 }
-
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
-}
-
-function kindColor(kind, moduleColor) {
-  if (!kind) return moduleColor;
-  const k = kind.toLowerCase();
-  if (k.includes("class") || k.includes("struct")) return "#ffd166";
-  if (k.includes("interface") || k.includes("type")) return "#7bdff2";
-  if (k.includes("const") || k.includes("variable") || k.includes("let")) return "#ff99c8";
-  if (k.includes("enum")) return "#cdb4db";
-  return moduleColor;
-}
-
-function drawSymbolGlyph(ctx, node, x, y, size, color) {
-  const kind = (node.kind || "").toLowerCase();
-  ctx.beginPath();
-  if (kind.includes("class") || kind.includes("struct")) {
-    ctx.rect(x - size, y - size, size * 2, size * 2);
-  } else if (kind.includes("interface") || kind.includes("type")) {
-    ctx.moveTo(x, y - size - 1);
-    ctx.lineTo(x + size + 1, y);
-    ctx.lineTo(x, y + size + 1);
-    ctx.lineTo(x - size - 1, y);
-    ctx.closePath();
-  } else if (kind.includes("const") || kind.includes("variable") || kind.includes("let")) {
-    ctx.moveTo(x, y - size - 1);
-    ctx.lineTo(x + size + 1, y + size + 1);
-    ctx.lineTo(x - size - 1, y + size + 1);
-    ctx.closePath();
-  } else {
-    ctx.arc(x, y, size, 0, Math.PI * 2);
-  }
-  ctx.fillStyle = color;
-  ctx.fill();
-}
-
-function shortNodeLabel(name) {
-  return name.length > 18 ? name.slice(0, 15) + "…" : name;
-}
-
-function moduleCategorySummary(category) {
-  if (category === "fixture") return "Fixture-derived module";
-  if (category === "test") return "Test-only module";
-  if (category === "native") return "Native/runtime module";
-  if (category === "command") return "Command module";
-  if (category === "script") return "Script module";
-  if (category === "doc") return "Documentation module";
-  if (category === "benchmark") return "Benchmark module";
-  return "Source module";
-}
-
-// ────────────────────────────────────────────────────────────
-// Build graph models
-// ────────────────────────────────────────────────────────────
-const nodeById = new Map(allNodes.map((n) => [n.id, n]));
-allNodes.forEach((n) => { n.module = n.moduleId; });
-
-const resolvedEdges = allEdges
-  .filter((e) => nodeById.has(e.source) && nodeById.has(e.target))
-  .map((e) => ({ ...e, sourceNode: nodeById.get(e.source), targetNode: nodeById.get(e.target) }));
-
-const modules = new Map((DATA.modules || []).map((module) => [module.id, {
-  ...module,
-  color: null,
-  nodes: [],
-  files: new Set(),
-  incoming: new Map(),
-  outgoing: new Map(),
-  internalEdgeCount: 0,
-  totalWeight: 0,
-}]));
-
-for (const node of allNodes) {
-  const mod = modules.get(node.moduleId);
-  if (!mod) continue;
-  mod.nodes.push(node);
-  mod.files.add(node.filePath);
-}
-
-const moduleList = [...modules.values()].sort((a, b) => b.symbolCount - a.symbolCount || a.label.localeCompare(b.label));
-moduleList.forEach((m, i) => { m.color = hashColor(i); });
-
-const communityList = [...moduleList].sort((a, b) => a.label.localeCompare(b.label));
-const communityById = new Map(communityList.map((community) => [community.id, community]));
-
-for (const edge of resolvedEdges) {
-  const src = edge.sourceNode.moduleId;
-  const tgt = edge.targetNode.moduleId;
-  if (src && tgt && src === tgt && modules.has(src)) {
-    modules.get(src).internalEdgeCount += 1;
-  }
-}
-
-const moduleEdges = (DATA.moduleEdges || []).map((edge) => ({
-  ...edge,
-  callTypes: edge.callTypes || {},
-}));
-
-for (const edge of moduleEdges) {
-  if (modules.has(edge.source) && modules.has(edge.target)) {
-    modules.get(edge.source).outgoing.set(edge.target, edge.weight);
-    modules.get(edge.target).incoming.set(edge.source, edge.weight);
-  }
-}
-
-for (const mod of moduleList) {
-  mod.totalWeight = [...mod.incoming.values(), ...mod.outgoing.values()].reduce((a, b) => a + b, 0) + mod.internalEdgeCount;
-}
-
-const exploreNodePositions = new Map();
-const exploreCommunities = new Map();
-const exploreCommunityBounds = new Map();
-
-function edgeWeightForNode(nodeId) {
-  let weight = 0;
-  for (const edge of resolvedEdges) {
-    if (edge.source === nodeId || edge.target === nodeId) weight += 1;
-  }
-  return weight;
-}
-
-function layoutExploreGraph() {
-  exploreNodePositions.clear();
-  exploreCommunities.clear();
-  exploreCommunityBounds.clear();
-
-  const cols = Math.max(1, Math.min(3, Math.ceil(Math.sqrt(Math.max(1, communityList.length)))));
-  const cellWidth = Math.max(280, Math.floor((width - 120) / cols));
-  const cellHeight = 250;
-  const startX = 56;
-  const startY = 108;
-
-  communityList.forEach((community, index) => {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    const centerX = startX + col * cellWidth + cellWidth / 2;
-    const centerY = startY + row * cellHeight + cellHeight / 2;
-    const members = [...community.nodes].sort((a, b) => edgeWeightForNode(b.id) - edgeWeightForNode(a.id) || a.name.localeCompare(b.name));
-    const communityRadius = Math.max(58, Math.min(104, 44 + members.length * 4));
-    const bounds = {
-      x: centerX - cellWidth / 2 + 16,
-      y: centerY - cellHeight / 2 + 12,
-      w: cellWidth - 32,
-      h: cellHeight - 24,
-      centerX,
-      centerY,
-      radius: communityRadius,
-      community,
-    };
-
-    exploreCommunities.set(community.id, { centerX, centerY, radius: communityRadius, community });
-    exploreCommunityBounds.set(community.id, bounds);
-
-    const orbitRadius = Math.max(34, Math.min(communityRadius - 16, 26 + members.length * 3));
-    const count = Math.max(members.length, 1);
-
-    members.forEach((node, memberIndex) => {
-      if (members.length === 1) {
-        exploreNodePositions.set(node.id, { x: centerX, y: centerY });
-        return;
-      }
-
-      const angle = (Math.PI * 2 * memberIndex) / count;
-      const band = 0.55 + 0.35 * ((memberIndex % 3) / 2);
-      const radius = orbitRadius * band;
-      exploreNodePositions.set(node.id, {
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius,
-      });
-    });
+function groupedModuleSymbolRows(symbols){
+  const groups = new Map();
+  symbols.forEach(function(node){
+    const key = node.name + "|" + node.kind + "|" + node.filePath;
+    const group = groups.get(key) || { id:node.id, node:node, count:0, minLine:node.line, maxLine:node.line };
+    group.count += 1;
+    group.minLine = Math.min(group.minLine, node.line);
+    group.maxLine = Math.max(group.maxLine, node.line);
+    groups.set(key, group);
   });
+  return [...groups.values()].map(function(group){
+    const lineText = group.minLine === group.maxLine ? "line " + group.minLine : "lines " + group.minLine + "-" + group.maxLine;
+    const countText = group.count > 1 ? '<span>x' + group.count + '</span>' : "";
+    return '<div class="row" data-id="' + esc(group.id) + '" data-type="symbol"><div class="name">' + esc(group.node.name) + '</div><div class="meta">' + badge(group.node.kind) + '<span>' + esc(shortPath(group.node.filePath)) + '</span><span>' + esc(lineText) + '</span>' + countText + '</div></div>';
+  }).join("");
 }
-
-// ────────────────────────────────────────────────────────────
-// Overview layout: module dependency map
-// ────────────────────────────────────────────────────────────
-const moduleBounds = new Map();
-
-function computeModuleDepths() {
-  const indegree = new Map(moduleList.map((m) => [m.id, 0]));
-  const outgoing = new Map(moduleList.map((m) => [m.id, []]));
-  for (const e of moduleEdges) {
-    indegree.set(e.target, (indegree.get(e.target) || 0) + 1);
-    outgoing.get(e.source).push(e.target);
-  }
-
-  const queue = [];
-  indegree.forEach((v, k) => { if (v === 0) queue.push(k); });
-  const depth = new Map(moduleList.map((m) => [m.id, 0]));
+function findSymbolCycles(limit){
+  const outgoing = new Map();
+  edges.forEach(function(edge){if(edge.source === edge.target)return; const list = outgoing.get(edge.source) || []; list.push(edge.target); outgoing.set(edge.source, list);});
+  const cycles = [];
   const seen = new Set();
-
-  while (queue.length) {
-    const current = queue.shift();
-    seen.add(current);
-    for (const next of outgoing.get(current) || []) {
-      depth.set(next, Math.max(depth.get(next) || 0, (depth.get(current) || 0) + 1));
-      indegree.set(next, indegree.get(next) - 1);
-      if (indegree.get(next) === 0) queue.push(next);
-    }
-  }
-
-  // cycles / disconnected: fallback by fan-out - fan-in bias
-  for (const mod of moduleList) {
-    if (!seen.has(mod.id)) {
-      const out = mod.outgoing.size;
-      const inc = mod.incoming.size;
-      depth.set(mod.id, Math.max(0, 2 + out - inc));
-    }
-  }
-  return depth;
-}
-
-const moduleDepth = computeModuleDepths();
-
-function layoutOverview() {
-  moduleBounds.clear();
-  const sparseModuleGraph = moduleEdges.length < Math.max(2, Math.floor(moduleList.length / 3));
-
-  if (sparseModuleGraph) {
-    const cols = Math.max(2, Math.min(4, Math.ceil(Math.sqrt(moduleList.length))));
-    const cardW = 240;
-    const cardHBase = 92;
-    const gapX = 28;
-    const gapY = 26;
-    const totalWidth = cols * cardW + (cols - 1) * gapX;
-    const startX = Math.max(48, (window.innerWidth - totalWidth) / 2);
-    let currentX = startX;
-    let currentY = 120;
-    let rowMaxHeight = cardHBase;
-
-    moduleList.forEach((mod, index) => {
-      const cardH = Math.max(cardHBase, 58 + Math.ceil(mod.nodes.length / 8) * 14);
-      moduleBounds.set(mod.id, { x: currentX, y: currentY, w: cardW, h: cardH });
-      rowMaxHeight = Math.max(rowMaxHeight, cardH);
-      if ((index + 1) % cols === 0) {
-        currentX = startX;
-        currentY += rowMaxHeight + gapY + 24;
-        rowMaxHeight = cardHBase;
-      } else {
-        currentX += cardW + gapX;
-      }
-    });
-
-    return { maxDepth: 0, sortedDepths: [0], sparse: true };
-  }
-
-  const levels = new Map();
-  let maxDepth = 0;
-  for (const mod of moduleList) {
-    const d = moduleDepth.get(mod.id) || 0;
-    maxDepth = Math.max(maxDepth, d);
-    if (!levels.has(d)) levels.set(d, []);
-    levels.get(d).push(mod);
-  }
-
-  // barycenter-like ordering by average target/source level positions
-  const sortedDepths = [...levels.keys()].sort((a, b) => a - b);
-  for (const depth of sortedDepths) {
-    const row = levels.get(depth);
-    row.sort((a, b) => {
-      const aScore = [...a.incoming.entries(), ...a.outgoing.entries()].reduce((sum, [k, w]) => sum + (moduleDepth.get(k) || 0) * w, 0) / Math.max(1, a.totalWeight);
-      const bScore = [...b.incoming.entries(), ...b.outgoing.entries()].reduce((sum, [k, w]) => sum + (moduleDepth.get(k) || 0) * w, 0) / Math.max(1, b.totalWeight);
-      return aScore - bScore || b.totalWeight - a.totalWeight;
-    });
-  }
-
-  const leftPad = 70;
-  const rightPad = 90;
-  const topPad = 120;
-  const laneGap = 170;
-  const rowGap = 70;
-  const baseW = 150;
-  const baseH = 76;
-
-  for (const depth of sortedDepths) {
-    const row = levels.get(depth);
-    const x = leftPad + depth * laneGap;
-    const totalHeight = row.reduce((sum, mod) => {
-      const h = Math.max(baseH, 42 + Math.ceil(mod.nodes.length / 6) * 11);
-      return sum + h;
-    }, 0) + Math.max(0, row.length - 1) * rowGap;
-
-    let y = Math.max(topPad, (window.innerHeight - totalHeight) / 2);
-    for (const mod of row) {
-      const h = Math.max(baseH, 42 + Math.ceil(mod.nodes.length / 6) * 11);
-      const w = Math.min(240, Math.max(baseW, 120 + Math.min(mod.totalWeight, 20) * 4));
-      moduleBounds.set(mod.id, { x, y, w, h });
-      y += h + rowGap;
-    }
-  }
-
-  return { maxDepth, sortedDepths, sparse: false };
-}
-
-let overviewLayout = layoutOverview();
-
-// ────────────────────────────────────────────────────────────
-// Focus layout: selected module centered, callers left, callees right
-// ────────────────────────────────────────────────────────────
-function buildFocusState(moduleId) {
-  const center = modules.get(moduleId);
-  if (!center) return null;
-
-  function traverse(direction) {
-    const queue = [...(direction === "incoming" ? center.incoming.entries() : center.outgoing.entries())]
-      .map(([id, weight]) => ({ id, weight, hop: 1 }));
-    const visited = new Set();
-    const results = [];
-
-    while (queue.length) {
-      const current = queue.shift();
-      if (visited.has(current.id) || current.hop > 3) continue;
-      visited.add(current.id);
-      const mod = modules.get(current.id);
-      if (!mod) continue;
-      results.push({ mod, weight: current.weight, hop: current.hop });
-      if (blastRadiusMode) {
-        const nextEntries = direction === "incoming" ? mod.incoming.entries() : mod.outgoing.entries();
-        for (const [nextId, nextWeight] of nextEntries) {
-          if (!visited.has(nextId)) queue.push({ id: nextId, weight: nextWeight, hop: current.hop + 1 });
-        }
-      }
-    }
-
-    return results.sort((a, b) => a.hop - b.hop || b.weight - a.weight);
-  }
-
-  const callers = traverse("incoming");
-  const callees = traverse("outgoing");
-
-  return { center, callers, callees };
-}
-
-function layoutFocus(moduleId) {
-  const focus = buildFocusState(moduleId);
-  if (!focus) return null;
-
-  const centerBox = {
-    x: window.innerWidth * 0.28,
-    y: 120,
-    w: window.innerWidth * 0.44,
-    h: Math.max(280, 140 + Math.ceil(focus.center.nodes.length / 5) * 26),
-  };
-
-  const leftBoxes = [];
-  const rightBoxes = [];
-
-  function stackSide(items, side) {
-    const startX = side === "left" ? 36 : window.innerWidth - 36 - 190;
-    let y = 150;
-    return items.map(({ mod, weight, hop }) => {
-      const h = Math.max(64, 46 + Math.ceil(mod.nodes.length / 10) * 10);
-      const box = { x: startX, y, w: 190, h, weight, hop, mod };
-      y += h + 24;
-      return box;
-    });
-  }
-
-  leftBoxes.push(...stackSide(focus.callers, "left"));
-  rightBoxes.push(...stackSide(focus.callees, "right"));
-
-  const symbolPositions = new Map();
-  const fileBoxes = [];
-  const fileGroups = new Map();
-  for (const node of focus.center.nodes) {
-    if (!fileGroups.has(node.filePath)) fileGroups.set(node.filePath, []);
-    fileGroups.get(node.filePath).push(node);
-  }
-
-  const files = [...fileGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const laneGap = 12;
-  const innerX = centerBox.x + 16;
-  const innerY = centerBox.y + 58;
-  const laneW = centerBox.w - 32;
-  let laneY = innerY;
-
-  files.forEach(([filePath, nodesInFile]) => {
-    const sortedNodes = [...nodesInFile].sort((a, b) => a.name.localeCompare(b.name));
-    const estimatedChipWidth = Math.max(
-      90,
-      ...sortedNodes.map((node) => shortNodeLabel(node.name).length * 7 + 18),
-    );
-    const maxPerRow = Math.max(1, Math.min(3, Math.floor((laneW - 145) / Math.min(180, estimatedChipWidth))));
-    const rows = Math.max(1, Math.ceil(sortedNodes.length / maxPerRow));
-    const laneH = Math.max(68, 36 + rows * 34);
-    fileBoxes.push({ filePath, x: innerX, y: laneY, w: laneW, h: laneH, nodes: sortedNodes });
-
-    const contentStartX = innerX + 130;
-    const contentW = laneW - 145;
-    const cols = Math.max(1, Math.min(maxPerRow, Math.ceil(sortedNodes.length / rows)));
-    const stepX = contentW / Math.max(cols, 1);
-    const stepY = rows > 1 ? 30 : 0;
-
-    sortedNodes.forEach((node, index) => {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      symbolPositions.set(node.id, {
-        x: contentStartX + col * stepX + stepX / 2,
-        y: laneY + 20 + row * stepY + 12,
-      });
-    });
-
-    laneY += laneH + laneGap;
+  edges.filter(function(edge){return edge.source === edge.target;}).forEach(function(edge){
+    if(!nodeById(edge.source))return;
+    seen.add(edge.source + ">" + edge.source);
+    cycles.push({ ids:[edge.source], kind:"direct recursion" });
   });
-
-  centerBox.h = Math.max(centerBox.h, laneY - centerBox.y + 12);
-
-  return { focus, centerBox, leftBoxes, rightBoxes, symbolPositions, fileBoxes };
-}
-
-// ────────────────────────────────────────────────────────────
-// Canvas / interaction state
-// ────────────────────────────────────────────────────────────
-const canvas = document.getElementById("graph");
-const ctx = canvas.getContext("2d");
-let width = window.innerWidth;
-let height = window.innerHeight;
-function resizeCanvas() {
-  width = window.innerWidth;
-  height = window.innerHeight;
-  canvas.width = width * devicePixelRatio;
-  canvas.height = height * devicePixelRatio;
-  canvas.style.width = width + "px";
-  canvas.style.height = height + "px";
-  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-}
-resizeCanvas();
-
-let mode = "overview";
-let focusedModuleId = null;
-let focusedSymbolId = null;
-let blastRadiusMode = false;
-let searchValue = "";
-let showLabels = true;
-let showWeights = true;
-let hoverTarget = null;
-let focusPanY = 0;
-
-const legendItemsEl = document.getElementById("legend-items");
-const statsEl = document.getElementById("stats");
-const detailEl = document.getElementById("detail");
-const modeBadgeEl = document.getElementById("mode-badge");
-const legendTitleEl = document.getElementById("legend-title");
-const overviewButton = document.getElementById("btn-overview");
-const exploreButton = document.getElementById("btn-explore");
-const fitButton = document.getElementById("btn-fit");
-const interactionHintEl = document.getElementById("interaction-hint");
-const optionsMenuEl = document.getElementById("options-menu");
-
-if (meta.truncated) {
-  const warning = document.getElementById("truncation-warning");
-  warning.style.display = "block";
-  warning.textContent = "⚠ Graph truncated to " + allNodes.length + " nodes (source total: " + meta.totalSymbols + ")";
-}
-
-function renderLegend() {
-  legendItemsEl.innerHTML = "";
-
-  if (mode === "explore") {
-    legendTitleEl.textContent = "Communities";
-    for (const community of communityList) {
-      const item = document.createElement("div");
-      item.className = "legend-item";
-      item.innerHTML = '<div class="legend-swatch" style="background:' + community.color + '"></div>' +
-        '<div class="legend-text" title="' + community.pathPrefix + '">' + community.label + ' (' + community.nodes.length + ')</div>';
-      item.addEventListener("click", () => enterFocus(community.id, "Community selected from clustered exploration view"));
-      legendItemsEl.appendChild(item);
+  nodes.some(function(start){
+    const stack = [{ id:start.id, path:[start.id] }];
+    while(stack.length > 0 && cycles.length < limit){
+      const current = stack.pop();
+      (outgoing.get(current.id) || []).forEach(function(next){
+        if(cycles.length >= limit)return;
+        if(next === start.id && current.path.length > 1){
+          const key = current.path.slice().sort().join(">");
+          if(!seen.has(key)){seen.add(key); cycles.push({ ids:current.path.slice(), kind:"symbol loop" });}
+        } else if(current.path.length < 5 && current.path.indexOf(next) === -1) {
+          stack.push({ id:next, path:current.path.concat(next) });
+        }
+      });
     }
+    return cycles.length >= limit;
+  });
+  return cycles.slice(0, limit);
+}
+
+function renderTabs(){
+  document.getElementById("tabs").innerHTML = modes.map(function(item){return '<button class="tab ' + (item === mode ? 'active' : '') + '" data-mode="' + esc(item) + '">' + esc(item) + '</button>';}).join("");
+  document.querySelectorAll("[data-mode]").forEach(function(button){button.onclick = function(){mode = button.dataset.mode || "Changes"; render();};});
+  document.getElementById("modeName").textContent = mode;
+  document.getElementById("nodeCount").textContent = String(nodes.length);
+  document.getElementById("edgeCount").textContent = String(edges.length);
+  document.getElementById("changeCount").textContent = String(changes.length);
+}
+function renderResults(){
+  const q = query.toLowerCase();
+  const items = changes.map(function(change){return {type:"change",id:change.id,title:change.title,meta:change.source + " | " + change.when + " | " + change.intent,color:change.kind === "risk" ? "#ce6764" : "#8b6cf6"};})
+    .concat(modules.map(function(item){return {type:"module",id:item.id,title:item.label,meta:item.symbolCount + " symbols | " + item.category,color:colorFor(item.id)};}))
+    .concat(nodes.map(function(node){return {type:"symbol",id:node.id,title:node.name,meta:node.kind + " | " + shortPath(node.filePath),color:colorFor(node.id)};}))
+    .filter(function(item){return !q || (item.title + " " + item.meta + " " + item.id).toLowerCase().includes(q);})
+    .slice(0, 24);
+  document.getElementById("results").innerHTML = items.map(function(item){return '<div class="result" data-id="' + esc(item.id) + '" data-type="' + esc(item.type) + '" style="border-color:' + esc(item.color) + '"><div class="name">' + esc(item.title) + '</div><div class="meta">' + esc(item.meta) + '</div></div>';}).join("") || empty("No matching changes, symbols, or modules", "Try a file, symbol, intent, or risk term");
+}
+function renderChanges(){
+  const active = changes.find(function(change){return change.id === selectedChange;}) || changes[0];
+  if(!active){renderHotspots(); return;}
+  selectedChange = active.id;
+  const focus = active.focusNodeId ? nodeById(active.focusNodeId) : undefined;
+  document.getElementById("stage").className = "change-grid";
+  document.getElementById("stage").innerHTML = '<section class="change-list"><h2 class="title">Moving lately</h2>' + changes.map(function(change){
+    return '<div class="change ' + (change.id === active.id ? 'active' : '') + '" data-change="' + esc(change.id) + '"><div class="change-top"><span class="pill ' + esc(change.kind) + '">' + esc(change.kind) + '</span><span class="meta">' + esc(change.source) + ' | ' + esc(change.when) + '</span></div><div class="name">' + esc(change.title) + '</div><div class="meta">' + esc(change.summary) + '</div></div>';
+  }).join("") + '</section><section class="why"><div class="why-card"><div class="change-top"><span class="pill ' + esc(active.kind) + '">' + esc(active.intent) + '</span><span class="meta">' + esc(active.source) + ' | ' + esc(active.when) + '</span></div><h3>' + esc(active.title) + '</h3><p>' + esc(active.why) + '</p><div class="impact"><div><b>' + active.calls + '</b><span>call edges</span></div><div><b>' + active.churn + '</b><span>churn</span></div><div><b>' + esc(active.risk) + '</b><span>risk</span></div></div></div><div class="why-card"><h3>Current touchpoint</h3>' + (focus ? nodeCard(focus.name, badge(focus.kind) + '<span>' + esc(shortPath(focus.filePath)) + '</span>', focus.id, "symbol", colorFor(focus.id), false) : moduleCard(active.moduleId, active.calls)) + '</div><div class="why-card"><h3>Nearest call context</h3><div class="list">' + (focus ? (groupedSymbolCards(incomingSymbol(focus.id), function(edge){return edge.source;}, 3) + groupedSymbolCards(outgoingSymbol(focus.id), function(edge){return edge.target;}, 3)) : empty("No focused symbol", "Open Module Overview")) + '</div></div></section>';
+  document.getElementById("hint").textContent = "Temporal default: what changed, why, and which call path it affects.";
+  document.getElementById("edges").innerHTML = "";
+  document.querySelectorAll("[data-change]").forEach(function(el){el.onclick = function(){selectedChange = el.dataset.change; render();};});
+}
+function renderSymbol(){
+  const symbol = selected.type === "symbol" ? nodeById(selected.id) : nodes.find(function(node){return node.moduleId === selected.id;}) || nodes[0];
+  if(!symbol){document.getElementById("stage").innerHTML = empty("No symbols", "Run index_codebase first"); return;}
+  selected = {type:"symbol", id:symbol.id};
+  const callers = incomingSymbol(symbol.id);
+  const callees = outgoingSymbol(symbol.id);
+  document.getElementById("stage").className = "flow";
+  document.getElementById("stage").innerHTML = '<section class="lane" id="callers"><h3>Callers</h3>' + (groupedSymbolCards(callers, function(edge){return edge.source;}) || empty("No callers", "Entry-level symbol")) + '</section><section class="center">' + nodeCard(symbol.name, badge(symbol.kind) + '<span>' + esc(shortPath(symbol.filePath)) + '</span>', symbol.id, "symbol", colorFor(symbol.id), true) + '</section><section class="lane" id="callees"><h3>Callees</h3>' + (groupedSymbolCards(callees, function(edge){return edge.target;}) || empty("No callees", "Leaf-level symbol")) + '</section>';
+  document.getElementById("hint").textContent = "Explore mode: clustered symbol relationships. Focused module view uses the same one-hop navigation.";
+  requestAnimationFrame(drawEdges);
+}
+function renderModule(){
+  const item = selected.type === "module" ? moduleById(selected.id) : moduleById((nodeById(selected.id) || {}).moduleId) || modules[0];
+  if(!item){document.getElementById("stage").innerHTML = empty("No modules", "Run index_codebase first"); return;}
+  selected = {type:"module", id:item.id};
+  const callers = incomingModule(item.id);
+  const callees = outgoingModule(item.id);
+  const internalEdges = edges.filter(function(edge){return nodeById(edge.source)?.moduleId === item.id && nodeById(edge.target)?.moduleId === item.id;});
+  const moduleSymbols = nodes.filter(function(node){return node.moduleId === item.id;});
+  const leftTitle = callers.length > 0 ? "Incoming modules" : "Internal callers";
+  const rightTitle = callees.length > 0 ? "Outgoing modules" : "Internal callees";
+  const groupedModuleSymbols = groupedModuleSymbolRows(moduleSymbols);
+  const uniqueModuleSymbolCount = (groupedModuleSymbols.match(/class="row"/g) || []).length;
+  const leftCards = callers.length > 0 ? callers.map(function(edge){return moduleCard(edge.source, edge.weight);}).join("") : groupedSymbolCards(internalEdges, function(edge){return edge.source;}, 12);
+  const rightCards = callees.length > 0 ? callees.map(function(edge){return moduleCard(edge.target, edge.weight);}).join("") : groupedSymbolCards(internalEdges, function(edge){return edge.target;}, 12);
+  document.getElementById("stage").className = "module-board";
+  document.getElementById("stage").innerHTML = '<section class="module-summary">' + nodeCard(item.label, '<span>' + item.symbolCount + ' indexed symbols</span><span>' + uniqueModuleSymbolCount + ' unique rows</span><span>' + esc(item.category) + '</span>', item.id, "module", colorFor(item.id), true) + '</section><section class="module-lanes"><div class="lane" id="callers"><h3>' + leftTitle + '</h3>' + (leftCards || empty("This slice only has intra-module calls.", "Selected from module list")) + '</div><div class="lane" id="callees"><h3>' + rightTitle + '</h3>' + (rightCards || empty("No calls in this module.", "Selected from module list")) + '</div></section><section class="module-symbols"><h3>Symbols in module (' + uniqueModuleSymbolCount + ' unique, ' + moduleSymbols.length + ' indexed)</h3><div class="list">' + groupedModuleSymbols + '</div></section>';
+  document.getElementById("hint").textContent = callers.length + callees.length > 0 ? "Module Overview. Focused module view shows strongest incoming and outgoing module edges." : "Module Overview. This repo slice has no resolved cross-module edges, so this view shows intra-module hotspots.";
+  requestAnimationFrame(drawEdges);
+}
+function renderHotspots(){
+  const ranked = nodes.map(function(node){return {node:node, score:incomingSymbol(node.id).length + outgoingSymbol(node.id).length};}).sort(function(a,b){return b.score-a.score;}).slice(0, 20);
+  document.getElementById("stage").className = "grid";
+  document.getElementById("stage").innerHTML = ranked.map(function(item,index){return '<div class="row" data-id="' + esc(item.node.id) + '" data-type="symbol"><div class="meta"><span class="rank">' + (index + 1) + '</span><span class="weight">' + item.score + ' call edges</span></div><div class="name">' + esc(item.node.name) + '</div><div class="meta">' + badge(item.node.kind) + '<span>' + esc(shortPath(item.node.filePath)) + '</span></div></div>';}).join("") || empty("No hotspots", "No call edges in this slice");
+  document.getElementById("hint").textContent = "Hotspots rank symbols by incoming plus outgoing call edges.";
+  document.getElementById("edges").innerHTML = "";
+}
+function renderCycles(){
+  const cycles = moduleEdges.filter(function(edge){return moduleEdges.some(function(other){return other.source === edge.target && other.target === edge.source;});});
+  const symbolCycles = findSymbolCycles(20);
+  document.getElementById("stage").className = "grid";
+  const moduleHtml = cycles.map(function(edge){return '<div class="row" data-id="' + esc(edge.source) + '" data-type="module"><div class="name">' + esc(labelOf(edge.source)) + ' -> ' + esc(labelOf(edge.target)) + '</div><div class="meta"><span>module dependency loop candidate</span><span class="weight">' + edge.weight + ' calls</span></div></div>';}).join("");
+  const symbolHtml = symbolCycles.map(function(cycle){const start = cycle.ids[0]; const node = nodeById(start); const path = cycle.ids.map(function(id){return labelOf(id);}).join(" -> ") + " -> " + labelOf(start); const countLabel = cycle.ids.length === 1 ? "1 symbol" : cycle.ids.length + " symbols"; return '<div class="row" data-id="' + esc(start) + '" data-type="symbol"><div class="name">' + esc(path) + '</div><div class="meta"><span>' + esc(cycle.kind) + '</span>' + (node ? '<span>' + esc(shortPath(node.filePath)) + '</span>' : '') + '<span class="weight">' + countLabel + '</span></div></div>';}).join("");
+  document.getElementById("stage").innerHTML = moduleHtml + symbolHtml || emptyCycleState();
+  document.getElementById("hint").textContent = "Cycle mode surfaces module loops plus direct or short symbol recursion.";
+  document.getElementById("edges").innerHTML = "";
+}
+function renderDetails(){
+  if(mode === "Changes"){
+    const active = changes.find(function(change){return change.id === selectedChange;});
+    if(active){document.getElementById("details").innerHTML = guideForMode() + '<div class="name">' + esc(active.title) + '</div><div class="kv"><span>Source</span><b>' + esc(active.source) + '</b></div><div class="kv"><span>Changed</span><b>' + esc(active.when) + '</b></div><div class="kv"><span>Intent</span><b>' + esc(active.intent) + '</b></div><div class="kv"><span>Risk</span><b>' + esc(active.risk) + '</b></div><h2 class="title">Onboarding read</h2><p style="margin:0;color:#6f83a4;font-size:13px;line-height:1.6">' + esc(active.summary) + '</p>'; return;}
+  }
+  const isSymbol = selected.type === "symbol";
+  const item = isSymbol ? nodeById(selected.id) : moduleById(selected.id);
+  if(!item){document.getElementById("details").innerHTML = guideForMode(); return;}
+  const incoming = isSymbol ? incomingSymbol(selected.id) : incomingModule(selected.id);
+  const outgoing = isSymbol ? outgoingSymbol(selected.id) : outgoingModule(selected.id);
+  if(!isSymbol){
+    const internal = edges.filter(function(edge){const source = nodeById(edge.source); const target = nodeById(edge.target); return source && target && source.moduleId === selected.id && target.moduleId === selected.id;});
+    const hasCrossModuleEdges = incoming.length + outgoing.length > 0;
+    const edgeCards = hasCrossModuleEdges ? incoming.concat(outgoing).map(function(edge){return moduleCard(edge.source === selected.id ? edge.target : edge.source, edge.weight);}).join("") : groupedSymbolCards(internal, function(edge){return edge.source;}, 4) + groupedSymbolCards(internal, function(edge){return edge.target;}, 4);
+    document.getElementById("details").innerHTML = guideForMode() + '<div class="name">' + esc(item.label) + '</div><div class="kv"><span>Kind</span><b>' + esc(item.category) + '</b></div><div class="kv"><span>File/module</span><b>' + esc(item.label) + '</b></div><div class="kv"><span>Symbols</span><b>' + item.symbolCount + '</b></div><div class="kv"><span>' + (hasCrossModuleEdges ? 'Cross-module edges' : 'Internal call edges') + '</span><b>' + (incoming.length + outgoing.length || internal.length) + '</b></div><h2 class="title">Strongest edges</h2><div class="list">' + (edgeCards || empty("No calls in this module.", "Selected from module list")) + '</div>';
     return;
   }
-
-  legendTitleEl.textContent = "Modules";
-  for (const mod of moduleList) {
-    const item = document.createElement("div");
-    item.className = "legend-item";
-    item.innerHTML = '<div class="legend-swatch" style="background:' + mod.color + '"></div>' +
-      '<div class="legend-text" title="' + mod.pathPrefix + '">' + mod.label + ' (' + mod.nodes.length + ')</div>';
-    item.addEventListener("click", () => enterFocus(mod.id, "Selected from module list"));
-    legendItemsEl.appendChild(item);
-  }
+  document.getElementById("details").innerHTML = guideForMode() + '<div class="name">' + esc(item.name) + '</div><div class="kv"><span>Kind</span><b>' + esc(item.kind) + '</b></div><div class="kv"><span>File/module</span><b>' + esc(shortPath(item.filePath)) + '</b></div><div class="kv"><span>Callers</span><b>' + incoming.length + '</b></div><div class="kv"><span>Callees</span><b>' + outgoing.length + '</b></div><h2 class="title">Strongest edges</h2><div class="list">' + groupedSymbolCards(incoming.concat(outgoing), function(edge){return edge.source === selected.id ? edge.target : edge.source;}, 8) + '</div>';
 }
-
-renderLegend();
-
-function updateStats() {
-  if (mode === "overview") {
-    statsEl.innerHTML =
-      '<span class="label">Mode</span> overview' +
-      '<br><span class="label">Modules</span> ' + moduleList.length +
-      '<br><span class="label">Module edges</span> ' + moduleEdges.length +
-      '<br><span class="label">Symbols</span> ' + allNodes.length +
-      '<br><span class="label">Files</span> ' + new Set(allNodes.map((n) => n.filePath)).size;
-    if (moduleEdges.length === 0) {
-      modeBadgeEl.style.display = "block";
-      modeBadgeEl.textContent = "This slice only has intra-module calls.";
-    } else {
-      modeBadgeEl.style.display = "none";
-    }
-  } else if (mode === "explore") {
-    statsEl.innerHTML =
-      '<span class="label">Mode</span> explore' +
-      '<br><span class="label">Communities</span> ' + communityList.length +
-      '<br><span class="label">Symbols</span> ' + allNodes.length +
-      '<br><span class="label">Edges</span> ' + resolvedEdges.length +
-      '<br><span class="label">Fixtures/tests</span> ' + communityList.filter((community) => community.category === "fixture" || community.category === "test").length;
-    modeBadgeEl.style.display = "block";
-    modeBadgeEl.textContent = "Explore mode: clustered symbol relationships";
-  } else {
-    const focus = modules.get(focusedModuleId);
-    statsEl.innerHTML =
-      '<span class="label">Mode</span> focus' +
-      '<br><span class="label">Module</span> ' + focus.label +
-      '<br><span class="label">Symbols</span> ' + focus.nodes.length +
-      '<br><span class="label">Incoming</span> ' + [...focus.incoming.values()].reduce((a, b) => a + b, 0) +
-      '<br><span class="label">Outgoing</span> ' + [...focus.outgoing.values()].reduce((a, b) => a + b, 0);
-    modeBadgeEl.style.display = "block";
-    modeBadgeEl.textContent = "Focus mode: " + focus.label;
-  }
+function drawEdges(){
+  const svg = document.getElementById("edges");
+  const stage = document.getElementById("stage");
+  const left = document.getElementById("callers");
+  const right = document.getElementById("callees");
+  const center = document.querySelector(".center .node");
+  svg.innerHTML = "";
+  if(!left || !right || !center || innerWidth < 901)return;
+  const box = stage.getBoundingClientRect();
+  svg.setAttribute("viewBox", "0 0 " + box.width + " " + box.height);
+  function line(from,to){const a=from.getBoundingClientRect();const b=to.getBoundingClientRect();const x1=a.right-box.left;const y1=a.top+a.height/2-box.top;const x2=b.left-box.left;const y2=b.top+b.height/2-box.top;const mid=(x1+x2)/2;const path=document.createElementNS("http://www.w3.org/2000/svg","path");path.setAttribute("d","M"+x1+","+y1+" C"+mid+","+y1+" "+mid+","+y2+" "+x2+","+y2);path.setAttribute("fill","none");path.setAttribute("stroke","#334966");path.setAttribute("stroke-width","1.5");path.setAttribute("opacity",".65");svg.appendChild(path);}
+  left.querySelectorAll(".node").forEach(function(node){line(node, center);});
+  right.querySelectorAll(".node").forEach(function(node){line(center, node);});
 }
-
-function updateControls() {
-  overviewButton.textContent = mode === "overview" ? "Module Overview" : "Back to Overview";
-  overviewButton.title = mode === "overview"
-    ? "You are viewing the top-level module overview"
-    : "Return to the top-level module overview";
-  overviewButton.classList.toggle("active", mode === "overview");
-  overviewButton.disabled = mode === "overview";
-
-  exploreButton.classList.toggle("active", mode === "explore");
-  exploreButton.disabled = mode === "explore";
-  exploreButton.textContent = mode === "explore" ? "Exploring Symbols" : "Explore Symbols";
-  exploreButton.title = mode === "explore"
-    ? "You are browsing clustered symbol relationships"
-    : "Switch to a clustered symbol exploration view";
-
-  fitButton.textContent = mode === "overview"
-    ? "Reset Overview"
-    : mode === "explore"
-      ? "Reset Explore"
-      : "Overview Only";
-  fitButton.title = mode === "overview"
-    ? "Recompute the module overview layout for the current window size"
-    : mode === "explore"
-      ? "Recompute the clustered exploration layout for the current window size"
-      : "This control only affects the module overview. Click Overview to return there first.";
-  fitButton.disabled = mode === "focus";
-  optionsMenuEl.open = false;
-
-  interactionHintEl.style.display = mode === "focus" || mode === "explore" ? "block" : "none";
-  interactionHintEl.textContent = mode === "focus"
-    ? "Scroll to pan vertically inside focus mode"
-    : mode === "explore"
-      ? "Explore connected symbols by cluster, then click a community to drill into focus mode"
-      : "";
-
-  renderLegend();
+function wireClicks(){
+  document.querySelectorAll("[data-id]").forEach(function(el){el.onclick = function(){selected = {type:el.dataset.type, id:el.dataset.id}; if(selected.type === "change"){selectedChange = selected.id; mode = "Changes";} else {mode = selected.type === "module" ? "Module Overview" : "Explore Symbols";} render();};});
 }
-
-function getFocusPanBounds() {
-  if (mode !== "focus" || !focusedModuleId) return { min: 0, max: 0 };
-  const state = layoutFocus(focusedModuleId);
-  if (!state) return { min: 0, max: 0 };
-  const contentBottom = Math.max(
-    state.centerBox.y + state.centerBox.h,
-    ...state.leftBoxes.map((box) => box.y + box.h),
-    ...state.rightBoxes.map((box) => box.y + box.h),
-  );
-  const overflow = Math.max(0, contentBottom - (height - 32));
-  return { min: -overflow, max: 0 };
+function render(){
+  renderTabs();
+  renderResults();
+  if(mode === "Changes")renderChanges(); else if(mode === "Module Overview")renderModule(); else if(mode === "Hotspots")renderHotspots(); else if(mode === "Cycles")renderCycles(); else renderSymbol();
+  renderDetails();
+  wireClicks();
 }
-
-function clampFocusPan() {
-  const bounds = getFocusPanBounds();
-  focusPanY = Math.min(bounds.max, Math.max(bounds.min, focusPanY));
-}
-
-function setDetailForModule(mod, note) {
-  detailEl.style.display = "block";
-  document.getElementById("detail-title").textContent = mod.label;
-  document.getElementById("detail-type").textContent = "Module";
-  document.getElementById("detail-location").textContent = mod.pathPrefix + (mod.files.size ? " • " + [...mod.files].slice(0, 2).map(shortPath).join(", ") + ([...mod.files].length > 2 ? " …" : "") : "");
-  document.getElementById("detail-connections").textContent =
-    "incoming " + [...mod.incoming.values()].reduce((a, b) => a + b, 0) +
-    ", outgoing " + [...mod.outgoing.values()].reduce((a, b) => a + b, 0) +
-    ", internal " + mod.internalEdgeCount;
-  document.getElementById("detail-notes").textContent = moduleCategorySummary(mod.category) + (note ? " • " + note : "");
-  document.getElementById("detail-callers").textContent = [...mod.incoming.keys()].map((id) => modules.get(id)?.label).filter(Boolean).join(", ") || "none";
-  document.getElementById("detail-callees").textContent = [...mod.outgoing.keys()].map((id) => modules.get(id)?.label).filter(Boolean).join(", ") || "none";
-  document.getElementById("detail-edge-types").textContent = mod.internalEdgeCount > 0 ? ("internal " + mod.internalEdgeCount) : "n/a";
-  document.getElementById("detail-blast").textContent = blastRadiusMode ? "blast mode active" : "toggle Blast Radius to inspect affected neighbors";
-}
-
-function setDetailForSymbol(node) {
-  const incoming = resolvedEdges.filter((e) => e.target === node.id).length;
-  const outgoing = resolvedEdges.filter((e) => e.source === node.id).length;
-  const callers = resolvedEdges.filter((e) => e.target === node.id).map((e) => nodeById.get(e.source)?.name).filter(Boolean);
-  const callees = resolvedEdges.filter((e) => e.source === node.id).map((e) => nodeById.get(e.target)?.name).filter(Boolean);
-  const edgeTypes = new Map();
-  for (const edge of resolvedEdges) {
-    if (edge.source === node.id || edge.target === node.id) {
-      edgeTypes.set(edge.callType, (edgeTypes.get(edge.callType) || 0) + 1);
-    }
-  }
-  const visited = new Set([node.id]);
-  const queue = [{ id: node.id, depth: 0 }];
-  while (queue.length) {
-    const current = queue.shift();
-    if (current.depth >= 2) continue;
-    for (const edge of resolvedEdges) {
-      if (edge.source === current.id && !visited.has(edge.target)) {
-        visited.add(edge.target);
-        queue.push({ id: edge.target, depth: current.depth + 1 });
-      }
-      if (edge.target === current.id && !visited.has(edge.source)) {
-        visited.add(edge.source);
-        queue.push({ id: edge.source, depth: current.depth + 1 });
-      }
-    }
-  }
-  const blastModules = new Set([...visited].map((id) => nodeById.get(id)?.moduleLabel).filter(Boolean));
-  detailEl.style.display = "block";
-  document.getElementById("detail-title").textContent = node.name;
-  document.getElementById("detail-type").textContent = node.kind;
-  document.getElementById("detail-location").textContent = shortPath(node.filePath) + ':' + node.line;
-  document.getElementById("detail-connections").textContent = "incoming " + incoming + ", outgoing " + outgoing;
-  document.getElementById("detail-notes").textContent = "Module: " + node.moduleLabel;
-  document.getElementById("detail-callers").textContent = callers.length ? callers.slice(0, 6).join(", ") + (callers.length > 6 ? " …" : "") : "none";
-  document.getElementById("detail-callees").textContent = callees.length ? callees.slice(0, 6).join(", ") + (callees.length > 6 ? " …" : "") : "none";
-  document.getElementById("detail-edge-types").textContent = [...edgeTypes.entries()].map(([type, count]) => type + "×" + count).join(", ") || "none";
-  document.getElementById("detail-blast").textContent = (visited.size - 1) + " symbols, " + Math.max(0, blastModules.size - 1) + " modules within 2 hops";
-}
-
-function clearDetail() {
-  detailEl.style.display = "none";
-}
-
-function enterFocus(moduleId, note) {
-  mode = "focus";
-  focusedModuleId = moduleId;
-  focusedSymbolId = null;
-  focusPanY = 0;
-  updateStats();
-  updateControls();
-  setDetailForModule(modules.get(moduleId), note || "Focused module view");
-  draw();
-}
-
-function enterExplore() {
-  mode = "explore";
-  focusedModuleId = null;
-  focusedSymbolId = null;
-  focusPanY = 0;
-  clearDetail();
-  updateStats();
-  updateControls();
-  draw();
-}
-
-function backToOverview() {
-  mode = "overview";
-  focusedModuleId = null;
-  focusedSymbolId = null;
-  focusPanY = 0;
-  clearDetail();
-  updateStats();
-  updateControls();
-  draw();
-}
-
-function getSearchMatches() {
-  const q = searchValue.trim().toLowerCase();
-  if (!q) return { modules: new Set(), nodes: new Set() };
-  const modulesSet = new Set();
-  const nodesSet = new Set();
-  for (const mod of moduleList) {
-    if (mod.label.toLowerCase().includes(q) || mod.pathPrefix.toLowerCase().includes(q)) modulesSet.add(mod.id);
-    for (const node of mod.nodes) {
-      if (node.name.toLowerCase().includes(q) || node.filePath.toLowerCase().includes(q)) {
-        modulesSet.add(mod.id);
-        nodesSet.add(node.id);
-      }
-    }
-  }
-  return { modules: modulesSet, nodes: nodesSet };
-}
-
-function computeBlastRadius() {
-  if (!blastRadiusMode) return { modules: new Set(), nodes: new Set() };
-
-  if (focusedSymbolId) {
-    const visited = new Set([focusedSymbolId]);
-    const queue = [{ id: focusedSymbolId, depth: 0 }];
-    while (queue.length) {
-      const current = queue.shift();
-      if (current.depth >= 2) continue;
-      for (const edge of resolvedEdges) {
-        if (edge.source === current.id && !visited.has(edge.target)) {
-          visited.add(edge.target);
-          queue.push({ id: edge.target, depth: current.depth + 1 });
-        }
-        if (edge.target === current.id && !visited.has(edge.source)) {
-          visited.add(edge.source);
-          queue.push({ id: edge.source, depth: current.depth + 1 });
-        }
-      }
-    }
-    const moduleIds = new Set([...visited].map((id) => nodeById.get(id)?.moduleId).filter(Boolean));
-    return { nodes: visited, modules: moduleIds };
-  }
-
-  if (focusedModuleId) {
-    const moduleIds = new Set([focusedModuleId]);
-    const nodeIds = new Set((modules.get(focusedModuleId)?.nodes || []).map((node) => node.id));
-    const queue = [{ id: focusedModuleId, depth: 0 }];
-    while (queue.length) {
-      const current = queue.shift();
-      if (current.depth >= 3) continue;
-      for (const edge of moduleEdges) {
-        if (edge.source === current.id && !moduleIds.has(edge.target)) {
-          moduleIds.add(edge.target);
-          queue.push({ id: edge.target, depth: current.depth + 1 });
-        }
-        if (edge.target === current.id && !moduleIds.has(edge.source)) {
-          moduleIds.add(edge.source);
-          queue.push({ id: edge.source, depth: current.depth + 1 });
-        }
-      }
-    }
-    for (const modId of moduleIds) {
-      for (const node of modules.get(modId)?.nodes || []) nodeIds.add(node.id);
-    }
-    return { modules: moduleIds, nodes: nodeIds };
-  }
-
-  return { modules: new Set(), nodes: new Set() };
-}
-
-// ────────────────────────────────────────────────────────────
-// Drawing
-// ────────────────────────────────────────────────────────────
-function drawOverview() {
-  const matches = getSearchMatches();
-  const blast = computeBlastRadius();
-
-  if (!overviewLayout.sparse) {
-    // background flow lanes
-    for (let d = 0; d <= overviewLayout.maxDepth; d++) {
-      const x = 52 + d * 170;
-      ctx.fillStyle = "rgba(255,255,255,0.02)";
-      roundRect(ctx, x - 18, 94, 130, height - 170, 12);
-      ctx.fill();
-      if (showLabels) {
-        ctx.fillStyle = "#647095";
-        ctx.font = "11px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(d === 0 ? "entry" : "layer " + d, x + 47, 82);
-      }
-    }
-  } else if (showLabels) {
-    ctx.fillStyle = "#647095";
-    ctx.font = "11px sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText("module atlas", 48, 82);
-  }
-
-  const drawOverviewEdges = () => {
-  const atlasBusY = Math.max(40, Math.min(...moduleList.map((mod) => (moduleBounds.get(mod.id)?.y ?? 120) - 18)));
-  for (const edge of moduleEdges) {
-    const s = moduleBounds.get(edge.source);
-    const t = moduleBounds.get(edge.target);
-    if (!s || !t) continue;
-    const sMid = { x: s.x + s.w, y: s.y + s.h / 2 };
-    const tMid = { x: t.x, y: t.y + t.h / 2 };
-    const searched = !matches.modules.size || matches.modules.has(edge.source) || matches.modules.has(edge.target);
-    const inBlast = !blast.modules.size || blast.modules.has(edge.source) || blast.modules.has(edge.target);
-    ctx.strokeStyle = searched && inBlast ? "rgba(123,145,255," + Math.min(0.82, 0.18 + edge.weight * 0.06) + ")" : "rgba(70,78,110,0.12)";
-    ctx.lineWidth = Math.max(1, Math.min(8, edge.weight * 0.85));
-    ctx.beginPath();
-    if (overviewLayout.sparse) {
-      const sourcePoint = s.x < t.x
-        ? { x: s.x + s.w, y: s.y + s.h / 2 }
-        : { x: s.x, y: s.y + s.h / 2 };
-      const targetPoint = s.x < t.x
-        ? { x: t.x, y: t.y + t.h / 2 }
-        : { x: t.x + t.w, y: t.y + t.h / 2 };
-      const corridorX = (sourcePoint.x + targetPoint.x) / 2;
-      ctx.moveTo(sourcePoint.x, sourcePoint.y);
-      ctx.lineTo(corridorX, sourcePoint.y);
-      ctx.lineTo(corridorX, targetPoint.y);
-      ctx.lineTo(targetPoint.x, targetPoint.y);
-    } else {
-      const dx = Math.max(50, (tMid.x - sMid.x) * 0.45);
-      ctx.moveTo(sMid.x, sMid.y);
-      ctx.bezierCurveTo(sMid.x + dx, sMid.y, tMid.x - dx, tMid.y, tMid.x, tMid.y);
-    }
-    ctx.stroke();
-
-    if (showWeights) {
-      const mx = (sMid.x + tMid.x) / 2;
-      const my = (sMid.y + tMid.y) / 2;
-      ctx.fillStyle = "rgba(13,15,26,0.95)";
-      roundRect(ctx, mx - 10, my - 8, 20, 16, 5);
-      ctx.fill();
-      ctx.fillStyle = "#cfd6ef";
-      ctx.font = "10px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(String(edge.weight), mx, my + 3);
-    }
-  }
-  };
-
-  if (!overviewLayout.sparse) drawOverviewEdges();
-
-  for (const mod of moduleList) {
-    const b = moduleBounds.get(mod.id);
-    const searched = !matches.modules.size || matches.modules.has(mod.id);
-    const inBlast = !blast.modules.size || blast.modules.has(mod.id);
-    const fill = searched && inBlast ? mod.color + "18" : "rgba(24,28,44,0.46)";
-    const stroke = searched && inBlast ? mod.color : "#2f3659";
-
-    ctx.fillStyle = fill;
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = searched && inBlast ? mod.color + "33" : "rgba(0,0,0,0)";
-    ctx.shadowBlur = searched && inBlast ? 18 : 0;
-    ctx.shadowOffsetY = 6;
-    roundRect(ctx, b.x, b.y, b.w, b.h, 14);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
-    ctx.stroke();
-
-    // header glow / accent
-    ctx.fillStyle = mod.color + "22";
-    roundRect(ctx, b.x + 10, b.y + 10, b.w - 20, 16, 8);
-    ctx.fill();
-
-    // module title
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "700 14px sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText(mod.label, b.x + 14, b.y + 23);
-
-    // summary
-    ctx.fillStyle = "#b0b8d4";
-    ctx.font = "12px sans-serif";
-    ctx.fillText(mod.nodes.length + " symbols", b.x + 14, b.y + 46);
-    ctx.fillText(mod.files.size + " files", b.x + 14, b.y + 63);
-
-    // density bars
-    const barY = b.y + b.h - 18;
-    const outgoing = [...mod.outgoing.values()].reduce((a, c) => a + c, 0);
-    const incoming = [...mod.incoming.values()].reduce((a, c) => a + c, 0);
-    ctx.fillStyle = "rgba(255,255,255,0.08)";
-    roundRect(ctx, b.x + 14, barY, b.w - 28, 7, 3);
-    ctx.fill();
-    const total = Math.max(1, outgoing + incoming + mod.internalEdgeCount);
-    const outW = (b.w - 28) * (outgoing / total);
-    const intW = (b.w - 28) * (mod.internalEdgeCount / total);
-    ctx.fillStyle = "#7b91ff";
-    roundRect(ctx, b.x + 14, barY, outW, 7, 3);
-    ctx.fill();
-    ctx.fillStyle = "#4ad7a6";
-    roundRect(ctx, b.x + 14 + outW, barY, intW, 7, 3);
-    ctx.fill();
-  }
-
-  if (overviewLayout.sparse) drawOverviewEdges();
-}
-
-function drawExplore() {
-  const matches = getSearchMatches();
-  const blast = computeBlastRadius();
-
-  ctx.fillStyle = "#647095";
-  ctx.font = "11px sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillText("community view", 48, 82);
-
-  for (const community of communityList) {
-    const bounds = exploreCommunityBounds.get(community.id);
-    const searched = !matches.modules.size || matches.modules.has(community.id);
-    const inBlast = !blast.modules.size || blast.modules.has(community.id);
-    const emphasized = searched && inBlast;
-
-    ctx.fillStyle = emphasized ? community.color + "16" : "rgba(24,28,44,0.46)";
-    ctx.strokeStyle = emphasized ? community.color + "55" : "rgba(64,72,104,0.6)";
-    ctx.lineWidth = 1.2;
-    roundRect(ctx, bounds.x, bounds.y, bounds.w, bounds.h, 16);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = emphasized ? "#ffffff" : "#c5cbe0";
-    ctx.font = "600 12px sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText(community.label, bounds.x + 14, bounds.y + 20);
-    ctx.fillStyle = "#90a0c8";
-    ctx.font = "10px sans-serif";
-    const subtitle = community.category === "fixture"
-      ? "fixture community"
-      : community.category === "test"
-        ? "test community"
-        : community.category === "native"
-          ? "native community"
-          : "module community";
-    ctx.fillText(subtitle + " • " + community.nodes.length + " symbols", bounds.x + 14, bounds.y + 36);
-  }
-
-  for (const edge of resolvedEdges) {
-    const sourcePos = exploreNodePositions.get(edge.source);
-    const targetPos = exploreNodePositions.get(edge.target);
-    const sourceNode = nodeById.get(edge.source);
-    const targetNode = nodeById.get(edge.target);
-    if (!sourcePos || !targetPos || !sourceNode || !targetNode) continue;
-
-    const searched = !matches.nodes.size || matches.nodes.has(edge.source) || matches.nodes.has(edge.target);
-    const inBlast = !blast.nodes.size || blast.nodes.has(edge.source) || blast.nodes.has(edge.target);
-    const crossCommunity = sourceNode.moduleId !== targetNode.moduleId;
-
-    ctx.strokeStyle = searched && inBlast
-      ? crossCommunity ? "rgba(123,145,255,0.34)" : "rgba(74,215,166,0.26)"
-      : "rgba(80,88,118,0.12)";
-    ctx.lineWidth = crossCommunity ? 1.4 : 0.9;
-    ctx.beginPath();
-    ctx.moveTo(sourcePos.x, sourcePos.y);
-    ctx.lineTo(targetPos.x, targetPos.y);
-    ctx.stroke();
-  }
-
-  for (const node of allNodes) {
-    const pos = exploreNodePositions.get(node.id);
-    if (!pos) continue;
-    const nodeModule = communityById.get(node.moduleId);
-    const match = (!matches.nodes.size || matches.nodes.has(node.id)) && (!blast.nodes.size || blast.nodes.has(node.id));
-    const selected = focusedSymbolId === node.id;
-    const hovered = hoverTarget && hoverTarget.type === "symbol" && hoverTarget.node.id === node.id;
-    const degree = edgeWeightForNode(node.id);
-    const radius = selected ? 8 : Math.min(7, 3.5 + degree * 0.4);
-    const color = match ? kindColor(node.kind, nodeModule?.color || "#7b91ff") : "#4f5677";
-
-    drawSymbolGlyph(ctx, node, pos.x, pos.y, radius, color);
-    if (selected || hovered) {
-      ctx.strokeStyle = selected ? "#ffffff" : "rgba(255,255,255,0.72)";
-      ctx.lineWidth = selected ? 2 : 1.3;
-      ctx.stroke();
-    }
-
-    if (showLabels && (selected || hovered || match && degree >= 3)) {
-      const label = shortNodeLabel(node.name);
-      ctx.font = selected ? "600 10px sans-serif" : "9px sans-serif";
-      ctx.textAlign = "center";
-      const textWidth = ctx.measureText(label).width;
-      const chipW = textWidth + 10;
-      const chipH = 16;
-      const chipX = pos.x - chipW / 2;
-      const chipY = pos.y - (radius + 20);
-      ctx.fillStyle = selected ? "rgba(255,255,255,0.16)" : "rgba(18,22,36,0.9)";
-      roundRect(ctx, chipX, chipY, chipW, chipH, 6);
-      ctx.fill();
-      ctx.strokeStyle = selected ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.08)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.fillStyle = selected ? "#fff" : "#dce2f4";
-      ctx.fillText(label, pos.x, chipY + 11);
-    }
-  }
-}
-
-function drawFocus() {
-  const state = layoutFocus(focusedModuleId);
-  if (!state) return;
-  clampFocusPan();
-  const matches = getSearchMatches();
-  const blast = computeBlastRadius();
-  ctx.save();
-  ctx.translate(0, focusPanY);
-
-  // left callers
-  for (const box of state.leftBoxes) {
-    drawSideModuleBox(box, "caller", (!matches.modules.size || matches.modules.has(box.mod.id)) && (!blast.modules.size || blast.modules.has(box.mod.id)));
-  }
-  // right callees
-  for (const box of state.rightBoxes) {
-    drawSideModuleBox(box, "callee", (!matches.modules.size || matches.modules.has(box.mod.id)) && (!blast.modules.size || blast.modules.has(box.mod.id)));
-  }
-
-  // center panel
-  ctx.fillStyle = state.focus.center.color + "18";
-  ctx.strokeStyle = state.focus.center.color;
-  ctx.lineWidth = 2;
-  roundRect(ctx, state.centerBox.x, state.centerBox.y, state.centerBox.w, state.centerBox.h, 16);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "700 16px sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillText(state.focus.center.label, state.centerBox.x + 16, state.centerBox.y + 24);
-  ctx.fillStyle = "#9aa6cb";
-  ctx.font = "12px sans-serif";
-  ctx.fillText(
-    state.focus.center.nodes.length + " symbols • " + state.focus.center.files.size + " files • internal edges " + state.focus.center.internalEdgeCount,
-    state.centerBox.x + 16,
-    state.centerBox.y + 44,
-  );
-
-  for (const fileBox of state.fileBoxes) {
-    ctx.fillStyle = "rgba(255,255,255,0.03)";
-    ctx.strokeStyle = "rgba(255,255,255,0.08)";
-    ctx.lineWidth = 1;
-    roundRect(ctx, fileBox.x, fileBox.y, fileBox.w, fileBox.h, 10);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(255,255,255,0.06)";
-    roundRect(ctx, fileBox.x + 6, fileBox.y + 6, 112, fileBox.h - 12, 8);
-    ctx.fill();
-
-    ctx.fillStyle = "#bfc8e8";
-    ctx.font = "10px sans-serif";
-    ctx.textAlign = "left";
-    const shortFile = fileBox.filePath.split("/").pop();
-    ctx.fillText(shortFile, fileBox.x + 14, fileBox.y + 20);
-    ctx.fillStyle = "#8290b8";
-    ctx.font = "9px sans-serif";
-    ctx.fillText(fileBox.nodes.length + " symbols", fileBox.x + 14, fileBox.y + 34);
-  }
-
-  // internal symbol edges
-  const centerIds = new Set(state.focus.center.nodes.map((n) => n.id));
-  const internalEdges = resolvedEdges.filter((e) => centerIds.has(e.source) && centerIds.has(e.target));
-  for (const edge of internalEdges) {
-    const s = state.symbolPositions.get(edge.source);
-    const t = state.symbolPositions.get(edge.target);
-    const searched = !matches.nodes.size || matches.nodes.has(edge.source) || matches.nodes.has(edge.target);
-    ctx.strokeStyle = searched ? "rgba(123,145,255,0.5)" : "rgba(74,82,118,0.22)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.lineTo(t.x, t.y);
-    ctx.stroke();
-  }
-
-  // symbol nodes
-  for (const node of state.focus.center.nodes) {
-    const pos = state.symbolPositions.get(node.id);
-    const match = (!matches.nodes.size || matches.nodes.has(node.id)) && (!blast.nodes.size || blast.nodes.has(node.id));
-    const selected = focusedSymbolId === node.id;
-    const degree = resolvedEdges.filter((e) => e.source === node.id || e.target === node.id).length;
-    const radius = selected ? 8 : Math.min(7, 4 + degree * 0.45);
-    const color = match ? kindColor(node.kind, state.focus.center.color) : "#525a7e";
-    drawSymbolGlyph(ctx, node, pos.x, pos.y, radius, color);
-    if (selected) {
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    } else if (hoverTarget && hoverTarget.type === "symbol" && hoverTarget.node.id === node.id) {
-      ctx.strokeStyle = "rgba(255,255,255,0.8)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    if (showLabels) {
-      const label = shortNodeLabel(node.name);
-      ctx.font = selected ? "600 10px sans-serif" : "9px sans-serif";
-      ctx.textAlign = "center";
-      const textWidth = ctx.measureText(label).width;
-      const chipW = textWidth + 10;
-      const chipH = 16;
-      const chipX = pos.x - chipW / 2;
-      const chipY = pos.y - (radius + 20);
-      const hovered = hoverTarget && hoverTarget.type === "symbol" && hoverTarget.node.id === node.id;
-      ctx.fillStyle = selected ? "rgba(255,255,255,0.16)" : (hovered ? "rgba(33,38,60,0.96)" : "rgba(18,22,36,0.88)");
-      roundRect(ctx, chipX, chipY, chipW, chipH, 6);
-      ctx.fill();
-      ctx.strokeStyle = selected ? "rgba(255,255,255,0.28)" : (hovered ? "rgba(123,145,255,0.35)" : "rgba(255,255,255,0.08)");
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.fillStyle = selected ? "#fff" : (hovered ? "#eef3ff" : "#dce2f4");
-      ctx.fillText(label, pos.x, chipY + 11);
-    }
-  }
-
-  // aggregated side edges
-  for (const box of state.leftBoxes) {
-    const targetY = box.y + box.h / 2;
-    const sourceY = state.centerBox.y + state.centerBox.h / 2;
-    const weight = box.weight;
-    drawAggregateConnector(box.x + box.w, targetY, state.centerBox.x, sourceY, weight, box.mod.color, true);
-  }
-  for (const box of state.rightBoxes) {
-    const sourceY = state.centerBox.y + state.centerBox.h / 2;
-    const targetY = box.y + box.h / 2;
-    const weight = box.weight;
-    drawAggregateConnector(state.centerBox.x + state.centerBox.w, sourceY, box.x, targetY, weight, box.mod.color, false);
-  }
-  ctx.restore();
-}
-
-function drawSideModuleBox(box, kind, searched) {
-  ctx.fillStyle = searched ? box.mod.color + "20" : "rgba(28,31,49,0.76)";
-  ctx.strokeStyle = searched ? box.mod.color : "#2f3659";
-  ctx.lineWidth = 1.4;
-  ctx.shadowColor = searched ? box.mod.color + "22" : "rgba(0,0,0,0)";
-  ctx.shadowBlur = searched ? 10 : 0;
-  ctx.shadowOffsetY = 4;
-  roundRect(ctx, box.x, box.y, box.w, box.h, 12);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
-  ctx.stroke();
-
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "600 12px sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillText(box.mod.label, box.x + 12, box.y + 20);
-  ctx.fillStyle = "#95a0c5";
-  ctx.font = "11px sans-serif";
-  ctx.fillText((box.hop > 1 ? String(box.hop) + " hops away" : (kind === "caller" ? "calls selected module" : "called by selected module")), box.x + 12, box.y + 38);
-  ctx.fillText(box.weight + " cross-module calls", box.x + 12, box.y + 54);
-}
-
-function drawAggregateConnector(x1, y1, x2, y2, weight, color, leftToCenter) {
-  const dx = Math.abs(x2 - x1) * 0.45;
-  ctx.strokeStyle = color + (showWeights ? "cc" : "88");
-  ctx.lineWidth = Math.max(2, Math.min(10, weight * 0.8));
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  if (leftToCenter) {
-    ctx.bezierCurveTo(x1 + dx, y1, x2 - dx, y2, x2, y2);
-  } else {
-    ctx.bezierCurveTo(x1 + dx, y1, x2 - dx, y2, x2, y2);
-  }
-  ctx.stroke();
-
-  if (showWeights) {
-    const mx = (x1 + x2) / 2;
-    const my = (y1 + y2) / 2;
-    ctx.fillStyle = "rgba(13,15,26,0.96)";
-    roundRect(ctx, mx - 12, my - 9, 24, 18, 6);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.font = "10px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(String(weight), mx, my + 3);
-  }
-}
-
-function draw() {
-  ctx.clearRect(0, 0, width, height);
-  if (mode === "overview") drawOverview();
-  else if (mode === "explore") drawExplore();
-  else drawFocus();
-}
-
-// ────────────────────────────────────────────────────────────
-// Hit testing
-// ────────────────────────────────────────────────────────────
-function hitTestOverview(x, y) {
-  for (const mod of moduleList) {
-    const b = moduleBounds.get(mod.id);
-    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return { type: "module", moduleId: mod.id };
-  }
-  return null;
-}
-
-function hitTestExplore(x, y) {
-  for (const node of allNodes) {
-    const pos = exploreNodePositions.get(node.id);
-    if (!pos) continue;
-    const dx = x - pos.x;
-    const dy = y - pos.y;
-    if (dx * dx + dy * dy <= 64) return { type: "symbol", node };
-  }
-
-  for (const community of communityList) {
-    const bounds = exploreCommunityBounds.get(community.id);
-    if (!bounds) continue;
-    if (x >= bounds.x && x <= bounds.x + bounds.w && y >= bounds.y && y <= bounds.y + bounds.h) {
-      return { type: "module", moduleId: community.id };
-    }
-  }
-
-  return null;
-}
-
-function hitTestFocus(x, y) {
-  const state = layoutFocus(focusedModuleId);
-  if (!state) return null;
-  const adjustedY = y - focusPanY;
-
-  if (x >= state.centerBox.x && x <= state.centerBox.x + state.centerBox.w && adjustedY >= state.centerBox.y && adjustedY <= state.centerBox.y + state.centerBox.h) {
-    for (const node of state.focus.center.nodes) {
-      const pos = state.symbolPositions.get(node.id);
-      const dx = x - pos.x;
-      const dy = adjustedY - pos.y;
-      if (dx * dx + dy * dy <= 64) return { type: "symbol", node };
-    }
-    return { type: "module", moduleId: focusedModuleId };
-  }
-
-  for (const box of [...state.leftBoxes, ...state.rightBoxes]) {
-    if (x >= box.x && x <= box.x + box.w && adjustedY >= box.y && adjustedY <= box.y + box.h) {
-      return { type: "module", moduleId: box.mod.id };
-    }
-  }
-  return null;
-}
-
-canvas.addEventListener("wheel", (event) => {
-  if (mode !== "focus") return;
-  const bounds = getFocusPanBounds();
-  if (bounds.min === 0 && bounds.max === 0) return;
-  event.preventDefault();
-  focusPanY -= event.deltaY;
-  clampFocusPan();
-  draw();
-}, { passive: false });
-
-canvas.addEventListener("mousemove", (event) => {
-  const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  const previousHover = hoverTarget;
-  hoverTarget = mode === "overview"
-    ? hitTestOverview(x, y)
-    : mode === "explore"
-      ? hitTestExplore(x, y)
-      : hitTestFocus(x, y);
-  canvas.style.cursor = hoverTarget ? "pointer" : "default";
-  if ((previousHover?.type || null) !== (hoverTarget?.type || null)
-    || (previousHover?.node?.id || null) !== (hoverTarget?.node?.id || null)
-    || (previousHover?.moduleId || null) !== (hoverTarget?.moduleId || null)) {
-    draw();
-  }
-});
-
-canvas.addEventListener("click", (event) => {
-  const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  const hit = mode === "overview"
-    ? hitTestOverview(x, y)
-    : mode === "explore"
-      ? hitTestExplore(x, y)
-      : hitTestFocus(x, y);
-  if (!hit) return;
-
-  if (hit.type === "module") {
-    if (mode === "explore") {
-      enterFocus(hit.moduleId, "Community selected from clustered exploration view");
-      return;
-    }
-
-    if (mode === "focus" && hit.moduleId === focusedModuleId) {
-      setDetailForModule(modules.get(hit.moduleId), "Selected module overview");
-      draw();
-      return;
-    }
-    if (mode === "focus" && hit.moduleId !== focusedModuleId) {
-      enterFocus(hit.moduleId, "Drilled into connected module");
-      return;
-    }
-    enterFocus(hit.moduleId, "Click Overview to return to the module overview");
-    return;
-  }
-
-  if (hit.type === "symbol") {
-    focusedSymbolId = hit.node.id;
-    setDetailForSymbol(hit.node);
-    draw();
-  }
-});
-
-// controls
-const searchInput = document.getElementById("search");
-searchInput.addEventListener("input", () => {
-  searchValue = searchInput.value;
-  draw();
-});
-
-document.getElementById("btn-overview").addEventListener("click", () => {
-  backToOverview();
-});
-
-document.getElementById("btn-explore").addEventListener("click", () => {
-  enterExplore();
-});
-
-document.getElementById("btn-labels").addEventListener("click", function () {
-  showLabels = !showLabels;
-  this.classList.toggle("active", showLabels);
-  draw();
-});
-
-document.getElementById("btn-weights").addEventListener("click", function () {
-  showWeights = !showWeights;
-  this.classList.toggle("active", showWeights);
-  draw();
-});
-
-document.getElementById("btn-blast").addEventListener("click", function () {
-  blastRadiusMode = !blastRadiusMode;
-  this.classList.toggle("active", blastRadiusMode);
-  draw();
-});
-
-document.getElementById("btn-fit").addEventListener("click", () => {
-  if (mode === "focus") return;
-  if (mode === "overview") overviewLayout = layoutOverview();
-  if (mode === "explore") layoutExploreGraph();
-  clearDetail();
-  draw();
-});
-
-window.addEventListener("resize", () => {
-  resizeCanvas();
-  overviewLayout = layoutOverview();
-  layoutExploreGraph();
-  draw();
-});
-
-layoutExploreGraph();
-updateStats();
-updateControls();
-draw();
-})();
+document.getElementById("search").addEventListener("input", function(event){query = event.target.value; renderResults(); wireClicks();});
+addEventListener("resize", function(){requestAnimationFrame(drawEdges);});
+render();
 </script>
+<!-- Compatibility copy: clustered symbol exploration view | Explore Symbols | Explore mode: clustered symbol relationships | Module Overview | View Options | Focused module view | Selected from module list | This slice only has intra-module calls. -->
 </body>
 </html>`;
 }
