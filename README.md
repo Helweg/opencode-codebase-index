@@ -589,7 +589,6 @@ Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-inde
   "indexing": {
     "autoIndex": false,                       // Auto-index on plugin load
     "watchFiles": true,                       // Re-index on file changes
-    "concurrentReindexRuns": 1,               // Max watcher-triggered reindex runs at once (1-4)
     "maxFileSize": 1048576,                   // Max file size in bytes (default: 1MB)
     "maxChunksPerFile": 100,                  // Max chunks per file
     "semanticOnly": false,                    // Only index functions/classes (skip blocks)
@@ -665,7 +664,6 @@ String values in `codebase-index.json` can reference environment variables with 
 | **indexing** | | |
 | `autoIndex` | `false` | Automatically index on plugin load |
 | `watchFiles` | `true` | Re-index when files change |
-| `concurrentReindexRuns` | `1` | Maximum watcher-triggered reindex runs allowed at once. Values are clamped to 1-4. Keep `1` for slow or shared embedding providers. |
 | `maxFileSize` | `1048576` | Skip files larger than this (bytes). Default: 1MB |
 | `maxChunksPerFile` | `100` | Maximum chunks to index per file (controls token costs for large files) |
 | `semanticOnly` | `false` | When `true`, only index semantic nodes (functions, classes) and skip generic blocks |

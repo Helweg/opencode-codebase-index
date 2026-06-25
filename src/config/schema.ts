@@ -26,7 +26,6 @@ export type IndexScope = "project" | "global";
 export interface IndexingConfig {
   autoIndex: boolean;
   watchFiles: boolean;
-  concurrentReindexRuns: number;
   maxFileSize: number;
   maxChunksPerFile: number;
   semanticOnly: boolean;
@@ -169,7 +168,6 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
   const indexing: IndexingConfig = {
     autoIndex: typeof rawIndexing.autoIndex === "boolean" ? rawIndexing.autoIndex : defaultIndexing.autoIndex,
     watchFiles: typeof rawIndexing.watchFiles === "boolean" ? rawIndexing.watchFiles : defaultIndexing.watchFiles,
-    concurrentReindexRuns: typeof rawIndexing.concurrentReindexRuns === "number" ? Math.min(4, Math.max(1, Math.floor(rawIndexing.concurrentReindexRuns))) : defaultIndexing.concurrentReindexRuns,
     maxFileSize: typeof rawIndexing.maxFileSize === "number" ? rawIndexing.maxFileSize : defaultIndexing.maxFileSize,
     maxChunksPerFile: typeof rawIndexing.maxChunksPerFile === "number" ? Math.max(1, rawIndexing.maxChunksPerFile) : defaultIndexing.maxChunksPerFile,
     semanticOnly: typeof rawIndexing.semanticOnly === "boolean" ? rawIndexing.semanticOnly : defaultIndexing.semanticOnly,

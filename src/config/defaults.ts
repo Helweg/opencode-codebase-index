@@ -9,7 +9,6 @@ export function getDefaultIndexingConfig(): IndexingConfig {
   return {
     autoIndex: false,
     watchFiles: true,
-    concurrentReindexRuns: 1,
     maxFileSize: 1048576,
     maxChunksPerFile: 100,
     semanticOnly: false,

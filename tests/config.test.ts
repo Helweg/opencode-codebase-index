@@ -226,7 +226,6 @@ describe("config schema", () => {
           indexing: {
             maxFileSize: 2000000,
             maxChunksPerFile: 50,
-            concurrentReindexRuns: 2,
             retries: 5,
             retryDelayMs: 2000,
             gcIntervalDays: 14,
@@ -236,7 +235,6 @@ describe("config schema", () => {
 
         expect(config.indexing.maxFileSize).toBe(2000000);
         expect(config.indexing.maxChunksPerFile).toBe(50);
-        expect(config.indexing.concurrentReindexRuns).toBe(2);
         expect(config.indexing.retries).toBe(5);
         expect(config.indexing.retryDelayMs).toBe(2000);
         expect(config.indexing.gcIntervalDays).toBe(14);
@@ -246,14 +244,6 @@ describe("config schema", () => {
       it("should enforce minimum of 1 for maxChunksPerFile", () => {
         expect(parseConfig({ indexing: { maxChunksPerFile: 0 } }).indexing.maxChunksPerFile).toBe(1);
         expect(parseConfig({ indexing: { maxChunksPerFile: -5 } }).indexing.maxChunksPerFile).toBe(1);
-      });
-
-      it("should bound concurrentReindexRuns", () => {
-        expect(parseConfig({}).indexing.concurrentReindexRuns).toBe(1);
-        expect(parseConfig({ indexing: { concurrentReindexRuns: 0 } }).indexing.concurrentReindexRuns).toBe(1);
-        expect(parseConfig({ indexing: { concurrentReindexRuns: 2.8 } }).indexing.concurrentReindexRuns).toBe(2);
-        expect(parseConfig({ indexing: { concurrentReindexRuns: 99 } }).indexing.concurrentReindexRuns).toBe(4);
-        expect(parseConfig({ indexing: { concurrentReindexRuns: "2" } }).indexing.concurrentReindexRuns).toBe(1);
       });
 
       it("should enforce minimum of 1 for gcIntervalDays", () => {
