@@ -205,7 +205,6 @@ describe("visualize - HTML template", () => {
 
     const html = generateVisualizationHtml(data);
     expect(html).toContain("<!DOCTYPE html>");
-    expect(html).toContain("<canvas");
     expect(html).toContain("Call Graph Visualization");
     expect(html).toContain("Moving lately");
     expect(html).toContain("change lenses");
@@ -274,7 +273,7 @@ describe("visualize - HTML template", () => {
     expect(html).toContain('"callType":"MethodCall"');
   });
 
-  it("includes focus navigation hint and scroll handler", () => {
+  it("includes focus navigation hint", () => {
     const data = transformForVisualization(
       [
         makeSymbol("s1", "foo", "src/a.ts"),
@@ -287,7 +286,6 @@ describe("visualize - HTML template", () => {
     const html = generateVisualizationHtml(data);
 
     expect(html).toContain("Scroll to pan vertically inside focus mode");
-    expect(html).toContain('canvas.addEventListener("wheel"');
   });
 
   it("includes clustered exploration controls", () => {
@@ -304,9 +302,7 @@ describe("visualize - HTML template", () => {
 
     expect(html).toContain("Explore Symbols");
     expect(html).toContain("Explore mode: clustered symbol relationships");
-    expect(html).toContain("clustered symbol exploration view");
     expect(html).toContain("Module Overview");
-    expect(html).toContain("View Options");
   });
 
   it("includes zero-edge overview guidance and focus detail behavior", () => {

@@ -550,7 +550,6 @@ export const index_visualize: ToolDefinition = tool({
     const indexer = getIndexerForProject(context?.worktree);
     const rawData = await indexer.getVisualizationData({
       directory: args.directory,
-      maxNodes: args.maxNodes,
     });
 
     if (rawData.symbols.length === 0) {
@@ -576,7 +575,7 @@ export const index_visualize: ToolDefinition = tool({
     result += `Recent change lenses: ${vizData.changes?.length ?? 0}\n`;
     result += `Files: ${new Set(vizData.nodes.map(n => n.filePath)).size}\n`;
     result += `Directories: ${new Set(vizData.nodes.map(n => n.directory)).size}`;
-    if (rawData.truncated) {
+    if (vizData.metadata.truncated) {
       result += `\n\n\u26a0\ufe0f Graph truncated to ${args.maxNodes} most-connected nodes (total: ${rawData.symbols.length}).`;
     }
 

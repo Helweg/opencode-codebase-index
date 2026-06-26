@@ -69,7 +69,6 @@ async function handleVisualizeCommand(argv: string[], cwd: string): Promise<numb
     const indexer = new Indexer(args.project, config);
     const rawData = await indexer.getVisualizationData({
       directory: args.directory,
-      maxNodes: args.maxNodes,
     });
 
     if (rawData.symbols.length === 0) {
@@ -79,6 +78,8 @@ async function handleVisualizeCommand(argv: string[], cwd: string): Promise<numb
 
     const vizData = attachRecentActivity(transformForVisualization(rawData.symbols, rawData.edges, {
       includeOrphans: args.includeOrphans,
+      directory: args.directory,
+      maxNodes: args.maxNodes,
     }), args.project);
 
     if (vizData.nodes.length === 0) {
@@ -91,7 +92,7 @@ async function handleVisualizeCommand(argv: string[], cwd: string): Promise<numb
     console.log(`Temporal call graph visualization generated: ${outputPath}`);
     console.log(`Nodes: ${vizData.nodes.length} | Edges: ${vizData.edges.length}`);
     console.log(`Recent change lenses: ${vizData.changes?.length ?? 0}`);
-    if (rawData.truncated) {
+    if (vizData.metadata.truncated) {
       console.log(`Graph truncated to ${args.maxNodes} most-connected nodes.`);
     }
     return 0;

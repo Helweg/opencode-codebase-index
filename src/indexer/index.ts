@@ -5124,10 +5124,9 @@ export class Indexer {
     };
   }
 
-  async getVisualizationData(options?: { directory?: string; maxNodes?: number }): Promise<{
+  async getVisualizationData(options?: { directory?: string }): Promise<{
     symbols: SymbolData[];
     edges: CallEdgeData[];
-    truncated: boolean;
   }> {
     const { database, store } = await this.ensureInitialized();
     const seenSymbols = new Map<string, SymbolData>();
@@ -5180,12 +5179,7 @@ export class Indexer {
       }
     }
 
-    const symbols = [...seenSymbols.values()];
-    const edges = [...seenEdges.values()];
-    const maxNodes = options?.maxNodes ?? 5000;
-    const truncated = symbols.length > maxNodes;
-
-    return { symbols, edges, truncated };
+    return { symbols: [...seenSymbols.values()], edges: [...seenEdges.values()] };
   }
 
   async close(): Promise<void> {

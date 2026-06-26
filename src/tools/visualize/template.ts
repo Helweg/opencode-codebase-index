@@ -25,7 +25,6 @@ export function generateVisualizationHtml(data: VisualizationData): string {
 .details{display:grid;gap:8px}.kv{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #17243a;padding-bottom:7px;color:#6f83a4;font-size:12px}.kv span:first-child{color:#334966;text-transform:uppercase;font-size:10px;letter-spacing:.08em}.mini{display:flex;align-items:center;gap:8px;color:#6f83a4;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}.empty{height:100%;display:grid;place-items:center;color:#334966;font-size:12px;text-align:center;line-height:1.5}.guide{border:1px solid #203149;border-radius:7px;background:#101722;padding:10px;color:#6f83a4;font-size:12px;line-height:1.45}.guide b{display:block;color:#e0e6f7;margin-bottom:4px}.guide span{display:block}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;align-content:start}.rank{font-size:20px;color:#8b6cf6;font-variant-numeric:tabular-nums}.change-grid{display:grid;grid-template-columns:minmax(280px,.95fr) minmax(320px,1.2fr);gap:12px;height:100%;min-height:0}.change-list,.why{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;overflow-x:hidden}.change-top{display:flex;align-items:center;gap:8px;margin-bottom:7px;min-width:0}.pill{font-size:10px;text-transform:uppercase;letter-spacing:.08em;border:1px solid #203149;border-radius:999px;padding:3px 7px;color:#6f83a4;flex:0 0 auto}.pill.hot{color:#d5c9ff;border-color:#634bc2}.pill.risk{color:#ffbab7;border-color:#8d3d3a}.pill.legacy{color:#c5d1df;border-color:#41536c}.why-card{min-width:0;border:1px solid #203149;background:rgba(16,23,34,.65);border-radius:8px;padding:14px;overflow:hidden}.why-card h3{margin:0 0 8px;font-size:13px}.why-card p{margin:0;color:#6f83a4;font-size:13px;line-height:1.55}.impact{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}.impact div{border:1px solid #17243a;border-radius:7px;padding:8px}.impact b{display:block;font-size:16px;color:#e0e6f7}.impact span{font-size:10px;color:#334966;text-transform:uppercase;letter-spacing:.08em}
 .hint{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);font-size:11px;color:#334966;border:1px solid #203149;background:rgba(13,17,24,.9);border-radius:6px;padding:6px 12px;white-space:nowrap}
-#legacy-canvas{display:none}
 @media(max-width:1500px){body{overflow:auto}#app{height:auto;min-height:100vh;grid-template-columns:1fr;grid-template-rows:auto auto auto auto}.top{flex-wrap:wrap}.tabs{flex-wrap:wrap;overflow:visible}.search{width:100%;max-width:none}.stats{margin-left:0;width:100%}.main{order:1;min-height:820px}.right{order:2}.left{order:3}.flow{grid-template-columns:minmax(220px,1fr) minmax(300px,1.15fr) minmax(220px,1fr);gap:16px;align-items:center}.change-grid{grid-template-columns:1fr;gap:12px;align-items:stretch}.why{order:1}.change-list{order:2}.lane{height:min(560px,calc(100vh - 180px));min-height:260px}.impact{grid-template-columns:1fr}.edges{display:none}.hint{position:static;transform:none;margin-top:10px;text-align:center}}
 @media(max-width:900px){.flow,.module-lanes{grid-template-columns:1fr;gap:12px;align-items:stretch}.lane{height:auto;max-height:360px;min-height:160px}.module-board{grid-template-rows:auto auto minmax(260px,1fr);overflow:visible}.module-symbols{max-height:420px}.module-symbols .row{grid-template-columns:1fr}.module-symbols .row .meta{justify-content:flex-start;margin-top:4px}}
 </style>
@@ -38,13 +37,11 @@ export function generateVisualizationHtml(data: VisualizationData): string {
     <div class="stats"><b id="modeName">Changes</b> | <b id="nodeCount">0</b> nodes | <b id="edgeCount">0</b> edges | <b id="changeCount">0</b> change lenses</div>
   </div>
   <aside class="panel left"><h2 class="title">Search / jump</h2><div id="results" class="results"></div></aside>
-  <main class="panel main"><canvas id="legacy-canvas"></canvas><svg id="edges" class="edges"></svg><div id="stage" class="flow"></div><div class="hint" id="hint">Scroll to pan vertically inside focus mode</div></main>
+  <main class="panel main"><svg id="edges" class="edges"></svg><div id="stage" class="flow"></div><div class="hint" id="hint">Scroll to pan vertically inside focus mode</div></main>
   <aside class="panel right"><h2 class="title">Details</h2><div id="details" class="details"></div></aside>
 </div>
 <script>
 const graphData = ${jsonData};
-const canvas = document.getElementById("legacy-canvas");
-canvas.addEventListener("wheel", function () {});
 const nodes = graphData.nodes || [];
 const edges = graphData.edges || [];
 const modules = graphData.modules || [];
@@ -254,7 +251,6 @@ document.getElementById("search").addEventListener("input", function(event){quer
 addEventListener("resize", function(){requestAnimationFrame(drawEdges);});
 render();
 </script>
-<!-- Compatibility copy: clustered symbol exploration view | Explore Symbols | Explore mode: clustered symbol relationships | Module Overview | View Options | Focused module view | Selected from module list | This slice only has intra-module calls. -->
 </body>
 </html>`;
 }
