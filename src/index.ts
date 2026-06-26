@@ -21,6 +21,7 @@ import {
   add_knowledge_base,
   list_knowledge_bases,
   remove_knowledge_base,
+  index_visualize,
   getIndexerForProject,
   initializeTools,
   pr_impact,
@@ -137,6 +138,7 @@ const plugin: Plugin = async ({ directory, worktree }) => {
         list_knowledge_bases,
         remove_knowledge_base,
         pr_impact,
+        index_visualize,
       },
 
       async "chat.message"(input, output) {
