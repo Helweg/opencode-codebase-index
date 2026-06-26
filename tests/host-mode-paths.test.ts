@@ -5,6 +5,8 @@ import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadMergedConfig } from "../src/config/merger.js";
 import {
+  resolveGlobalConfigPath,
+  resolveGlobalIndexPath,
   resolveProjectConfigPath,
   resolveProjectIndexPath,
   resolveWritableProjectConfigPath,
@@ -87,6 +89,23 @@ describe("host-aware path resolution", () => {
     expect(loaded.knowledgeBases).toEqual(["codex-docs"]);
   });
 
+  it("falls back to legacy global config for codex host when codex-native global config is absent", () => {
+    const homeDir = os.homedir();
+    fs.mkdirSync(path.join(homeDir, ".config", "opencode"), { recursive: true });
+    fs.writeFileSync(
+      path.join(homeDir, ".config", "opencode", "codebase-index.json"),
+      JSON.stringify({ scope: "global", knowledgeBases: ["legacy-global-docs"] }, null, 2),
+      "utf-8",
+    );
+
+    const resolved = resolveGlobalConfigPath("codex");
+    const loaded = loadMergedConfig(mainRepoDir, "codex") as Record<string, unknown>;
+
+    expect(resolved).toBe(path.join(homeDir, ".config", "opencode", "codebase-index.json"));
+    expect(loaded.scope).toBe("global");
+    expect(loaded.knowledgeBases).toEqual(["legacy-global-docs"]);
+  });
+
   it("falls back to legacy worktree index when codex index is absent", () => {
     fs.mkdirSync(path.join(mainRepoDir, ".opencode", "index"), { recursive: true });
 
@@ -101,6 +120,16 @@ describe("host-aware path resolution", () => {
 
     expect(resolveProjectIndexPath(worktreeDir, "project", "codex")).toBe(
       path.join(mainRepoDir, ".codebase-index", "index"),
+    );
+  });
+
+  it("falls back to legacy global index for codex host when codex-native global index is absent", () => {
+    const homeDir = os.homedir();
+    fs.mkdirSync(path.join(homeDir, ".opencode", "global-index"), { recursive: true });
+
+    expect(resolveGlobalIndexPath("codex")).toBe(path.join(homeDir, ".opencode", "global-index"));
+    expect(resolveProjectIndexPath(mainRepoDir, "global", "codex")).toBe(
+      path.join(homeDir, ".opencode", "global-index"),
     );
   });
 

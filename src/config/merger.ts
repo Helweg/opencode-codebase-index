@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import * as path from "path";
 
-import { getGlobalConfigPath, resolveProjectConfigPath, resolveWritableProjectConfigPath } from "./paths.js";
+import { resolveGlobalConfigPath, resolveProjectConfigPath, resolveWritableProjectConfigPath } from "./paths.js";
 import type { HostMode } from "./host.js";
 import { resolveInheritedKnowledgeBaseEntries } from "./rebase.js";
 
@@ -155,7 +155,7 @@ export function loadProjectConfigLayer(projectRoot: string, host: HostMode = "op
  * - For include/exclude: project overrides global if set, otherwise load global
  */
 export function loadMergedConfig(projectRoot: string, host: HostMode = "opencode"): unknown {
-  const globalConfigPath = getGlobalConfigPath(host);
+  const globalConfigPath = resolveGlobalConfigPath(host);
   const projectConfigPath = resolveProjectConfigPath(projectRoot, host);
   let globalConfig: Record<string, unknown> | null = null;
   let globalConfigError: Error | null = null;

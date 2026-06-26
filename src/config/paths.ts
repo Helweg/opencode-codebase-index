@@ -79,6 +79,38 @@ export function getGlobalConfigPath(host: HostMode = "opencode"): string {
   return path.join(os.homedir(), ".config", "codebase-index", "config.json");
 }
 
+export function resolveGlobalConfigPath(host: HostMode = "opencode"): string {
+  const hostConfigPath = getGlobalConfigPath(host);
+  if (existsSync(hostConfigPath)) {
+    return hostConfigPath;
+  }
+
+  if (host !== "opencode") {
+    const legacyConfigPath = getGlobalConfigPath("opencode");
+    if (existsSync(legacyConfigPath)) {
+      return legacyConfigPath;
+    }
+  }
+
+  return hostConfigPath;
+}
+
+export function resolveGlobalIndexPath(host: HostMode = "opencode"): string {
+  const hostIndexPath = getGlobalIndexPath(host);
+  if (existsSync(hostIndexPath)) {
+    return hostIndexPath;
+  }
+
+  if (host !== "opencode") {
+    const legacyIndexPath = getGlobalIndexPath("opencode");
+    if (existsSync(legacyIndexPath)) {
+      return legacyIndexPath;
+    }
+  }
+
+  return hostIndexPath;
+}
+
 export function resolveProjectConfigPath(projectRoot: string, host: HostMode = "opencode"): string {
   const hostConfigPath = path.join(projectRoot, getProjectConfigRelativePath(host));
   if (existsSync(hostConfigPath)) {
@@ -117,7 +149,7 @@ export function resolveProjectIndexPath(
   host: HostMode = "opencode",
 ): string {
   if (scope === "global") {
-    return getGlobalIndexPath(host);
+    return resolveGlobalIndexPath(host);
   }
 
   const localIndexPath = path.join(projectRoot, getProjectIndexRelativePath(host));
