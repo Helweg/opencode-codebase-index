@@ -161,12 +161,12 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   if (error instanceof Error && error.message.startsWith("Invalid host mode")) {
-    console.error(error.message);
+    console.error("Invalid host mode. Allowed values: opencode, codex.");
     process.exit(1);
   }
 
   if (error instanceof Error) {
-    console.error(error.message);
+    console.error("Failed to start MCP server. Check config and network.");
     process.exit(1);
   }
 
