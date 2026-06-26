@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import * as os from "os";
 import * as path from "path";
 
 import { parseConfig } from "./config/schema.js";
@@ -7,6 +8,9 @@ import { parseHostMode, type HostMode } from "./config/host.js";
 import { handleEvalCommand } from "./eval/cli.js";
 import { createMcpServer } from "./mcp-server.js";
 import { loadMergedConfig } from "./config/merger.js";
+import { getIndexerForProject } from "./tools/operations.js";
+import { hasProjectMarker } from "./utils/files.js";
+import { createWatcherWithIndexer, type CombinedWatcher } from "./watcher/index.js";
 
 function parseArgs(argv: string[]): { project: string; config?: string; host: HostMode } {
   let project = process.cwd();
@@ -43,7 +47,27 @@ async function main(): Promise<void> {
 
   await server.connect(transport);
 
+  let watcher: CombinedWatcher | null = null;
+  const isHomeDir = path.resolve(args.project) === path.resolve(os.homedir());
+  const isValidProject = !isHomeDir && (!config.indexing.requireProjectMarker || hasProjectMarker(args.project));
+
+  if (config.indexing.autoIndex && isValidProject) {
+    const indexer = getIndexerForProject(args.project, args.host);
+    indexer.initialize().then(() => {
+      indexer.index().catch(() => {});
+    }).catch(() => {});
+  }
+
+  if (config.indexing.watchFiles && isValidProject) {
+    watcher = createWatcherWithIndexer(
+      () => getIndexerForProject(args.project, args.host),
+      args.project,
+      config,
+    );
+  }
+
   const shutdown = (): void => {
+    watcher?.stop();
     server.close().catch(() => {});
     process.exit(0);
   };
