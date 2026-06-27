@@ -1,6 +1,6 @@
 import type { CodebaseIndexConfig } from "../config/schema.js";
 import type { HostMode } from "../config/host.js";
-import { resolveWritableProjectConfigPath } from "../config/paths.js";
+import { resolveProjectConfigPath, resolveWritableProjectConfigPath } from "../config/paths.js";
 import type { Indexer } from "../indexer/index.js";
 import { isGitRepo } from "../git/index.js";
 import { refreshIndexerForDirectory } from "../tools/operations.js";
@@ -79,8 +79,11 @@ export function createWatcherWithIndexer(
     const hasDelete = changes.some((c) => c.type === "unlink");
 
     if (hasAddOrChange || hasDelete) {
-      const configPath = pathNormalize(resolveWritableProjectConfigPath(projectRoot, host));
-      if (changes.some((change) => pathNormalize(change.path) === configPath)) {
+      const configPaths = [
+        resolveProjectConfigPath(projectRoot, host),
+        resolveWritableProjectConfigPath(projectRoot, host),
+      ].map((configPath) => pathNormalize(configPath));
+      if (changes.some((change) => configPaths.includes(pathNormalize(change.path)))) {
         refreshIndexerForDirectory(projectRoot, host);
       }
       backgroundReindexer.request();

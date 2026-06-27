@@ -3,7 +3,7 @@ import * as path from "path";
 
 import type { HostMode } from "../config/host.js";
 import type { CodebaseIndexConfig } from "../config/schema.js";
-import { resolveWritableProjectConfigPath } from "../config/paths.js";
+import { resolveProjectConfigPath, resolveWritableProjectConfigPath } from "../config/paths.js";
 import { createIgnoreFilter, shouldIncludeFile } from "../utils/files.js";
 import { hasFilteredPathSegment, isRestrictedDirectory } from "../utils/paths.js";
 
@@ -111,17 +111,22 @@ export class FileWatcher {
 
   private isProjectConfigPath(filePath: string): boolean {
     const relativePath = path.relative(this.projectRoot, filePath);
-    return path.normalize(relativePath) === this.getProjectConfigRelativePath();
+    const normalizedRelativePath = path.normalize(relativePath);
+    return this.getProjectConfigRelativePaths().some((configPath) => configPath === normalizedRelativePath);
   }
 
   private isProjectConfigPathOrAncestor(relativePath: string): boolean {
     const normalizedRelativePath = path.normalize(relativePath);
-    const configRelativePath = this.getProjectConfigRelativePath();
-    return configRelativePath === normalizedRelativePath || configRelativePath.startsWith(`${normalizedRelativePath}${path.sep}`);
+    return this.getProjectConfigRelativePaths().some(
+      (configPath) => configPath === normalizedRelativePath || configPath.startsWith(`${normalizedRelativePath}${path.sep}`),
+    );
   }
 
-  private getProjectConfigRelativePath(): string {
-    return path.normalize(path.relative(this.projectRoot, resolveWritableProjectConfigPath(this.projectRoot, this.host)));
+  private getProjectConfigRelativePaths(): string[] {
+    return [
+      resolveProjectConfigPath(this.projectRoot, this.host),
+      resolveWritableProjectConfigPath(this.projectRoot, this.host),
+    ].map((configPath) => path.normalize(path.relative(this.projectRoot, configPath)));
   }
 
   private scheduleFlush(): void {

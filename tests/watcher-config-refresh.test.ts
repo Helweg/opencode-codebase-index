@@ -54,4 +54,32 @@ describe("watcher config refresh", () => {
 
     watcher.stop();
   });
+
+  it("refreshes the codex indexer cache before reindexing when legacy OpenCode config changes", async () => {
+    mkdirSync(path.join(tempDir, ".opencode"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".opencode", "codebase-index.json"), JSON.stringify({ include: ["**/*.ts"] }));
+
+    const indexer = {
+      index: vi.fn().mockResolvedValue(undefined),
+    };
+    const watcher = createWatcherWithIndexer(
+      () => indexer,
+      tempDir,
+      parseConfig({ include: ["**/*.ts"] }),
+      "codex",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    mkdirSync(path.join(tempDir, ".opencode", "index"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".opencode", "codebase-index.json"), JSON.stringify({ include: ["src/**/*.ts"] }));
+    writeFileSync(path.join(tempDir, ".opencode", "index", "codebase.db"), "index");
+
+    await vi.waitFor(() => {
+      expect(operationMocks.refreshIndexerForDirectory).toHaveBeenCalledWith(tempDir, "codex");
+      expect(indexer.index).toHaveBeenCalledTimes(1);
+    }, { timeout: 2500 });
+
+    watcher.stop();
+  });
 });
