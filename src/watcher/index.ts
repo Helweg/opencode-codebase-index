@@ -1,6 +1,8 @@
 import type { CodebaseIndexConfig } from "../config/schema.js";
+import { parseConfig } from "../config/schema.js";
 import type { HostMode } from "../config/host.js";
 import { resolveProjectConfigPath, resolveWritableProjectConfigPath } from "../config/paths.js";
+import { loadConfigFile } from "../config/merger.js";
 import type { Indexer } from "../indexer/index.js";
 import { isGitRepo } from "../git/index.js";
 import { refreshIndexerForDirectory } from "../tools/operations.js";
@@ -16,6 +18,10 @@ export interface CombinedWatcher {
   fileWatcher: FileWatcher;
   gitWatcher: GitHeadWatcher | null;
   stop(): void;
+}
+
+export interface WatcherOptions {
+  configPath?: string;
 }
 
 class BackgroundReindexer {
@@ -66,8 +72,9 @@ export function createWatcherWithIndexer(
   projectRoot: string,
   config: CodebaseIndexConfig,
   host: HostMode = "opencode",
+  options: WatcherOptions = {},
 ): CombinedWatcher {
-  const fileWatcher = new FileWatcher(projectRoot, config, host);
+  const fileWatcher = new FileWatcher(projectRoot, config, host, options);
   const backgroundReindexer = new BackgroundReindexer(async () => {
     await getIndexer().index();
   });
@@ -79,12 +86,10 @@ export function createWatcherWithIndexer(
     const hasDelete = changes.some((c) => c.type === "unlink");
 
     if (hasAddOrChange || hasDelete) {
-      const configPaths = [
-        resolveProjectConfigPath(projectRoot, host),
-        resolveWritableProjectConfigPath(projectRoot, host),
-      ].map((configPath) => pathNormalize(configPath));
+      const configPaths = getConfigPaths(projectRoot, host, options);
       if (changes.some((change) => configPaths.includes(pathNormalize(change.path)))) {
-        refreshIndexerForDirectory(projectRoot, host);
+        const parsedConfig = options.configPath ? parseConfig(loadConfigFile(options.configPath)) : undefined;
+        refreshIndexerForDirectory(projectRoot, host, parsedConfig);
       }
       backgroundReindexer.request();
     }
@@ -113,4 +118,15 @@ export function createWatcherWithIndexer(
 
 function pathNormalize(value: string): string {
   return value.split("\\").join("/");
+}
+
+function getConfigPaths(projectRoot: string, host: HostMode, options: WatcherOptions): string[] {
+  if (options.configPath) {
+    return [pathNormalize(options.configPath)];
+  }
+
+  return [
+    resolveProjectConfigPath(projectRoot, host),
+    resolveWritableProjectConfigPath(projectRoot, host),
+  ].map((configPath) => pathNormalize(configPath));
 }

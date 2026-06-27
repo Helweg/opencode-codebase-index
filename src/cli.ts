@@ -158,6 +158,7 @@ async function main(): Promise<void> {
       args.project,
       config,
       args.host,
+      args.config ? { configPath: args.config } : {},
     );
   }
 
