@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codebase-index": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/dist/cli.js", "--host", "codex"]
+    }
+  }
+}

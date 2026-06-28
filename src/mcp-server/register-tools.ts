@@ -1,12 +1,22 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
-import type { LogLevel } from "../config/schema.js";
 import { formatCostEstimate } from "../utils/cost.js";
-import type { LogEntry } from "../utils/logger.js";
 import { formatDefinitionLookup, formatHealthCheck, formatIndexStats, formatStatus } from "../tools/utils.js";
 import { formatPrImpact } from "../tools/format-pr-impact.js";
+import {
+  findSimilarCode,
+  getCallGraphData,
+  getCallGraphPath,
+  getIndexHealthCheck,
+  getIndexLogs,
+  getIndexMetrics,
+  getIndexStatus,
+  getPrImpact,
+  implementationLookup,
+  runIndexCodebase,
+  searchCodebase,
+} from "../tools/operations.js";
 import { CHUNK_TYPE_ENUM, type McpServerRuntime, truncateContent } from "./shared.js";
 
 export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): void {
@@ -22,8 +32,8 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const results = await runtime.getIndexer().search(args.query, args.limit ?? 5, {
+      const results = await searchCodebase(runtime.projectRoot, runtime.host, args.query, {
+        limit: args.limit ?? 5,
         fileType: args.fileType,
         directory: args.directory,
         chunkType: args.chunkType,
@@ -56,8 +66,8 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       chunkType: z.enum(CHUNK_TYPE_ENUM).optional().describe("Filter by code chunk type"),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const results = await runtime.getIndexer().search(args.query, args.limit ?? 10, {
+      const results = await searchCodebase(runtime.projectRoot, runtime.host, args.query, {
+        limit: args.limit ?? 10,
         fileType: args.fileType,
         directory: args.directory,
         chunkType: args.chunkType,
@@ -87,27 +97,11 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
     },
     async (args) => {
-      if (args.estimateOnly) {
-        await runtime.ensureInitialized();
-        const estimate = await runtime.getIndexer().estimateCost();
-        return { content: [{ type: "text", text: formatCostEstimate(estimate) }] };
-      }
-
-      if (args.force) {
-        if (runtime.shouldForceLocalizeProjectIndex()) {
-          materializeLocalProjectConfig(runtime.projectRoot, loadProjectConfigLayer(runtime.projectRoot));
-          runtime.refreshIndexerFromConfig();
-        }
-        await runtime.ensureInitialized();
-        await runtime.getIndexer().clearIndex();
-        runtime.refreshIndexerFromConfig();
-        await runtime.ensureInitialized();
-      } else {
-        await runtime.ensureInitialized();
-      }
-
-      const stats = await runtime.getIndexer().index();
-      return { content: [{ type: "text", text: formatIndexStats(stats, args.verbose ?? false) }] };
+      const result = await runIndexCodebase(runtime.projectRoot, runtime.host, args);
+      const text = result.kind === "estimate"
+        ? formatCostEstimate(result.estimate)
+        : formatIndexStats(result.stats, args.verbose ?? false);
+      return { content: [{ type: "text", text }] };
     },
   );
 
@@ -116,8 +110,7 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
     "Check the status of the codebase index. Shows whether the codebase is indexed, how many chunks are stored, and the embedding provider being used.",
     {},
     async () => {
-      await runtime.ensureInitialized();
-      const status = await runtime.getIndexer().getStatus();
+      const status = await getIndexStatus(runtime.projectRoot, runtime.host);
       return { content: [{ type: "text", text: formatStatus(status) }] };
     },
   );
@@ -127,8 +120,7 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
     "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
     {},
     async () => {
-      await runtime.ensureInitialized();
-      const result = await runtime.getIndexer().healthCheck();
+      const result = await getIndexHealthCheck(runtime.projectRoot, runtime.host);
       return { content: [{ type: "text", text: formatHealthCheck(result) }] };
     },
   );
@@ -138,18 +130,8 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
     "Get metrics and performance statistics for the codebase index. Requires debug.enabled=true and debug.metrics=true in config.",
     {},
     async () => {
-      await runtime.ensureInitialized();
-      const logger = runtime.getIndexer().getLogger();
-
-      if (!logger.isEnabled()) {
-        return { content: [{ type: "text", text: "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```" }] };
-      }
-
-      if (!logger.isMetricsEnabled()) {
-        return { content: [{ type: "text", text: "Metrics collection is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```" }] };
-      }
-
-      return { content: [{ type: "text", text: logger.formatMetrics() }] };
+      const result = await getIndexMetrics(runtime.projectRoot, runtime.host);
+      return { content: [{ type: "text", text: result.text }] };
     },
   );
 
@@ -162,32 +144,8 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       level: z.enum(["error", "warn", "info", "debug"]).optional().describe("Filter by minimum log level"),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const logger = runtime.getIndexer().getLogger();
-
-      if (!logger.isEnabled()) {
-        return { content: [{ type: "text", text: "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true\n  }\n}\n```" }] };
-      }
-
-      let logs: LogEntry[];
-      if (args.category) {
-        logs = logger.getLogsByCategory(args.category, args.limit);
-      } else if (args.level) {
-        logs = logger.getLogsByLevel(args.level as LogLevel, args.limit);
-      } else {
-        logs = logger.getLogs(args.limit);
-      }
-
-      if (logs.length === 0) {
-        return { content: [{ type: "text", text: "No logs recorded yet. Logs are captured during indexing and search operations." }] };
-      }
-
-      const text = logs.map(l => {
-        const dataStr = l.data ? ` ${JSON.stringify(l.data)}` : "";
-        return `[${l.timestamp}] [${l.level.toUpperCase()}] [${l.category}] ${l.message}${dataStr}`;
-      }).join("\n");
-
-      return { content: [{ type: "text", text }] };
+      const result = await getIndexLogs(runtime.projectRoot, runtime.host, args);
+      return { content: [{ type: "text", text: result.text }] };
     },
   );
 
@@ -203,8 +161,8 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       excludeFile: z.string().optional().describe("Exclude results from this file path"),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const results = await runtime.getIndexer().findSimilar(args.code, args.limit ?? 10, {
+      const results = await findSimilarCode(runtime.projectRoot, runtime.host, args.code, {
+        limit: args.limit ?? 10,
         fileType: args.fileType,
         directory: args.directory,
         chunkType: args.chunkType,
@@ -236,11 +194,10 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils')"),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const results = await runtime.getIndexer().search(args.query, args.limit ?? 5, {
+      const results = await implementationLookup(runtime.projectRoot, runtime.host, args.query, {
+        limit: args.limit ?? 5,
         fileType: args.fileType,
         directory: args.directory,
-        definitionIntent: true,
       });
 
       return { content: [{ type: "text", text: formatDefinitionLookup(results, args.query) }] };
@@ -258,14 +215,11 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       relationshipType: z.enum(["Call", "MethodCall", "Constructor", "Import", "Inherits", "Implements"]).optional().describe("Filter by relationship type. Omit to show all."),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const indexer = runtime.getIndexer();
-
       if (args.direction === "callees") {
         if (!args.symbolId) {
           return { content: [{ type: "text", text: "Error: 'symbolId' is required when direction is 'callees'." }] };
         }
-        const callees = await indexer.getCallees(args.symbolId, args.relationshipType);
+        const { callees } = await getCallGraphData(runtime.projectRoot, runtime.host, args);
         if (callees.length === 0) {
           return { content: [{ type: "text", text: `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
         }
@@ -276,7 +230,7 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
         return { content: [{ type: "text", text: `Callees (${callees.length}):\n\n${formatted.join("\n")}` }] };
       }
 
-      const callers = await indexer.getCallers(args.name, args.relationshipType);
+      const { callers } = await getCallGraphData(runtime.projectRoot, runtime.host, args);
       if (callers.length === 0) {
         return { content: [{ type: "text", text: `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
       }
@@ -297,9 +251,7 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       maxDepth: z.number().optional().default(10).describe("Maximum traversal depth (default: 10)"),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const indexer = runtime.getIndexer();
-      const path = await indexer.findCallPath(args.from, args.to, args.maxDepth);
+      const path = await getCallGraphPath(runtime.projectRoot, runtime.host, args.from, args.to, args.maxDepth);
       if (path.length === 0) {
         return { content: [{ type: "text", text: `No path found between "${args.from}" and "${args.to}". They may be in disconnected components, or the call graph index needs updating.` }] };
       }
@@ -323,10 +275,8 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       direction: z.enum(["callers", "callees", "both"]).optional().default("both").describe("Call-graph traversal direction: 'callers' for upstream, 'callees' for downstream, 'both' for union (default: both)"),
     },
     async (args) => {
-      await runtime.ensureInitialized();
-      const indexer = runtime.getIndexer();
       try {
-        const result = await indexer.getPrImpact({
+        const result = await getPrImpact(runtime.projectRoot, runtime.host, {
           pr: args.pr,
           branch: args.branch,
           maxDepth: args.maxDepth,

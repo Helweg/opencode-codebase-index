@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import * as os from "os";
 import * as path from "path";
 
-import { resolveProjectConfigPath } from "./paths.js";
+import { resolveGlobalConfigPath, resolveProjectConfigPath, resolveWritableProjectConfigPath } from "./paths.js";
+import type { HostMode } from "./host.js";
 import { resolveInheritedKnowledgeBaseEntries } from "./rebase.js";
 
 const PROJECT_OVERRIDE_KEYS = [
@@ -109,18 +109,25 @@ function loadJsonFile(filePath: string): unknown {
     throw new Error(`Failed to load config file ${filePath}: ${message}`);
   }
 
-  return null;
 }
 
-export function materializeLocalProjectConfig(projectRoot: string, config: unknown): string {
-  const localConfigPath = path.join(projectRoot, ".opencode", "codebase-index.json");
+export function loadConfigFile(filePath: string): unknown {
+  return loadJsonFile(filePath);
+}
+
+export function materializeLocalProjectConfig(
+  projectRoot: string,
+  config: unknown,
+  host: HostMode = "opencode",
+): string {
+  const localConfigPath = resolveWritableProjectConfigPath(projectRoot, host);
   mkdirSync(path.dirname(localConfigPath), { recursive: true });
   writeFileSync(localConfigPath, JSON.stringify(config, null, 2), "utf-8");
   return localConfigPath;
 }
 
-export function loadProjectConfigLayer(projectRoot: string): Record<string, unknown> {
-  const projectConfigPath = resolveProjectConfigPath(projectRoot);
+export function loadProjectConfigLayer(projectRoot: string, host: HostMode = "opencode"): Record<string, unknown> {
+  const projectConfigPath = resolveProjectConfigPath(projectRoot, host);
   const projectConfig = loadJsonFile(projectConfigPath) as Record<string, unknown> | null;
 
   if (!projectConfig) {
@@ -151,9 +158,9 @@ export function loadProjectConfigLayer(projectRoot: string): Record<string, unkn
  * - For additionalInclude: merge arrays (union, deduplicated)
  * - For include/exclude: project overrides global if set, otherwise load global
  */
-export function loadMergedConfig(projectRoot: string): unknown {
-  const globalConfigPath = os.homedir() + "/.config/opencode/codebase-index.json";
-  const projectConfigPath = resolveProjectConfigPath(projectRoot);
+export function loadMergedConfig(projectRoot: string, host: HostMode = "opencode"): unknown {
+  const globalConfigPath = resolveGlobalConfigPath(host);
+  const projectConfigPath = resolveProjectConfigPath(projectRoot, host);
   let globalConfig: Record<string, unknown> | null = null;
   let globalConfigError: Error | null = null;
 
@@ -164,7 +171,7 @@ export function loadMergedConfig(projectRoot: string): unknown {
   }
 
   const projectConfig = loadJsonFile(projectConfigPath) as Record<string, unknown> | null;
-  const normalizedProjectConfig = loadProjectConfigLayer(projectRoot);
+  const normalizedProjectConfig = loadProjectConfigLayer(projectRoot, host);
 
   if (globalConfigError) {
     if (!projectConfig) {

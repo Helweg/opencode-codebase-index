@@ -142,6 +142,52 @@ describe("FileWatcher", () => {
 
       expect(changes.some((c) => c.path.endsWith("root.ts"))).toBe(true);
     });
+
+    it("should watch codex-native config without watching codex index files", async () => {
+      const changes: FileChange[] = [];
+      watcher = new FileWatcher(tempDir, createTestConfig({ include: ["**/*.ts"] }), "codex");
+
+      watcher.start(async (c) => {
+        changes.push(...c);
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      fs.mkdirSync(path.join(tempDir, ".codebase-index", "index"), { recursive: true });
+      fs.writeFileSync(path.join(tempDir, ".codebase-index", "config.json"), "{}");
+      fs.writeFileSync(path.join(tempDir, ".codebase-index", "index", "codebase.db"), "index");
+
+      await vi.waitFor(
+        () => expect(changes.some((c) => c.path.endsWith(path.join(".codebase-index", "config.json")))).toBe(true),
+        { timeout: 2500 },
+      );
+
+      expect(changes.some((c) => c.path.includes(path.join(".codebase-index", "index")))).toBe(false);
+    });
+
+    it("should watch legacy OpenCode config in codex mode without watching legacy index files", async () => {
+      const changes: FileChange[] = [];
+      fs.mkdirSync(path.join(tempDir, ".opencode"), { recursive: true });
+      fs.writeFileSync(path.join(tempDir, ".opencode", "codebase-index.json"), "{}");
+      watcher = new FileWatcher(tempDir, createTestConfig({ include: ["**/*.ts"] }), "codex");
+
+      watcher.start(async (c) => {
+        changes.push(...c);
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      fs.mkdirSync(path.join(tempDir, ".opencode", "index"), { recursive: true });
+      fs.writeFileSync(path.join(tempDir, ".opencode", "codebase-index.json"), "{\"include\":[\"src/**/*.ts\"]}");
+      fs.writeFileSync(path.join(tempDir, ".opencode", "index", "codebase.db"), "index");
+
+      await vi.waitFor(
+        () => expect(changes.some((c) => c.path.endsWith(path.join(".opencode", "codebase-index.json")))).toBe(true),
+        { timeout: 2500 },
+      );
+
+      expect(changes.some((c) => c.path.includes(path.join(".opencode", "index")))).toBe(false);
+    });
   });
 
   describe("createWatcherWithIndexer", () => {

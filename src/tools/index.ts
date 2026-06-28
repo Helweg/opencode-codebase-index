@@ -1,93 +1,69 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
-import { parseConfig, type ParsedCodebaseIndexConfig } from "../config/schema.js";
-import { Indexer } from "../indexer/index.js";
+import type { HostMode } from "../config/host.js";
+import type { ParsedCodebaseIndexConfig } from "../config/schema.js";
+import type { Indexer } from "../indexer/index.js";
 import { formatCostEstimate } from "../utils/cost.js";
-import type { LogLevel } from "../config/schema.js";
-import type { LogEntry } from "../utils/logger.js";
 import {
-  formatProgressTitle,
-  formatIndexStats,
-  formatStatus,
-  calculatePercentage,
   formatCodebasePeek,
   formatDefinitionLookup,
   formatHealthCheck,
-  formatLogs,
+  formatIndexStats,
   formatSearchResults,
+  formatStatus,
 } from "./utils.js";
-import { pr_impact } from "./pr-impact.js";
 import {
-  findKnowledgeBasePathIndex,
-  hasMatchingKnowledgeBasePath,
-  resolveKnowledgeBasePath,
-} from "./knowledge-base-paths.js";
-import { existsSync, realpathSync, statSync } from "fs";
+  addKnowledgeBase,
+  findSimilarCode,
+  getCallGraphData,
+  getCallGraphPath,
+  getIndexHealthCheck,
+  getIndexLogs,
+  getIndexMetrics,
+  getIndexerForProject as getOperationIndexerForProject,
+  getIndexStatus,
+  getSharedIndexer as getOperationSharedIndexer,
+  implementationLookup,
+  initializeTools as initializeToolOperations,
+  listKnowledgeBases,
+  removeKnowledgeBase,
+  runIndexCodebase,
+  searchCodebase,
+} from "./operations.js";
+import { pr_impact } from "./pr-impact.js";
 import { writeFileSync } from "fs";
-import * as path from "path";
-import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
-import { resolveWorktreeMainRepoRoot } from "../git/index.js";
-import { getConfigPath, loadEditableConfig, loadRuntimeConfig, saveConfig } from "./config-state.js";
 import * as os from "os";
+import * as path from "path";
 import { attachRecentActivity } from "./visualize/activity.js";
 import { generateVisualizationHtml, transformForVisualization } from "./visualize/index.js";
 
-function ensureStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? (value as string[]) : [];
-}
-
 const z = tool.schema;
-
-const indexerMap = new Map<string, Indexer>();
-let defaultProjectRoot: string = "";
+const DEFAULT_HOST: HostMode = "opencode";
+const CHUNK_TYPE_VALUES = [
+  "function",
+  "class",
+  "method",
+  "interface",
+  "type",
+  "enum",
+  "struct",
+  "impl",
+  "trait",
+  "module",
+  "other",
+] as const;
+const RELATIONSHIP_TYPE_VALUES = ["Call", "MethodCall", "Constructor", "Import", "Inherits", "Implements"] as const;
 
 export function initializeTools(projectRoot: string, config: ParsedCodebaseIndexConfig): void {
-  defaultProjectRoot = projectRoot;
-  const indexer = new Indexer(projectRoot, config);
-  indexerMap.set(projectRoot, indexer);
+  initializeToolOperations(projectRoot, config, DEFAULT_HOST);
 }
 
 export function getSharedIndexer(): Indexer {
-  return getIndexerForProject(defaultProjectRoot);
-}
-
-function refreshIndexerForDirectory(projectRoot: string): void {
-  if (!projectRoot) {
-    throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");
-  }
-  const indexer = new Indexer(projectRoot, parseConfig(loadRuntimeConfig(projectRoot)));
-  indexerMap.set(projectRoot, indexer);
-}
-
-function shouldForceLocalizeProjectIndex(projectRoot: string): boolean {
-  const currentConfig = parseConfig(loadRuntimeConfig(projectRoot));
-  if (currentConfig.scope !== "project") {
-    return false;
-  }
-
-  const localIndexPath = path.join(projectRoot, ".opencode", "index");
-  const mainRepoRoot = resolveWorktreeMainRepoRoot(projectRoot);
-  if (!mainRepoRoot) {
-    return false;
-  }
-
-  const inheritedIndexPath = path.join(mainRepoRoot, ".opencode", "index");
-  return !existsSync(localIndexPath) && existsSync(inheritedIndexPath);
+  return getOperationSharedIndexer(DEFAULT_HOST);
 }
 
 export function getIndexerForProject(directory: string): Indexer {
-  const projectRoot = directory || defaultProjectRoot;
-  if (!projectRoot) {
-    throw new Error("Codebase index tools not initialized. Plugin may not be loaded correctly.");
-  }
-
-  let indexer = indexerMap.get(projectRoot);
-  if (!indexer) {
-    const config = parseConfig(loadRuntimeConfig(projectRoot));
-    indexer = new Indexer(projectRoot, config);
-    indexerMap.set(projectRoot, indexer);
-  }
-  return indexer;
+  return getOperationIndexerForProject(directory, DEFAULT_HOST);
 }
 
 export const codebase_peek: ToolDefinition = tool({
@@ -98,11 +74,11 @@ export const codebase_peek: ToolDefinition = tool({
     limit: z.number().optional().default(10).describe("Maximum number of results to return"),
     fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
+    chunkType: z.enum(CHUNK_TYPE_VALUES).optional().describe("Filter by code chunk type"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const results = await indexer.search(args.query, args.limit ?? 10, {
+    const results = await searchCodebase(context?.worktree, DEFAULT_HOST, args.query, {
+      limit: args.limit ?? 10,
       fileType: args.fileType,
       directory: args.directory,
       chunkType: args.chunkType,
@@ -122,37 +98,13 @@ export const index_codebase: ToolDefinition = tool({
     verbose: z.boolean().optional().default(false).describe("Show detailed info about skipped files and parsing failures"),
   },
   async execute(args, context) {
-    const projectRoot = context?.worktree || defaultProjectRoot;
-    let indexer = getIndexerForProject(projectRoot);
-
-    if (args.estimateOnly) {
-      const estimate = await indexer.estimateCost();
-      return formatCostEstimate(estimate);
-    }
-
-    if (args.force) {
-      if (shouldForceLocalizeProjectIndex(projectRoot)) {
-        materializeLocalProjectConfig(projectRoot, loadProjectConfigLayer(projectRoot));
-        refreshIndexerForDirectory(projectRoot);
-        indexer = getIndexerForProject(projectRoot);
-      }
-      await indexer.clearIndex();
-    }
-
-    const stats = await indexer.index((progress) => {
-      context.metadata({
-        title: formatProgressTitle(progress),
-        metadata: {
-          phase: progress.phase,
-          filesProcessed: progress.filesProcessed,
-          totalFiles: progress.totalFiles,
-          chunksProcessed: progress.chunksProcessed,
-          totalChunks: progress.totalChunks,
-          percentage: calculatePercentage(progress),
-        },
-      });
+    const result = await runIndexCodebase(context?.worktree, DEFAULT_HOST, args, (title, metadata) => {
+      context.metadata({ title, metadata });
     });
-    return formatIndexStats(stats, args.verbose ?? false);
+
+    return result.kind === "estimate"
+      ? formatCostEstimate(result.estimate)
+      : formatIndexStats(result.stats, args.verbose ?? false);
   },
 });
 
@@ -161,9 +113,7 @@ export const index_status: ToolDefinition = tool({
     "Check the status of the codebase index. Shows whether the codebase is indexed, how many chunks are stored, and the embedding provider being used.",
   args: {},
   async execute(_args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const status = await indexer.getStatus();
-    return formatStatus(status);
+    return formatStatus(await getIndexStatus(context?.worktree, DEFAULT_HOST));
   },
 });
 
@@ -172,10 +122,7 @@ export const index_health_check: ToolDefinition = tool({
     "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
   args: {},
   async execute(_args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const result = await indexer.healthCheck();
-
-    return formatHealthCheck(result);
+    return formatHealthCheck(await getIndexHealthCheck(context?.worktree, DEFAULT_HOST));
   },
 });
 
@@ -184,18 +131,7 @@ export const index_metrics: ToolDefinition = tool({
     "Get metrics and performance statistics for the codebase index. Shows indexing stats, search timings, cache hit rates, and API usage. Requires debug.enabled=true and debug.metrics=true in config.",
   args: {},
   async execute(_args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const logger = indexer.getLogger();
-
-    if (!logger.isEnabled()) {
-      return "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```";
-    }
-
-    if (!logger.isMetricsEnabled()) {
-      return "Metrics collection is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true,\n    \"metrics\": true\n  }\n}\n```";
-    }
-
-    return logger.formatMetrics();
+    return (await getIndexMetrics(context?.worktree, DEFAULT_HOST)).text;
   },
 });
 
@@ -208,23 +144,7 @@ export const index_logs: ToolDefinition = tool({
     level: z.enum(["error", "warn", "info", "debug"]).optional().describe("Filter by minimum log level"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const logger = indexer.getLogger();
-
-    if (!logger.isEnabled()) {
-      return "Debug mode is disabled. Enable it in your config:\n\n```json\n{\n  \"debug\": {\n    \"enabled\": true\n  }\n}\n```";
-    }
-
-    let logs: LogEntry[];
-    if (args.category) {
-      logs = logger.getLogsByCategory(args.category, args.limit);
-    } else if (args.level) {
-      logs = logger.getLogsByLevel(args.level as LogLevel, args.limit);
-    } else {
-      logs = logger.getLogs(args.limit);
-    }
-
-    return formatLogs(logs);
+    return (await getIndexLogs(context?.worktree, DEFAULT_HOST, args)).text;
   },
 });
 
@@ -236,12 +156,12 @@ export const find_similar: ToolDefinition = tool({
     limit: z.number().optional().default(10).describe("Maximum number of results to return"),
     fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
+    chunkType: z.enum(CHUNK_TYPE_VALUES).optional().describe("Filter by code chunk type"),
     excludeFile: z.string().optional().describe("Exclude results from this file path (useful when searching for duplicates of code from a specific file)"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const results = await indexer.findSimilar(args.code, args.limit, {
+    const results = await findSimilarCode(context?.worktree, DEFAULT_HOST, args.code, {
+      limit: args.limit,
       fileType: args.fileType,
       directory: args.directory,
       chunkType: args.chunkType,
@@ -264,12 +184,12 @@ export const codebase_search: ToolDefinition = tool({
     limit: z.number().optional().default(5).describe("Maximum number of results to return"),
     fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
-    chunkType: z.enum(["function", "class", "method", "interface", "type", "enum", "struct", "impl", "trait", "module", "other"]).optional().describe("Filter by code chunk type"),
+    chunkType: z.enum(CHUNK_TYPE_VALUES).optional().describe("Filter by code chunk type"),
     contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const results = await indexer.search(args.query, args.limit ?? 5, {
+    const results = await searchCodebase(context?.worktree, DEFAULT_HOST, args.query, {
+      limit: args.limit ?? 5,
       fileType: args.fileType,
       directory: args.directory,
       chunkType: args.chunkType,
@@ -297,11 +217,10 @@ export const implementation_lookup: ToolDefinition = tool({
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils')"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const results = await indexer.search(args.query, args.limit ?? 5, {
+    const results = await implementationLookup(context?.worktree, DEFAULT_HOST, args.query, {
+      limit: args.limit ?? 5,
       fileType: args.fileType,
       directory: args.directory,
-      definitionIntent: true,
     });
     return formatDefinitionLookup(results, args.query);
   },
@@ -315,33 +234,31 @@ export const call_graph: ToolDefinition = tool({
     name: z.string().describe("Function or method name to query"),
     direction: z.enum(["callers", "callees"]).default("callers").describe("Direction: 'callers' finds who calls this function, 'callees' finds what this function calls"),
     symbolId: z.string().optional().describe("Symbol ID (required for 'callees' direction, returned by previous call_graph queries)"),
-    relationshipType: z.enum(["Call", "MethodCall", "Constructor", "Import", "Inherits", "Implements"]).optional().describe("Filter by relationship type. Omit to show all."),
+    relationshipType: z.enum(RELATIONSHIP_TYPE_VALUES).optional().describe("Filter by relationship type. Omit to show all."),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
     if (args.direction === "callees") {
       if (!args.symbolId) {
         return "Error: 'symbolId' is required when direction is 'callees'. First use direction='callers' to find the symbol ID.";
       }
-      const callees = await indexer.getCallees(args.symbolId, args.relationshipType);
+      const { callees } = await getCallGraphData(context?.worktree, DEFAULT_HOST, args);
       if (callees.length === 0) {
         return `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. The function may not call any other tracked functions.`;
       }
-      const formatted = callees.map((e, i) => {
-        const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
-        return `[${i + 1}] \u2192 ${e.targetName} (${e.callType})${conf} at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`;
-      });
-      return formatted.join("\n");
+      return callees.map((edge, index) => {
+        const confidence = edge.confidence !== "Direct" ? ` [${edge.confidence.toLowerCase()}]` : "";
+        return `[${index + 1}] \u2192 ${edge.targetName} (${edge.callType})${confidence} at line ${edge.line}${edge.isResolved ? ` [resolved: ${edge.toSymbolId}]` : " [unresolved]"}`;
+      }).join("\n");
     }
-    const callers = await indexer.getCallers(args.name, args.relationshipType);
+
+    const { callers } = await getCallGraphData(context?.worktree, DEFAULT_HOST, args);
     if (callers.length === 0) {
       return `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. It may not be called by any tracked function, or the index needs updating.`;
     }
-    const formatted = callers.map((e, i) => {
-      const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
-      return `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType})${conf} at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`;
-    });
-    return formatted.join("\n");
+    return callers.map((edge, index) => {
+      const confidence = edge.confidence !== "Direct" ? ` [${edge.confidence.toLowerCase()}]` : "";
+      return `[${index + 1}] \u2190 from ${edge.fromSymbolName ?? "<unknown>"} in ${edge.fromSymbolFilePath ?? "<unknown file>"} [${edge.fromSymbolId}] (${edge.callType})${confidence} at line ${edge.line}${edge.isResolved ? " [resolved]" : " [unresolved]"}`;
+    }).join("\n");
   },
 });
 
@@ -354,13 +271,12 @@ export const call_graph_path: ToolDefinition = tool({
     maxDepth: z.number().optional().default(10).describe("Maximum traversal depth (default: 10)"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
-    const path = await indexer.findCallPath(args.from, args.to, args.maxDepth);
+    const path = await getCallGraphPath(context?.worktree, DEFAULT_HOST, args.from, args.to, args.maxDepth);
     if (path.length === 0) {
       return `No path found between "${args.from}" and "${args.to}". They may be in disconnected components, or the call graph index needs updating.`;
     }
-    const formatted = path.map((hop, i) => {
-      const prefix = i === 0 ? "[start]" : `--${hop.callType}-->`;
+    const formatted = path.map((hop, index) => {
+      const prefix = index === 0 ? "[start]" : `--${hop.callType}-->`;
       const location = hop.filePath ? ` (${hop.filePath}:${hop.line})` : "";
       return `${prefix} ${hop.symbolName}${location}`;
     });
@@ -374,86 +290,10 @@ export const add_knowledge_base: ToolDefinition = tool({
     "The folder will be indexed alongside the main project code. " +
     "Supports absolute paths or relative paths (relative to the project root).",
   args: {
-    path: z.string().describe("Path to the folder to add as a knowledge base (absolute or relative to project root)"),
+    path: z.string().describe("Path to the folder to add as a knowledge base (absolute or relative to the project root)"),
   },
   async execute(args, context) {
-    const projectRoot = context?.worktree || defaultProjectRoot;
-    const inputPath = args.path.trim();
-
-    const normalizedPath = path.resolve(
-      path.isAbsolute(inputPath)
-        ? inputPath
-        : resolveKnowledgeBasePath(inputPath, projectRoot)
-    );
-
-    if (!existsSync(normalizedPath)) {
-      return `Error: Directory does not exist: ${normalizedPath}`;
-    }
-
-    // Resolve symlinks to get the real path for security checks only
-    let realPath: string;
-    try {
-      realPath = realpathSync(normalizedPath);
-    } catch {
-      return `Error: Cannot resolve path: ${normalizedPath}`;
-    }
-
-    // Security: block sensitive system directories (check against real path to prevent symlink bypass)
-    const blockedPrefixes = [
-      "/etc",
-      "/proc",
-      "/sys",
-      "/dev",
-      "/boot",
-      "/root",
-      "/var/run",
-      "/var/log",
-    ];
-    const homeDir = os.homedir();
-    const sensitiveDotDirs = [".ssh", ".gnupg", ".aws", ".config/gcloud", ".docker", ".kube"];
-
-    for (const prefix of blockedPrefixes) {
-      if (realPath === prefix || realPath.startsWith(prefix + "/")) {
-        return `Error: Adding system directory as knowledge base is not allowed: ${normalizedPath}`;
-      }
-    }
-
-    for (const dotDir of sensitiveDotDirs) {
-      const sensitiveDir = path.join(homeDir, dotDir);
-      if (realPath === sensitiveDir || realPath.startsWith(sensitiveDir + "/")) {
-        return `Error: Adding sensitive directory as knowledge base is not allowed: ${normalizedPath}`;
-      }
-    }
-
-    try {
-      const stat = statSync(normalizedPath);
-      if (!stat.isDirectory()) {
-        return `Error: Path is not a directory: ${normalizedPath}`;
-      }
-    } catch (error) {
-      return `Error: Cannot access directory: ${normalizedPath} - ${error instanceof Error ? error.message : String(error)}`;
-    }
-
-    const config = loadEditableConfig(projectRoot);
-    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
-
-    const alreadyExists = hasMatchingKnowledgeBasePath(knowledgeBases, normalizedPath, projectRoot);
-
-    if (alreadyExists) {
-      return `Knowledge base already configured: ${normalizedPath}`;
-    }
-
-    knowledgeBases.push(normalizedPath);
-    config.knowledgeBases = knowledgeBases;
-    saveConfig(projectRoot, config);
-    refreshIndexerForDirectory(projectRoot);
-
-    let result = `${normalizedPath}\n`;
-    result += `Total knowledge bases: ${knowledgeBases.length}\n`;
-    result += `Config saved to: ${getConfigPath(projectRoot)}\n`;
-    result += `\nRun /index to rebuild the index with the new knowledge base.`;
-
-    return result;
+    return addKnowledgeBase(context?.worktree, DEFAULT_HOST, args.path);
   },
 });
 
@@ -462,35 +302,7 @@ export const list_knowledge_bases: ToolDefinition = tool({
     "List all configured knowledge base folders that are indexed alongside the main project.",
   args: {},
   async execute(_args, context) {
-    const projectRoot = context?.worktree || defaultProjectRoot;
-    const config = loadRuntimeConfig(projectRoot);
-    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
-
-    if (knowledgeBases.length === 0) {
-      return "No knowledge bases configured. Use add_knowledge_base to add folders.";
-    }
-
-    let result = `Knowledge Bases (${knowledgeBases.length}):\n\n`;
-
-    for (let i = 0; i < knowledgeBases.length; i++) {
-      const kb = knowledgeBases[i];
-      const resolvedPath = resolveKnowledgeBasePath(kb, projectRoot);
-      const exists = existsSync(resolvedPath);
-
-      result += `[${i + 1}] ${kb}\n`;
-      result += `    Resolved: ${resolvedPath}\n`;
-      result += `    Status: ${exists ? "Exists" : "NOT FOUND"}\n`;
-      if (exists) {
-        try {
-          const stat = statSync(resolvedPath);
-          result += `    Type: ${stat.isDirectory() ? "Directory" : "File"}\n`;
-        } catch { /* ignore */ }
-      }
-      result += "\n";
-    }
-
-    result += `Config file: ${getConfigPath(projectRoot)}`;
-    return result;
+    return listKnowledgeBases(context?.worktree, DEFAULT_HOST);
   },
 });
 
@@ -501,40 +313,10 @@ export const remove_knowledge_base: ToolDefinition = tool({
     path: z.string().describe("Path of the knowledge base to remove (must match the configured path exactly)"),
   },
   async execute(args, context) {
-    const projectRoot = context?.worktree || defaultProjectRoot;
-    const inputPath = args.path.trim();
-
-    const config = loadEditableConfig(projectRoot);
-    const knowledgeBases: string[] = ensureStringArray(config.knowledgeBases);
-
-    if (knowledgeBases.length === 0) {
-      return "No knowledge bases configured.";
-    }
-
-    const index = findKnowledgeBasePathIndex(knowledgeBases, inputPath, projectRoot);
-
-    if (index === -1) {
-      let result = `Knowledge base not found: ${inputPath}\n\n`;
-      result += `Currently configured:\n`;
-      for (const kb of knowledgeBases) {
-        result += `  - ${kb}\n`;
-      }
-      return result;
-    }
-
-    const removed = knowledgeBases.splice(index, 1)[0];
-    config.knowledgeBases = knowledgeBases;
-    saveConfig(projectRoot, config);
-    refreshIndexerForDirectory(projectRoot);
-
-    let result = `Removed: ${removed}\n\n`;
-    result += `Remaining knowledge bases: ${knowledgeBases.length}\n`;
-    result += `Config saved to: ${getConfigPath(projectRoot)}\n`;
-    result += `\nRun /index to rebuild the index without the removed knowledge base.`;
-
-    return result;
+    return removeKnowledgeBase(context?.worktree, DEFAULT_HOST, args.path.trim());
   },
 });
+
 export { pr_impact };
 
 export const index_visualize: ToolDefinition = tool({
@@ -547,7 +329,8 @@ export const index_visualize: ToolDefinition = tool({
     includeOrphans: z.boolean().optional().default(false).describe("Include symbols with no call relationships"),
   },
   async execute(args, context) {
-    const indexer = getIndexerForProject(context?.worktree);
+    const projectRoot = context?.worktree ?? process.cwd();
+    const indexer = getIndexerForProject(projectRoot);
     const rawData = await indexer.getVisualizationData({
       directory: args.directory,
     });
@@ -560,7 +343,7 @@ export const index_visualize: ToolDefinition = tool({
       includeOrphans: args.includeOrphans,
       directory: args.directory,
       maxNodes: args.maxNodes,
-    }), context?.worktree ?? defaultProjectRoot);
+    }), projectRoot);
 
     if (vizData.nodes.length === 0) {
       return "No connected symbols found for visualization. Try including orphans with includeOrphans=true, or check that the call graph has resolved edges.";

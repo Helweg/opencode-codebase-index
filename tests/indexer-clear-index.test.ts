@@ -211,6 +211,38 @@ describe("indexer clearIndex force rebuild", () => {
     );
   });
 
+  it("allows codex force clearing a local legacy OpenCode project index", async () => {
+    embeddingDimensions = 8;
+    const legacyIndexer = createIndexer(tempDir, 8);
+    const legacyStats = await legacyIndexer.index();
+    expect(legacyStats.failedChunks).toBe(0);
+
+    const dbPath = path.join(tempDir, ".opencode", "index", "codebase.db");
+    const seededDb = trackDb(new Database(dbPath));
+    expect(seededDb.getStats().embeddingCount).toBeGreaterThan(0);
+
+    const codexConfig = parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-8d",
+        dimensions: 8,
+      },
+      indexing: {
+        watchFiles: false,
+        retries: 0,
+        retryDelayMs: 1,
+      },
+    });
+    const codexIndexer = trackIndexer(new Indexer(tempDir, codexConfig, "codex"));
+
+    await expect(codexIndexer.clearIndex()).resolves.toBeUndefined();
+
+    const clearedDb = trackDb(new Database(dbPath));
+    expect(clearedDb.getStats().embeddingCount).toBe(0);
+    expect(clearedDb.getStats().chunkCount).toBe(0);
+  });
+
   it("clears only the current project from a shared global index when compatibility is unchanged", async () => {
     vi.stubEnv("HOME", tempHome);
     vi.stubEnv("USERPROFILE", tempHome);

@@ -396,6 +396,7 @@ describe("MCP server tools and prompts", () => {
     expect(mergerMocks.materializeLocalProjectConfig).toHaveBeenCalledWith(
       "/tmp/test-project",
       mergerMocks.loadProjectConfigLayer.mock.results.at(-1)?.value,
+      "opencode",
     );
 
     expect(indexerMockState.constructorArgs.length).toBeGreaterThanOrEqual(3);
@@ -440,6 +441,7 @@ describe("MCP server tools and prompts", () => {
     expect(mergerMocks.materializeLocalProjectConfig).toHaveBeenCalledWith(
       "/tmp/test-project",
       { knowledgeBases: ["docs/reference"] },
+      "opencode",
     );
     expect(indexerMockState.constructorArgs.slice(-2)).toEqual([
       ["/tmp/test-project", runtimeConfig],

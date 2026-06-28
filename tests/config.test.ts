@@ -10,6 +10,7 @@ import {
   AUTO_DETECT_PROVIDER_ORDER,
   DEFAULT_PROVIDER_MODELS,
   DEFAULT_INCLUDE,
+  DEFAULT_EXCLUDE,
 } from "../src/config/constants.js";
 
 describe("config schema", () => {
@@ -85,7 +86,7 @@ describe("config schema", () => {
       expect(config.embeddingModel).toBeUndefined();
       expect(config.scope).toBe("project");
       expect(config.include).toHaveLength(DEFAULT_INCLUDE.length);
-      expect(config.exclude).toHaveLength(16);
+      expect(config.exclude).toHaveLength(DEFAULT_EXCLUDE.length);
     });
 
     it("should return defaults for null input", () => {

@@ -13,6 +13,7 @@
 ## 📌 Quick Navigation
 
 - [⚡ Quick Start](#-quick-start)
+- [🧩 Codex Plugin](#-codex-plugin)
 - [🌐 MCP Server (Cursor, Claude Code, Windsurf, etc.)](#-mcp-server-cursor-claude-code-windsurf-etc)
 - [🎯 When to Use What](#-when-to-use-what)
 - [🧭 OMO CodeGraph Compatibility](#-omo-codegraph-compatibility)
@@ -62,6 +63,25 @@
 4. **Start Searching**
    Ask:
    > "Find the function that handles credit card validation errors"
+## 🧩 Codex Plugin
+Install once for Codex threads and get skill guidance plus MCP tools in one manifest.
+
+1. **Add this repo as a marketplace source**
+   ```bash
+   codex plugin marketplace add Helweg/opencode-codebase-index
+   ```
+2. **Install the plugin**
+   ```bash
+   codex plugin add codebase-index@helweg-plugins
+   ```
+3. **Restart or open a new thread** in the target workspace.
+4. Use MCP tools (`index_codebase`, `index_status`, `codebase_search`, etc.) and the `codebase-search` skill guidance.
+
+The plugin includes:
+- `skills/` guidance for local workflows
+- `hooks/hooks.json` lightweight session-start guidance
+- `.mcp.json` with `--host codex`
+- `.agents/plugins/marketplace.json` so this repo can act as a Codex marketplace source
 
 ### Provider selection notes
 
@@ -566,6 +586,21 @@ Any OpenAI-compatible reranking endpoint. Examples:
 - **Local models**: Any server implementing `/v1/rerank` format
 
 ## ⚙️ Configuration
+
+### Storage Paths (OpenCode + Codex)
+OpenCode default (existing behavior):
+- project config: `.opencode/codebase-index.json`
+- project index: `.opencode/index`
+- global config: `~/.config/opencode/codebase-index.json`
+- global index: `~/.opencode/global-index`
+
+Codex host mode (new plugin default):
+- project config: `.codebase-index/config.json`
+- project index: `.codebase-index/index`
+- global config: `~/.config/codebase-index/config.json`
+- global index: `~/.codebase-index/global-index`
+
+Codex reads legacy OpenCode paths when codex-native paths are absent, so existing state continues to work.
 
 Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-index.json`:
 

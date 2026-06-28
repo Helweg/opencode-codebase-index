@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '\nUse codebase_peek for quick location discovery, then codebase_search for implementation details. Use index_status before searching on first run.\\n'",
+            "commandWindows": "Write-Output 'Use codebase_peek for quick location discovery, then codebase_search for implementation details. Use index_status before searching on first run.'",
+            "statusMessage": "Codebase Index ready"
+          }
+        ]
+      }
+    ]
+  }
+}

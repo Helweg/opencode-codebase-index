@@ -58,7 +58,11 @@
     "dist",
     "native/*.node",
     "skill",
-    "commands"
+    "commands",
+    ".codex-plugin",
+    ".mcp.json",
+    "skills",
+    "hooks"
   ],
   "napi": {
     "binaryName": "codebase-index-native",

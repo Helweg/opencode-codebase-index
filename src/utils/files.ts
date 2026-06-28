@@ -19,6 +19,7 @@ const PROJECT_MARKERS = [
   "CMakeLists.txt",
   "Makefile",
   ".opencode",
+  ".codebase-index",
 ];
 
 export function hasProjectMarker(projectRoot: string): boolean {
@@ -55,6 +56,7 @@ export function createIgnoreFilter(projectRoot: string): Ignore {
     "target",
     "vendor",
     ".opencode",
+    ".codebase-index",
     ".*",
     "**/.*",
     "**/.*/**",

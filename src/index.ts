@@ -28,6 +28,7 @@ import {
 } from "./tools/index.js";
 import { loadCommandsFromDirectory } from "./commands/loader.js";
 import { RoutingHintController } from "./routing-hints.js";
+import { startAutoIndex } from "./utils/auto-index.js";
 import { hasProjectMarker } from "./utils/files.js";
 import type { CombinedWatcher } from "./watcher/index.js";
 
@@ -110,13 +111,11 @@ const plugin: Plugin = async ({ directory, worktree }) => {
 
     if (config.indexing.autoIndex && isValidProject) {
       const indexer = getProjectIndexer();
-      indexer.initialize().then(() => {
-        indexer.index().catch(() => {});
-      }).catch(() => {});
+      startAutoIndex(indexer, projectRoot);
     }
 
     if (config.indexing.watchFiles && isValidProject) {
-      replaceActiveWatcher(projectRoot, createWatcherWithIndexer(getProjectIndexer, projectRoot, config));
+      replaceActiveWatcher(projectRoot, createWatcherWithIndexer(getProjectIndexer, projectRoot, config, "opencode"));
     } else {
       replaceActiveWatcher(projectRoot, null);
     }

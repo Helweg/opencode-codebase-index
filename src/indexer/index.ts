@@ -36,7 +36,8 @@ import {
 } from "../native/index.js";
 import type { SymbolData, CallEdgeData, PathHopData, ReachabilityData, CommunityData, CentralityData } from "../native/index.js";
 import { getBranchOrDefault, getBaseBranch, isGitRepo } from "../git/index.js";
-import { resolveProjectIndexPath } from "../config/paths.js";
+import type { HostMode } from "../config/host.js";
+import { getHostProjectIndexRelativePath, resolveProjectIndexPath } from "../config/paths.js";
 import { getChangedFiles } from "../tools/changed-files.js";
 import type { PrImpactResult } from "./pr-impact-types.js";
 
@@ -1789,6 +1790,7 @@ function unionCandidates(
 }
 
 export class Indexer {
+  private readonly host: HostMode;
   private config: ParsedCodebaseIndexConfig;
   private projectRoot: string;
   private indexPath: string;
@@ -1811,9 +1813,10 @@ export class Indexer {
   private indexCompatibility: IndexCompatibility | null = null;
   private indexingLockPath: string = "";
 
-  constructor(projectRoot: string, config: ParsedCodebaseIndexConfig) {
+  constructor(projectRoot: string, config: ParsedCodebaseIndexConfig, host: HostMode = "opencode") {
     this.projectRoot = projectRoot;
     this.config = config;
+    this.host = host;
     this.indexPath = this.getIndexPath();
     this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
     this.failedBatchesPath = path.join(this.indexPath, "failed-batches.json");
@@ -1822,7 +1825,7 @@ export class Indexer {
   }
 
   private getIndexPath(): string {
-    return resolveProjectIndexPath(this.projectRoot, this.config.scope);
+    return resolveProjectIndexPath(this.projectRoot, this.config.scope, this.host);
   }
 
   private loadFileHashCache(): void {
@@ -4335,8 +4338,15 @@ export class Indexer {
       return;
     }
 
-    const localProjectIndexPath = path.join(this.projectRoot, ".opencode", "index");
-    if (path.resolve(this.indexPath) !== path.resolve(localProjectIndexPath)) {
+    const localProjectIndexPaths = [path.join(this.projectRoot, getHostProjectIndexRelativePath(this.host))];
+    if (this.host !== "opencode") {
+      localProjectIndexPaths.push(path.join(this.projectRoot, getHostProjectIndexRelativePath("opencode")));
+    }
+
+    const isLocalProjectIndex = localProjectIndexPaths.some(
+      (localPath) => path.resolve(this.indexPath) === path.resolve(localPath)
+    );
+    if (!isLocalProjectIndex) {
       throw new Error(
         "Project-scoped force rebuild is unsafe while using an inherited worktree index. " +
         "Create a local project config boundary before clearing the index."

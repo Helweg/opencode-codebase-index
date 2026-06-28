@@ -1,4 +1,4 @@
-import type { Indexer } from "../indexer/index.js";
+import type { HostMode } from "../config/host.js";
 
 export const MAX_CONTENT_LINES = 30;
 
@@ -18,8 +18,5 @@ export const CHUNK_TYPE_ENUM = [
 
 export interface McpServerRuntime {
   projectRoot: string;
-  ensureInitialized(): Promise<void>;
-  getIndexer(): Indexer;
-  refreshIndexerFromConfig(): void;
-  shouldForceLocalizeProjectIndex(): boolean;
+  host: HostMode;
 }
