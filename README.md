@@ -8,11 +8,12 @@
 
 > **Stop grepping for concepts. Start searching for meaning.**
 
-**opencode-codebase-index** brings semantic understanding to your [OpenCode](https://opencode.ai) workflow — and now to any MCP-compatible client like Cursor, Claude Code, and Windsurf. Instead of guessing function names or grepping for keywords, ask your codebase questions in plain English.
+**opencode-codebase-index** brings semantic understanding to your [OpenCode](https://opencode.ai), [Pi](https://pi.dev), Codex, and MCP-compatible workflows. Instead of guessing function names or grepping for keywords, ask your codebase questions in plain English.
 
 ## 📌 Quick Navigation
 
 - [⚡ Quick Start](#-quick-start)
+- [🥧 Pi Package](#-pi-package)
 - [🧩 Codex Plugin](#-codex-plugin)
 - [🧩 Claude Code Plugin](#-claude-code-plugin)
 - [🌐 MCP Server (Cursor, Claude Code, Windsurf, etc.)](#-mcp-server-cursor-claude-code-windsurf-etc)
@@ -28,6 +29,7 @@
 ## 👋 Choose Your Path
 
 - **I want to try it now** → go to [Quick Start](#-quick-start)
+- **I use Pi** → go to [Pi Package](#-pi-package)
 - **I use Cursor/Claude Code/Windsurf** → go to [MCP Server setup](#-mcp-server-cursor-claude-code-windsurf-etc)
 - **I’m comparing tools and workflows** → go to [When to Use What](#-when-to-use-what)
 - **I’m tuning behavior/cost/performance** → go to [Configuration](#️-configuration)
@@ -40,6 +42,7 @@
 - 🌿 **Branch-Aware**: Seamlessly handles git branch switches — reuses embeddings, filters stale results.
 - 🔒 **Privacy Focused**: Your vector index is stored locally in your project.
 - 🔌 **Model Agnostic**: Works out-of-the-box with GitHub Copilot, OpenAI, Gemini, or local Ollama models.
+- 🥧 **Pi Package**: First-class Pi extension and skill package with native tools.
 - 🌐 **MCP Server**: Use with Cursor, Claude Code, Windsurf, or any MCP-compatible client — index once, search from anywhere.
 
 ## ⚡ Quick Start
@@ -64,6 +67,18 @@
 4. **Start Searching**
    Ask:
    > "Find the function that handles credit card validation errors"
+## 🥧 Pi Package
+
+Install as a Pi package to get first-class `codebase_search`, `index_codebase`, call graph, PR impact, and knowledge-base tools plus the `codebase-search` skill.
+
+```bash
+pi install npm:opencode-codebase-index
+# or, for local development:
+pi install ./path/to/opencode-codebase-index
+```
+
+Pi uses the neutral `.codebase-index/` project storage and falls back to existing OpenCode state when present.
+
 ## 🧩 Codex Plugin
 Install once for Codex threads and get skill guidance plus MCP tools in one manifest.
 
@@ -608,14 +623,14 @@ Any OpenAI-compatible reranking endpoint. Examples:
 
 ## ⚙️ Configuration
 
-### Storage Paths (OpenCode + Codex + Claude)
+### Storage Paths (OpenCode + Codex + Claude + Pi)
 OpenCode default (existing behavior):
 - project config: `.opencode/codebase-index.json`
 - project index: `.opencode/index`
 - global config: `~/.config/opencode/codebase-index.json`
 - global index: `~/.opencode/global-index`
 
-Codex host mode (`--host codex`):
+Codex/Pi host mode (neutral default):
 - project config: `.codebase-index/config.json`
 - project index: `.codebase-index/index`
 - global config: `~/.config/codebase-index/config.json`
@@ -627,7 +642,7 @@ Claude Code host mode (`--host claude`):
 - global config: `~/.claude/codebase-index.json`
 - global index: `~/.claude/global-index`
 
-Codex and Claude read legacy OpenCode paths when their host-native paths are absent, so existing state continues to work.
+Codex, Claude Code, and Pi read legacy OpenCode paths when host-native paths are absent, so existing state continues to work.
 
 Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-index.json`:
 

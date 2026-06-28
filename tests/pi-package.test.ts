@@ -1,0 +1,59 @@
+import * as fs from "fs";
+
+import { describe, expect, it } from "vitest";
+
+import codebaseIndexPiExtension from "../src/pi-extension.js";
+
+describe("Pi package integration", () => {
+  it("declares a Pi package manifest with extension and skill resources", () => {
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf-8")) as {
+      pi?: { extensions?: string[]; skills?: string[] };
+      files?: string[];
+      keywords?: string[];
+      dependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+      peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+    };
+
+    expect(pkg.keywords).toContain("pi-package");
+    expect(pkg.pi?.extensions).toContain("./dist/pi-extension.js");
+    expect(pkg.pi?.skills).toContain("./skills");
+    expect(pkg.files).toContain("dist");
+    expect(pkg.files).toContain("skills");
+    expect(pkg.dependencies?.typebox).toBeDefined();
+    expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe("*");
+    expect(pkg.peerDependenciesMeta?.["@earendil-works/pi-coding-agent"]?.optional).toBe(true);
+  });
+
+  it("includes the Pi extension source in the TypeScript build entries", () => {
+    expect(fs.readFileSync("tsup.config.ts", "utf-8")).toContain("src/pi-extension.ts");
+  });
+
+  it("registers first-class Pi tools", () => {
+    const tools: Array<{ name: string }> = [];
+
+    codebaseIndexPiExtension({
+      registerTool(tool) {
+        tools.push({ name: tool.name });
+      },
+    } as Parameters<typeof codebaseIndexPiExtension>[0]);
+
+    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "codebase_search",
+      "codebase_peek",
+      "find_similar",
+      "implementation_lookup",
+      "index_codebase",
+      "index_status",
+      "index_health_check",
+      "index_metrics",
+      "index_logs",
+      "call_graph",
+      "call_graph_path",
+      "pr_impact",
+      "knowledge_base_list",
+      "knowledge_base_add",
+      "knowledge_base_remove",
+    ]));
+  });
+});
