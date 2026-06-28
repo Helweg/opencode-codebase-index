@@ -14,6 +14,7 @@
 
 - [⚡ Quick Start](#-quick-start)
 - [🧩 Codex Plugin](#-codex-plugin)
+- [🧩 Claude Code Plugin](#-claude-code-plugin)
 - [🌐 MCP Server (Cursor, Claude Code, Windsurf, etc.)](#-mcp-server-cursor-claude-code-windsurf-etc)
 - [🎯 When to Use What](#-when-to-use-what)
 - [🧭 OMO CodeGraph Compatibility](#-omo-codegraph-compatibility)
@@ -82,6 +83,26 @@ The plugin includes:
 - `hooks/hooks.json` lightweight session-start guidance
 - `.mcp.json` with `--host codex`
 - `.agents/plugins/marketplace.json` so this repo can act as a Codex marketplace source
+
+## 🧩 Claude Code Plugin
+Install once for Claude Code sessions and get skill guidance plus MCP tools in one manifest.
+
+1. **Add this repo as a marketplace source**
+   ```bash
+   /plugin marketplace add Helweg/opencode-codebase-index
+   ```
+2. **Install the plugin**
+   ```bash
+   /plugin install codebase-index@helweg-plugins
+   ```
+3. **Restart or open a new session** in the target workspace.
+4. Use MCP tools (`index_codebase`, `index_status`, `codebase_search`, etc.) and the `codebase-search` skill guidance.
+
+The plugin includes:
+- `skills/` guidance for local workflows
+- `hooks/hooks.json` lightweight session-start guidance
+- inline `mcpServers` (in `.claude-plugin/plugin.json`) launching `dist/cli.js --host claude` via `${CLAUDE_PLUGIN_ROOT}`
+- `.claude-plugin/marketplace.json` so this repo can act as a Claude Code marketplace source
 
 ### Provider selection notes
 
@@ -587,20 +608,26 @@ Any OpenAI-compatible reranking endpoint. Examples:
 
 ## ⚙️ Configuration
 
-### Storage Paths (OpenCode + Codex)
+### Storage Paths (OpenCode + Codex + Claude)
 OpenCode default (existing behavior):
 - project config: `.opencode/codebase-index.json`
 - project index: `.opencode/index`
 - global config: `~/.config/opencode/codebase-index.json`
 - global index: `~/.opencode/global-index`
 
-Codex host mode (new plugin default):
+Codex host mode (`--host codex`):
 - project config: `.codebase-index/config.json`
 - project index: `.codebase-index/index`
 - global config: `~/.config/codebase-index/config.json`
 - global index: `~/.codebase-index/global-index`
 
-Codex reads legacy OpenCode paths when codex-native paths are absent, so existing state continues to work.
+Claude Code host mode (`--host claude`):
+- project config: `.claude/codebase-index.json`
+- project index: `.claude/index`
+- global config: `~/.claude/codebase-index.json`
+- global index: `~/.claude/global-index`
+
+Codex and Claude read legacy OpenCode paths when their host-native paths are absent, so existing state continues to work.
 
 Zero-config by default (uses `auto` mode). Customize in `.opencode/codebase-index.json`:
 

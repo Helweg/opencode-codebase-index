@@ -1,0 +1,29 @@
+{
+  "name": "codebase-index",
+  "version": "0.12.0",
+  "description": "Semantic code search and codebase graph tools for Claude Code",
+  "displayName": "Codebase Index",
+  "author": {
+    "name": "Kenneth",
+    "email": "kenneth@example.com",
+    "url": "https://github.com/Helweg/opencode-codebase-index"
+  },
+  "homepage": "https://github.com/Helweg/opencode-codebase-index",
+  "repository": "https://github.com/Helweg/opencode-codebase-index",
+  "license": "MIT",
+  "keywords": [
+    "codebase-index",
+    "semantic search",
+    "claude",
+    "claude-code",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": {
+    "codebase-index": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.js", "--host", "claude"]
+    }
+  }
+}

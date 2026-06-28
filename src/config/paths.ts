@@ -10,13 +10,30 @@ const OPENCODE_PROJECT_INDEX_RELATIVE_PATH = path.join(".opencode", "index");
 const CODEBASE_INDEX_DIR = ".codebase-index";
 const CODEBASE_PROJECT_CONFIG_RELATIVE_PATH = path.join(CODEBASE_INDEX_DIR, "config.json");
 const CODEBASE_PROJECT_INDEX_RELATIVE_PATH = path.join(CODEBASE_INDEX_DIR, "index");
+const CLAUDE_DIR = ".claude";
+const CLAUDE_PROJECT_CONFIG_RELATIVE_PATH = path.join(CLAUDE_DIR, "codebase-index.json");
+const CLAUDE_PROJECT_INDEX_RELATIVE_PATH = path.join(CLAUDE_DIR, "index");
 
 function getProjectConfigRelativePath(host: HostMode): string {
-  return host === "opencode" ? OPENCODE_PROJECT_CONFIG_RELATIVE_PATH : CODEBASE_PROJECT_CONFIG_RELATIVE_PATH;
+  switch (host) {
+    case "opencode":
+      return OPENCODE_PROJECT_CONFIG_RELATIVE_PATH;
+    case "claude":
+      return CLAUDE_PROJECT_CONFIG_RELATIVE_PATH;
+    default:
+      return CODEBASE_PROJECT_CONFIG_RELATIVE_PATH;
+  }
 }
 
 function getProjectIndexRelativePath(host: HostMode): string {
-  return host === "opencode" ? OPENCODE_PROJECT_INDEX_RELATIVE_PATH : CODEBASE_PROJECT_INDEX_RELATIVE_PATH;
+  switch (host) {
+    case "opencode":
+      return OPENCODE_PROJECT_INDEX_RELATIVE_PATH;
+    case "claude":
+      return CLAUDE_PROJECT_INDEX_RELATIVE_PATH;
+    default:
+      return CODEBASE_PROJECT_INDEX_RELATIVE_PATH;
+  }
 }
 
 function resolveWorktreeFallbackPath(projectRoot: string, relativePath: string): string | null {
@@ -55,19 +72,25 @@ function hasHostProjectConfig(projectRoot: string, host: HostMode): boolean {
 }
 
 export function getGlobalIndexPath(host: HostMode = "opencode"): string {
-  if (host === "opencode") {
-    return path.join(os.homedir(), ".opencode", "global-index");
+  switch (host) {
+    case "opencode":
+      return path.join(os.homedir(), ".opencode", "global-index");
+    case "claude":
+      return path.join(os.homedir(), ".claude", "global-index");
+    default:
+      return path.join(os.homedir(), ".codebase-index", "global-index");
   }
-
-  return path.join(os.homedir(), ".codebase-index", "global-index");
 }
 
 export function getGlobalConfigPath(host: HostMode = "opencode"): string {
-  if (host === "opencode") {
-    return path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
+  switch (host) {
+    case "opencode":
+      return path.join(os.homedir(), ".config", "opencode", "codebase-index.json");
+    case "claude":
+      return path.join(os.homedir(), ".claude", "codebase-index.json");
+    default:
+      return path.join(os.homedir(), ".config", "codebase-index", "config.json");
   }
-
-  return path.join(os.homedir(), ".config", "codebase-index", "config.json");
 }
 
 export function resolveGlobalConfigPath(host: HostMode = "opencode"): string {

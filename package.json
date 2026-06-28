@@ -60,6 +60,7 @@
     "skill",
     "commands",
     ".codex-plugin",
+    ".claude-plugin",
     ".mcp.json",
     "skills",
     "hooks"
