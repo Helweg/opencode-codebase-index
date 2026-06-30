@@ -58,3 +58,7 @@ benchmarks/results/
 # Local agent/session artifacts
 .sisyphus/
 .superset/
+
+# Local agent/workspace scratch (not part of the package)
+.omo/
+AGENTS.original.md

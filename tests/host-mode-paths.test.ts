@@ -165,6 +165,67 @@ describe("host-aware path resolution", () => {
     );
   });
 
+  it("uses claude-native writable config path", () => {
+    expect(resolveWritableProjectConfigPath(mainRepoDir, "claude")).toBe(
+      path.join(mainRepoDir, ".claude", "codebase-index.json"),
+    );
+  });
+
+  it("uses claude-native global paths", () => {
+    expect(resolveGlobalConfigPath("claude")).toBe(path.join(homeDir, ".claude", "codebase-index.json"));
+    expect(resolveGlobalIndexPath("claude")).toBe(path.join(homeDir, ".claude", "global-index"));
+  });
+
+  it("reads legacy OpenCode config for claude host when claude-native config is absent", () => {
+    fs.mkdirSync(path.join(mainRepoDir, ".opencode"), { recursive: true });
+    fs.writeFileSync(
+      path.join(mainRepoDir, ".opencode", "codebase-index.json"),
+      JSON.stringify({ knowledgeBases: ["legacy-docs"] }, null, 2),
+      "utf-8",
+    );
+
+    expect(resolveProjectConfigPath(mainRepoDir, "claude")).toBe(
+      path.join(mainRepoDir, ".opencode", "codebase-index.json"),
+    );
+    const loaded = loadMergedConfig(mainRepoDir, "claude") as Record<string, unknown>;
+    expect(loaded.knowledgeBases).toEqual(["legacy-docs"]);
+  });
+
+  it("prefers claude-native config for claude host when present", () => {
+    fs.mkdirSync(path.join(mainRepoDir, ".opencode"), { recursive: true });
+    fs.mkdirSync(path.join(mainRepoDir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(mainRepoDir, ".opencode", "codebase-index.json"),
+      JSON.stringify({ knowledgeBases: ["legacy-docs"] }, null, 2),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(mainRepoDir, ".claude", "codebase-index.json"),
+      JSON.stringify({ knowledgeBases: ["claude-docs"] }, null, 2),
+      "utf-8",
+    );
+
+    expect(resolveProjectConfigPath(mainRepoDir, "claude")).toBe(
+      path.join(mainRepoDir, ".claude", "codebase-index.json"),
+    );
+    const loaded = loadMergedConfig(mainRepoDir, "claude") as Record<string, unknown>;
+    expect(loaded.knowledgeBases).toEqual(["claude-docs"]);
+  });
+
+  it("uses claude project index when claude-native config exists next to a legacy index", () => {
+    fs.mkdirSync(path.join(mainRepoDir, ".opencode", "index"), { recursive: true });
+    fs.mkdirSync(path.join(mainRepoDir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(mainRepoDir, ".claude", "codebase-index.json"),
+      JSON.stringify({ knowledgeBases: ["claude-docs"] }, null, 2),
+      "utf-8",
+    );
+
+    expect(resolveProjectIndexPath(mainRepoDir, "project", "claude")).toBe(
+      path.join(mainRepoDir, ".claude", "index"),
+    );
+  });
+
   it("keeps OpenCode project index path unchanged", () => {
     fs.mkdirSync(path.join(mainRepoDir, ".opencode", "index"), { recursive: true });
 

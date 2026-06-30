@@ -6,7 +6,7 @@ import * as path from "path";
 import { pathToFileURL } from "url";
 
 import { parseConfig } from "./config/schema.js";
-import { parseHostMode, type HostMode } from "./config/host.js";
+import { parseHostMode, HOST_MODES, type HostMode } from "./config/host.js";
 import { handleEvalCommand } from "./eval/cli.js";
 import { Indexer } from "./indexer/index.js";
 import { createMcpServer } from "./mcp-server.js";
@@ -173,7 +173,7 @@ async function main(): Promise<void> {
 
 function handleMainError(error: unknown): never {
   if (error instanceof Error && error.message.startsWith("Invalid host mode")) {
-    console.error("Invalid host mode. Allowed values: opencode, codex.");
+    console.error(`Invalid host mode. Allowed values: ${HOST_MODES.join(", ")}.`);
     process.exit(1);
   }
 
