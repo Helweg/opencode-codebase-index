@@ -96,7 +96,7 @@ Install once for Codex threads and get skill guidance plus MCP tools in one mani
 The plugin includes:
 - `skills/` guidance for local workflows
 - `hooks/hooks.json` lightweight session-start guidance
-- `.mcp.json` with `--host codex`
+- `.mcp.json` running the published `opencode-codebase-index` CLI via `npx … --host codex`, so a git marketplace install works without a local build
 - `.agents/plugins/marketplace.json` so this repo can act as a Codex marketplace source
 
 ## 🧩 Claude Code Plugin
