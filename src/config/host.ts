@@ -1,6 +1,6 @@
-export type HostMode = "opencode" | "codex" | "claude";
+export type HostMode = "opencode" | "codex" | "claude" | "pi";
 
-export const HOST_MODES: ReadonlyArray<HostMode> = ["opencode", "codex", "claude"];
+export const HOST_MODES: ReadonlyArray<HostMode> = ["opencode", "codex", "claude", "pi"];
 
 export function isSupportedHostMode(value: string): value is HostMode {
   return (HOST_MODES as ReadonlyArray<string>).includes(value);

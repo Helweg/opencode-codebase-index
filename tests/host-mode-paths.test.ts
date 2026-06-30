@@ -57,6 +57,24 @@ describe("host-aware path resolution", () => {
     expect(resolveWritableProjectConfigPath(mainRepoDir, "codex")).toBe(
       path.join(mainRepoDir, ".codebase-index", "config.json"),
     );
+    expect(resolveWritableProjectConfigPath(mainRepoDir, "pi")).toBe(
+      path.join(mainRepoDir, ".codebase-index", "config.json"),
+    );
+  });
+
+  it("reads legacy OpenCode config for pi host when pi-native config is absent", () => {
+    fs.mkdirSync(path.join(mainRepoDir, ".opencode"), { recursive: true });
+    fs.writeFileSync(
+      path.join(mainRepoDir, ".opencode", "codebase-index.json"),
+      JSON.stringify({ knowledgeBases: ["legacy-docs"] }, null, 2),
+      "utf-8",
+    );
+
+    const resolved = resolveProjectConfigPath(mainRepoDir, "pi");
+    const loaded = loadMergedConfig(mainRepoDir, "pi") as Record<string, unknown>;
+
+    expect(resolved).toBe(path.join(mainRepoDir, ".opencode", "codebase-index.json"));
+    expect(loaded.knowledgeBases).toEqual(["legacy-docs"]);
   });
 
   it("reads legacy OpenCode config for codex host when codex-native config is absent", () => {

@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/cli.ts"],
+  entry: ["src/index.ts", "src/cli.ts", "src/pi-extension.ts"],
   format: ["esm", "cjs"],
   dts: false,
   sourcemap: true,
@@ -20,6 +20,8 @@ export default defineConfig({
     "@modelcontextprotocol/sdk",
     "zod",
     "@opencode-ai/plugin",
+    "@earendil-works/pi-coding-agent",
+    "typebox",
     /^node:/,
     "fs",
     "fs/promises",

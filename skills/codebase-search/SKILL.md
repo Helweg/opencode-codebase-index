@@ -1,6 +1,6 @@
 ---
 name: codebase-search
-description: Semantic code and documentation search by meaning for Codex workflows. Use codebase_peek to find WHERE code is first, then codebase_search for implementation details.
+description: Semantic code and documentation search by meaning for Pi and Codex workflows. Use codebase_peek to find WHERE code is first, then codebase_search for implementation details.
 ---
 
 # Codebase Search Skill
