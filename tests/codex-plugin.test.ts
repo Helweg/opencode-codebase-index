@@ -34,8 +34,14 @@ describe("Codex plugin host mode", () => {
     expect(fs.existsSync("hooks/hooks.json")).toBe(true);
 
     const codebaseMcp = mcpManifest.mcpServers["codebase-index"];
-    expect(codebaseMcp.command).toBe("node");
-    expect(codebaseMcp.args).toContain("--host");
-    expect(codebaseMcp.args).toContain("codex");
+    expect(codebaseMcp.command).toBe("npx");
+    expect(codebaseMcp.args).toEqual([
+      "-y",
+      "--package",
+      "opencode-codebase-index",
+      "opencode-codebase-index-mcp",
+      "--host",
+      "codex",
+    ]);
   });
 });
