@@ -4,6 +4,18 @@ import { describe, expect, it } from "vitest";
 import { parseHostMode } from "../src/config/host.js";
 
 describe("Codex plugin host mode", () => {
+  it("ships MCP CLI runtime dependencies for clean npx installs", () => {
+    const packageJson = JSON.parse(fs.readFileSync("package.json", "utf-8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeTruthy();
+    expect(packageJson.dependencies?.zod).toBeTruthy();
+    expect(packageJson.devDependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
+    expect(packageJson.devDependencies?.zod).toBeUndefined();
+  });
+
   it("parses known host modes", () => {
     expect(parseHostMode("opencode")).toBe("opencode");
     expect(parseHostMode("codex")).toBe("codex");
@@ -28,7 +40,7 @@ describe("Codex plugin host mode", () => {
     };
 
     expect(pluginManifest.name).toBe("codebase-index");
-    expect(pluginManifest.version).toBe("0.12.0");
+    expect(pluginManifest.version).toBe("0.13.0");
     expect(pluginManifest.mcpServers).toBe("./.mcp.json");
     expect(pluginManifest.hooks).toBe("./hooks/hooks.json");
     expect(fs.existsSync("hooks/hooks.json")).toBe(true);

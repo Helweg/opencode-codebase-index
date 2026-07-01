@@ -13,7 +13,7 @@ describe("Claude Code plugin", () => {
     };
 
     expect(pluginManifest.name).toBe("codebase-index");
-    expect(pluginManifest.version).toBe("0.12.0");
+    expect(pluginManifest.version).toBe("0.13.0");
     expect(pluginManifest.hooks).toBe("./hooks/hooks.json");
     expect(pluginManifest.skills).toBe("./skills/");
     expect(fs.existsSync("hooks/hooks.json")).toBe(true);
