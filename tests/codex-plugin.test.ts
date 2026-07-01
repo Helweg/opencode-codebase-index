@@ -28,7 +28,7 @@ describe("Codex plugin host mode", () => {
     };
 
     expect(pluginManifest.name).toBe("codebase-index");
-    expect(pluginManifest.version).toBe("0.12.0");
+    expect(pluginManifest.version).toBe("0.13.0");
     expect(pluginManifest.mcpServers).toBe("./.mcp.json");
     expect(pluginManifest.hooks).toBe("./hooks/hooks.json");
     expect(fs.existsSync("hooks/hooks.json")).toBe(true);

@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-01
+
+### Added
+
+- **Temporal call graph visualization**: Added the `index_visualize` tool, `/visualize` slash command, and `npm run visualize` CLI shortcut for generating a self-contained browser HTML view of recent change lenses, module topology, symbol exploration, hotspots, and cycles (#120).
+- **First-class Codex integration**: Added Codex plugin marketplace metadata, skill guidance, session hook guidance, and an MCP manifest so Codex can install and run the package as a plugin (#121).
+- **First-class Claude Code integration**: Added Claude Code plugin metadata, inline MCP server configuration, and host-specific installation documentation so Claude Code sessions can use the same MCP tools and skill guidance (#139).
+- **First-class Pi integration**: Added a Pi extension and package metadata exposing semantic search, indexing, call graph, PR impact, and knowledge-base tools through Pi's native tool interface (#139).
+- **Host-native storage paths**: Added Codex/Pi neutral `.codebase-index/` paths and Claude Code `.claude/` paths, with fallback to legacy OpenCode state when host-native state is absent.
+
 ### Fixed
 
 - **Codex marketplace install**: Run the Codex MCP server through the published npm CLI via `npx` so git marketplace installs no longer depend on gitignored local `dist/` artifacts (#140).
+- **Claude marketplace install**: Run the Claude Code MCP server through the published npm CLI via `npx` so git plugin installs no longer depend on gitignored local `dist/` artifacts.
+- **Watcher reindexing**: Run file-watch reindexing in the background while keeping reindex jobs serialized, avoiding blocking watcher callbacks without allowing unsafe concurrent rebuilds.
+- **Codex legacy rebuilds**: Preserve legacy local force rebuild behavior for Codex host mode.
 
 ## [0.12.0] - 2026-06-22
 
