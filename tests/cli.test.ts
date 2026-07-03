@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import * as os from "os";
 import * as path from "path";
+import { pathToFileURL } from "url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadCliRawConfig, parseArgs } from "../src/cli.js";
+import { isCliEntrypoint, loadCliRawConfig, parseArgs } from "../src/cli.js";
 
 describe("cli config loading", () => {
   let tempDir: string;
@@ -31,5 +32,16 @@ describe("cli config loading", () => {
 
     expect(rawConfig.embeddingProvider).toBe("ollama");
     expect(rawConfig.include).toEqual(["custom/**/*.ts"]);
+  });
+
+  it("recognizes npm bin symlinks as the CLI entrypoint", () => {
+    const realCliPath = path.join(tempDir, "package", "dist", "cli.js");
+    const binPath = path.join(tempDir, ".bin", "opencode-codebase-index-mcp");
+    mkdirSync(path.dirname(realCliPath), { recursive: true });
+    mkdirSync(path.dirname(binPath), { recursive: true });
+    writeFileSync(realCliPath, "#!/usr/bin/env node\n", "utf-8");
+    symlinkSync(realCliPath, binPath);
+
+    expect(isCliEntrypoint(pathToFileURL(realCliPath).href, binPath)).toBe(true);
   });
 });

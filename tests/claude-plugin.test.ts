@@ -13,10 +13,9 @@ describe("Claude Code plugin", () => {
     };
 
     expect(pluginManifest.name).toBe("codebase-index");
-    expect(pluginManifest.version).toBe("0.13.0");
-    expect(pluginManifest.hooks).toBe("./hooks/hooks.json");
+    expect(pluginManifest.version).toBe("0.13.1");
+    expect(pluginManifest.hooks).toBeUndefined();
     expect(pluginManifest.skills).toBe("./skills/");
-    expect(fs.existsSync("hooks/hooks.json")).toBe(true);
 
     const codebaseMcp = pluginManifest.mcpServers?.["codebase-index"];
     // Runs the published npm package, not the uncommitted dist/, so a git
@@ -31,11 +30,14 @@ describe("Claude Code plugin", () => {
     const marketplace = JSON.parse(fs.readFileSync(".claude-plugin/marketplace.json", "utf-8")) as {
       name: string;
       owner: { name: string };
-      plugins: Array<{ name: string; source: string }>;
+      plugins: Array<{ name: string; source: string; version: string }>;
     };
 
     expect(marketplace.name).toBe("helweg-plugins");
     expect(marketplace.owner.name).toBeTruthy();
-    expect(marketplace.plugins.some((plugin) => plugin.name === "codebase-index")).toBe(true);
+    expect(marketplace.plugins).toContainEqual(expect.objectContaining({
+      name: "codebase-index",
+      version: "0.13.1",
+    }));
   });
 });

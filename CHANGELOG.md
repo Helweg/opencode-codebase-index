@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-03
+
+### Fixed
+
+- **Codex and Claude MCP startup**: Recognize npm `.bin` symlink launches as the CLI entrypoint so `npx --package opencode-codebase-index opencode-codebase-index-mcp --host ...` starts the MCP server instead of exiting before handshake.
+
 ## [0.13.0] - 2026-07-01
 
 ### Added

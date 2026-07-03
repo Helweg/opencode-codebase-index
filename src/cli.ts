@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { writeFileSync } from "fs";
+import { realpathSync, writeFileSync } from "fs";
 import * as os from "os";
 import * as path from "path";
-import { pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 
 import { parseConfig } from "./config/schema.js";
 import { parseHostMode, HOST_MODES, type HostMode } from "./config/host.js";
@@ -53,6 +53,10 @@ export function parseArgs(argv: string[]): CliArgs {
 
 export function loadCliRawConfig(args: CliArgs): unknown {
   return args.config ? loadConfigFile(args.config) : loadMergedConfig(args.project, args.host);
+}
+
+export function isCliEntrypoint(moduleUrl: string, argvPath: string | undefined): boolean {
+  return argvPath !== undefined && realpathSync(fileURLToPath(moduleUrl)) === realpathSync(argvPath);
 }
 
 function parseVisualizeArgs(argv: string[], cwd: string): VisualizeArgs {
@@ -186,6 +190,6 @@ function handleMainError(error: unknown): never {
   process.exit(1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isCliEntrypoint(import.meta.url, process.argv[1])) {
   main().catch(handleMainError);
 }
