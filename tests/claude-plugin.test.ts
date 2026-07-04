@@ -13,7 +13,7 @@ describe("Claude Code plugin", () => {
     };
 
     expect(pluginManifest.name).toBe("codebase-index");
-    expect(pluginManifest.version).toBe("0.13.1");
+    expect(pluginManifest.version).toBe("0.13.2");
     expect(pluginManifest.hooks).toBeUndefined();
     expect(pluginManifest.skills).toBe("./skills/");
 
@@ -21,9 +21,14 @@ describe("Claude Code plugin", () => {
     // Runs the published npm package, not the uncommitted dist/, so a git
     // marketplace install can start the server without a local build.
     expect(codebaseMcp?.command).toBe("npx");
-    expect(codebaseMcp?.args).toContain("opencode-codebase-index");
-    expect(codebaseMcp?.args).toContain("--host");
-    expect(codebaseMcp?.args).toContain("claude");
+    expect(codebaseMcp?.args).toEqual([
+      "-y",
+      "--package",
+      "opencode-codebase-index",
+      "opencode-codebase-index-mcp",
+      "--host",
+      "claude",
+    ]);
   });
 
   it("exposes a Claude marketplace manifest using owner metadata", () => {
@@ -37,7 +42,7 @@ describe("Claude Code plugin", () => {
     expect(marketplace.owner.name).toBeTruthy();
     expect(marketplace.plugins).toContainEqual(expect.objectContaining({
       name: "codebase-index",
-      version: "0.13.1",
+      version: "0.13.2",
     }));
   });
 });
