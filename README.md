@@ -99,6 +99,15 @@ The plugin includes:
 - `.mcp.json` running the published `opencode-codebase-index` CLI via `npx … --host codex`, so a git marketplace install works without a local build
 - `.agents/plugins/marketplace.json` so this repo can act as a Codex marketplace source
 
+For local plugin development from this checkout, build and link the local MCP bin once:
+
+```bash
+npm run build:ts
+npm run dev:link-mcp
+```
+
+After that, the normal `.mcp.json` command also works when Codex starts the plugin from this repository.
+
 ## 🧩 Claude Code Plugin
 Install once for Claude Code sessions and get skill guidance plus MCP tools in one manifest.
 
@@ -155,7 +164,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
      "mcpServers": {
        "codebase-index": {
          "command": "npx",
-         "args": ["opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
+         "args": ["-y", "--package", "opencode-codebase-index", "opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
        }
      }
    }
@@ -167,7 +176,7 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
      "mcpServers": {
        "codebase-index": {
          "command": "npx",
-         "args": ["opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
+         "args": ["-y", "--package", "opencode-codebase-index", "opencode-codebase-index-mcp", "--project", "/path/to/your/project"]
        }
      }
    }
@@ -175,14 +184,16 @@ Use the same semantic search from any MCP-compatible client. Index once, search 
 
 3. **CLI options**
    ```bash
-   npx opencode-codebase-index-mcp --project /path/to/repo    # specify project root
-   npx opencode-codebase-index-mcp --config /path/to/config   # custom config file
-   npx opencode-codebase-index-mcp                            # uses current directory
+   npx -y --package opencode-codebase-index opencode-codebase-index-mcp --project /path/to/repo
+   npx -y --package opencode-codebase-index opencode-codebase-index-mcp --config /path/to/config
+   npx -y --package opencode-codebase-index opencode-codebase-index-mcp
    ```
 
 The MCP server exposes all 12 tools (`codebase_search`, `codebase_peek`, `find_similar`, `implementation_lookup`, `call_graph`, `call_graph_path`, `pr_impact`, `index_codebase`, `index_status`, `index_health_check`, `index_metrics`, `index_logs`) and 5 prompts (`search`, `find`, `definition`, `index`, `status`).
 
-The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) are optional peer dependencies — they're only needed if you use the MCP server.
+The MCP dependencies (`@modelcontextprotocol/sdk`, `zod`) ship with the package so published `npx --package opencode-codebase-index` launches work in clean MCP clients.
+
+If you are testing the MCP command from inside this repository checkout and see `opencode-codebase-index-mcp: command not found`, run `npm run build:ts && npm run dev:link-mcp`. That adds the local bin shim expected by `npx` without changing the published MCP config.
 
 ## 🔍 See It In Action
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-07-04
+
+### Fixed
+
+- **Local plugin development**: Added `npm run dev:link-mcp` so this repository checkout can provide the local `opencode-codebase-index-mcp` bin expected by the standard `npx --package opencode-codebase-index ...` MCP command, without changing the published Codex/Claude manifests.
+- **MCP install docs**: Updated MCP examples to use the published-package `npx -y --package opencode-codebase-index opencode-codebase-index-mcp ...` form and clarified that MCP runtime dependencies ship with the package.
+
 ## [0.13.1] - 2026-07-03
 
 ### Fixed

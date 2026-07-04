@@ -1,6 +1,6 @@
 {
   "name": "opencode-codebase-index",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Semantic codebase indexing and search for OpenCode - find code by meaning, not just keywords",
   "type": "module",
   "main": "dist/index.js",
@@ -47,6 +47,7 @@
     "eval:ci": "npx tsx src/cli.ts eval run --reindex --ci --budget benchmarks/budgets/default.json --against benchmarks/baselines/eval-baseline-summary.json",
     "eval:ci:ollama": "npx tsx src/cli.ts eval run --config .github/eval-ollama-config.json --reindex --ci --budget benchmarks/budgets/default.json --against benchmarks/baselines/eval-baseline-summary.json",
     "eval:compare": "npx tsx src/cli.ts eval compare",
+    "dev:link-mcp": "node scripts/link-local-mcp-bin.mjs",
     "test": "vitest",
     "pretest:run": "node scripts/run-build-native-with-rustflags.mjs",
     "test:run": "vitest run",
@@ -61,6 +62,7 @@
     "native/*.node",
     "skill",
     "commands",
+    "scripts/link-local-mcp-bin.mjs",
     ".codex-plugin",
     ".claude-plugin",
     ".mcp.json",

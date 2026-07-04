@@ -8,12 +8,14 @@ describe("Codex plugin host mode", () => {
     const packageJson = JSON.parse(fs.readFileSync("package.json", "utf-8")) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
+      scripts?: Record<string, string>;
     };
 
     expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeTruthy();
     expect(packageJson.dependencies?.zod).toBeTruthy();
     expect(packageJson.devDependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(packageJson.devDependencies?.zod).toBeUndefined();
+    expect(packageJson.scripts?.["dev:link-mcp"]).toBe("node scripts/link-local-mcp-bin.mjs");
   });
 
   it("parses known host modes", () => {
@@ -40,7 +42,7 @@ describe("Codex plugin host mode", () => {
     };
 
     expect(pluginManifest.name).toBe("codebase-index");
-    expect(pluginManifest.version).toBe("0.13.1");
+    expect(pluginManifest.version).toBe("0.13.2");
     expect(pluginManifest.mcpServers).toBe("./.mcp.json");
     expect(pluginManifest.hooks).toBe("./hooks/hooks.json");
     expect(fs.existsSync("hooks/hooks.json")).toBe(true);
