@@ -2,7 +2,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { formatCostEstimate } from "../utils/cost.js";
-import { formatDefinitionLookup, formatHealthCheck, formatIndexStats, formatStatus } from "../tools/utils.js";
+import {
+  formatCallGraphCallees,
+  formatCallGraphCallers,
+  formatCallGraphPath,
+  formatDefinitionLookup,
+  formatHealthCheck,
+  formatIndexStats,
+  formatStatus,
+} from "../tools/utils.js";
 import { formatPrImpact } from "../tools/format-pr-impact.js";
 import {
   findSimilarCode,
@@ -220,25 +228,11 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
           return { content: [{ type: "text", text: "Error: 'symbolId' is required when direction is 'callees'." }] };
         }
         const { callees } = await getCallGraphData(runtime.projectRoot, runtime.host, args);
-        if (callees.length === 0) {
-          return { content: [{ type: "text", text: `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
-        }
-        const formatted = callees.map((e, i) => {
-          const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
-          return `[${i + 1}] \u2192 ${e.targetName} (${e.callType})${conf} at line ${e.line}${e.isResolved ? ` [resolved: ${e.toSymbolId}]` : " [unresolved]"}`;
-        });
-        return { content: [{ type: "text", text: `Callees (${callees.length}):\n\n${formatted.join("\n")}` }] };
+        return { content: [{ type: "text", text: formatCallGraphCallees(args.symbolId, callees, args.relationshipType) }] };
       }
 
       const { callers } = await getCallGraphData(runtime.projectRoot, runtime.host, args);
-      if (callers.length === 0) {
-        return { content: [{ type: "text", text: `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}.` }] };
-      }
-      const formatted = callers.map((e, i) => {
-        const conf = e.confidence !== "Direct" ? ` [${e.confidence.toLowerCase()}]` : "";
-        return `[${i + 1}] \u2190 from ${e.fromSymbolName ?? "<unknown>"} in ${e.fromSymbolFilePath ?? "<unknown file>"} [${e.fromSymbolId}] (${e.callType})${conf} at line ${e.line}${e.isResolved ? " [resolved]" : " [unresolved]"}`;
-      });
-      return { content: [{ type: "text", text: `"${args.name}" is called by ${callers.length} function(s):\n\n${formatted.join("\n")}` }] };
+      return { content: [{ type: "text", text: formatCallGraphCallers(args.name, callers, args.relationshipType) }] };
     },
   );
 
@@ -252,15 +246,7 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
     },
     async (args) => {
       const path = await getCallGraphPath(runtime.projectRoot, runtime.host, args.from, args.to, args.maxDepth);
-      if (path.length === 0) {
-        return { content: [{ type: "text", text: `No path found between "${args.from}" and "${args.to}". They may be in disconnected components, or the call graph index needs updating.` }] };
-      }
-      const formatted = path.map((hop, i) => {
-        const prefix = i === 0 ? "[start]" : `--${hop.callType}-->`;
-        const location = hop.filePath ? ` (${hop.filePath}:${hop.line})` : "";
-        return `${prefix} ${hop.symbolName}${location}`;
-      });
-      return { content: [{ type: "text", text: `Path (${path.length} hops):\n${formatted.join("\n")}` }] };
+      return { content: [{ type: "text", text: formatCallGraphPath(args.from, args.to, path) }] };
     },
   );
   server.tool(

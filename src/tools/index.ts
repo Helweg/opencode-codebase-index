@@ -6,6 +6,9 @@ import type { Indexer } from "../indexer/index.js";
 import { formatCostEstimate } from "../utils/cost.js";
 import {
   formatCodebasePeek,
+  formatCallGraphCallees,
+  formatCallGraphCallers,
+  formatCallGraphPath,
   formatDefinitionLookup,
   formatHealthCheck,
   formatIndexStats,
@@ -242,23 +245,11 @@ export const call_graph: ToolDefinition = tool({
         return "Error: 'symbolId' is required when direction is 'callees'. First use direction='callers' to find the symbol ID.";
       }
       const { callees } = await getCallGraphData(context?.worktree, DEFAULT_HOST, args);
-      if (callees.length === 0) {
-        return `No callees found for symbol ${args.symbolId}${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. The function may not call any other tracked functions.`;
-      }
-      return callees.map((edge, index) => {
-        const confidence = edge.confidence !== "Direct" ? ` [${edge.confidence.toLowerCase()}]` : "";
-        return `[${index + 1}] \u2192 ${edge.targetName} (${edge.callType})${confidence} at line ${edge.line}${edge.isResolved ? ` [resolved: ${edge.toSymbolId}]` : " [unresolved]"}`;
-      }).join("\n");
+      return formatCallGraphCallees(args.symbolId, callees, args.relationshipType);
     }
 
     const { callers } = await getCallGraphData(context?.worktree, DEFAULT_HOST, args);
-    if (callers.length === 0) {
-      return `No callers found for "${args.name}"${args.relationshipType ? ` with type ${args.relationshipType}` : ""}. It may not be called by any tracked function, or the index needs updating.`;
-    }
-    return callers.map((edge, index) => {
-      const confidence = edge.confidence !== "Direct" ? ` [${edge.confidence.toLowerCase()}]` : "";
-      return `[${index + 1}] \u2190 from ${edge.fromSymbolName ?? "<unknown>"} in ${edge.fromSymbolFilePath ?? "<unknown file>"} [${edge.fromSymbolId}] (${edge.callType})${confidence} at line ${edge.line}${edge.isResolved ? " [resolved]" : " [unresolved]"}`;
-    }).join("\n");
+    return formatCallGraphCallers(args.name, callers, args.relationshipType);
   },
 });
 
@@ -272,15 +263,7 @@ export const call_graph_path: ToolDefinition = tool({
   },
   async execute(args, context) {
     const path = await getCallGraphPath(context?.worktree, DEFAULT_HOST, args.from, args.to, args.maxDepth);
-    if (path.length === 0) {
-      return `No path found between "${args.from}" and "${args.to}". They may be in disconnected components, or the call graph index needs updating.`;
-    }
-    const formatted = path.map((hop, index) => {
-      const prefix = index === 0 ? "[start]" : `--${hop.callType}-->`;
-      const location = hop.filePath ? ` (${hop.filePath}:${hop.line})` : "";
-      return `${prefix} ${hop.symbolName}${location}`;
-    });
-    return `Path (${path.length} hops):\n${formatted.join("\n")}`;
+    return formatCallGraphPath(args.from, args.to, path);
   },
 });
 

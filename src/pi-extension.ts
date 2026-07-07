@@ -6,8 +6,6 @@ import { formatPrImpact } from "./tools/format-pr-impact.js";
 import {
   addKnowledgeBase,
   findSimilarCode,
-  getCallGraphData,
-  getCallGraphPath,
   getIndexHealthCheck,
   getIndexLogs,
   getIndexMetrics,
@@ -26,6 +24,7 @@ import {
   formatSearchResults,
   formatStatus,
 } from "./tools/utils.js";
+import { registerPiCallGraphTools } from "./pi-call-graph.js";
 
 const HOST = "pi" as const;
 
@@ -37,15 +36,6 @@ const ChunkType = Type.Union([
   Type.Literal("type"),
   Type.Literal("module"),
   Type.Literal("block"),
-]);
-
-const RelationshipType = Type.Union([
-  Type.Literal("Call"),
-  Type.Literal("MethodCall"),
-  Type.Literal("Constructor"),
-  Type.Literal("Import"),
-  Type.Literal("Inherits"),
-  Type.Literal("Implements"),
 ]);
 
 function text(text: string, details?: unknown) {
@@ -198,36 +188,7 @@ export default function codebaseIndexPiExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerTool({
-    name: "call_graph",
-    label: "Call Graph",
-    description: "Find callers or callees of a function/method in the indexed call graph.",
-    parameters: Type.Object({
-      name: Type.String(),
-      direction: Type.Optional(Type.Union([Type.Literal("callers"), Type.Literal("callees")])),
-      symbolId: Type.Optional(Type.String()),
-      relationshipType: Type.Optional(RelationshipType),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await getCallGraphData(projectRoot(ctx), HOST, params);
-      return text(JSON.stringify(result, null, 2), result);
-    },
-  });
-
-  pi.registerTool({
-    name: "call_graph_path",
-    label: "Call Graph Path",
-    description: "Find a call path between two functions/methods.",
-    parameters: Type.Object({
-      from: Type.String(),
-      to: Type.String(),
-      maxDepth: Type.Optional(Type.Number({ default: 10 })),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await getCallGraphPath(projectRoot(ctx), HOST, params.from, params.to, params.maxDepth);
-      return text(JSON.stringify(result, null, 2), result);
-    },
-  });
+  registerPiCallGraphTools(pi);
 
   pi.registerTool({
     name: "pr_impact",
