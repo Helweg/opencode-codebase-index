@@ -44,6 +44,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Gdscript => tree_sitter_gdscript::LANGUAGE.into(),
         Language::Matlab => tree_sitter_matlab::LANGUAGE.into(),
         Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
+        Language::Bash => tree_sitter_bash::LANGUAGE.into(),
         _ => return Ok(vec![]),
     };
 
@@ -71,6 +72,7 @@ pub fn extract_calls(content: &str, language_name: &str) -> Result<Vec<CallSite>
         Language::Gdscript => include_str!("../queries/gdscript-calls.scm"),
         Language::Matlab => include_str!("../queries/matlab-calls.scm"),
         Language::Apex => include_str!("../queries/apex-calls.scm"),
+        Language::Bash => include_str!("../queries/bash-calls.scm"),
         _ => return Ok(vec![]),
     };
 

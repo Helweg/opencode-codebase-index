@@ -146,7 +146,9 @@ fn extract_semantic_nodes(
 
             let content = &source[start_byte..end_byte];
 
-            if content.len() >= MIN_CHUNK_SIZE {
+            if content.len() >= MIN_CHUNK_SIZE
+                || (*language == Language::Bash && node_type == "function_definition")
+            {
                 let name = extract_name(cursor, source);
 
                 let start_line = if leading_comment.is_some() {
@@ -606,6 +608,7 @@ fn extract_name(cursor: &tree_sitter::TreeCursor, source: &str) -> Option<String
             || kind == "property_name"
             || kind == "type_identifier"
             || kind == "name"
+            || kind == "word"
         {
             return Some(source[n.start_byte()..n.end_byte()].to_string());
         }
@@ -757,7 +760,12 @@ fn merge_small_chunks(chunks: &mut Vec<CodeChunk>) {
             continue;
         };
 
-        if cur.content.len() < MIN_CHUNK_SIZE * 2
+        let can_merge_without_losing_symbol = !(cur.language == "bash"
+            && cur.chunk_type == "function_definition")
+            && !(chunk.language == "bash" && chunk.chunk_type == "function_definition");
+
+        if can_merge_without_losing_symbol
+            && cur.content.len() < MIN_CHUNK_SIZE * 2
             && cur.content.len() + chunk.content.len() <= MAX_CHUNK_SIZE
             && cur.end_line + 1 >= chunk.start_line
         {

@@ -691,6 +691,151 @@ const math = @import("math.zig");
     });
   });
 
+  describe("bash call extraction", () => {
+    it("should extract direct command and function calls", () => {
+      const content = `
+#!/usr/bin/env bash
+
+function greet() {
+  echo "Hello, $1"
+}
+
+add() {
+  local left="$1"
+  local right="$2"
+  echo "$(( left + right ))"
+}
+
+main() {
+  local name="World"
+  greet "$name"
+  local total
+  total=$(add 1 2)
+  echo "total: $total"
+}
+`;
+      const calls = extractCalls(content, "bash");
+      const callNames = calls.map((c) => c.calleeName);
+
+      expect(CALL_GRAPH_LANGUAGES.has("bash")).toBe(true);
+      expect(callNames).toContain("greet");
+      expect(callNames).toContain("add");
+    });
+
+    it("should parse Bash function names for call graph symbols", () => {
+      const filePath = "/scripts/build.sh";
+      const content = `
+#!/usr/bin/env bash
+
+function greet() {
+  echo "Hello, $1"
+}
+
+add() {
+  local left="$1"
+  local right="$2"
+  echo "$(( left + right ))"
+}
+
+main() {
+  local name="World"
+  greet "$name"
+  local total
+  total=$(add 1 2)
+  echo "total: $total"
+}
+`;
+      const parsed = parseFiles([{ path: filePath, content }]);
+      const chunks = parsed[0].chunks;
+      const symbolChunks = chunks.filter((chunk) => CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType));
+      const names = symbolChunks.map((chunk) => chunk.name);
+
+      expect(names).toContain("greet");
+      expect(names).toContain("add");
+      expect(names).toContain("main");
+    });
+
+    it("should keep small Bash function chunks for call graph symbols", () => {
+      const filePath = "/scripts/tiny.sh";
+      const content = `
+a(){ b; }
+b(){ echo ok; }
+`;
+      const parsed = parseFiles([{ path: filePath, content }]);
+      const symbolChunks = parsed[0].chunks.filter((chunk) => CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType));
+      const names = symbolChunks.map((chunk) => chunk.name);
+
+      expect(names).toContain("a");
+      expect(names).toContain("b");
+    });
+
+    it("should resolve same-file Bash function calls", () => {
+      const db = openDb();
+      const filePath = "/scripts/build.sh";
+      const content = `
+#!/usr/bin/env bash
+
+helper() {
+  local message="helper"
+  echo "preparing \${message} call"
+  echo "\${message}"
+}
+
+main() {
+  local result="starting"
+  echo "$result"
+  helper
+  echo "done"
+}
+`;
+      const parsed = parseFiles([{ path: filePath, content }]);
+      const fileSymbols: SymbolData[] = [];
+
+      for (const chunk of parsed[0].chunks) {
+        if (!chunk.name || !CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType)) continue;
+        fileSymbols.push({
+          id: `sym_${hashContent(filePath + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`,
+          filePath,
+          name: chunk.name,
+          kind: chunk.chunkType,
+          startLine: chunk.startLine,
+          startCol: 0,
+          endLine: chunk.endLine,
+          endCol: 0,
+          language: chunk.language,
+        });
+      }
+
+      db.upsertSymbolsBatch(fileSymbols);
+      const main = fileSymbols.find((symbol) => symbol.name === "main");
+      const helper = fileSymbols.find((symbol) => symbol.name === "helper");
+      expect(main).toBeDefined();
+      expect(helper).toBeDefined();
+
+      const helperCall = extractCalls(content, "bash").find((call) => call.calleeName === "helper");
+      expect(helperCall).toBeDefined();
+
+      const edge: CallEdgeData = {
+        id: "edge_bash_helper",
+        fromSymbolId: main!.id,
+        targetName: helperCall!.calleeName,
+        callType: helperCall!.callType,
+        confidence: "Direct",
+        line: helperCall!.line,
+        col: helperCall!.column,
+        isResolved: false,
+      };
+      db.upsertCallEdgesBatch([edge]);
+      db.resolveCallEdge(edge.id, helper!.id);
+      db.addSymbolsToBranchBatch("test", fileSymbols.map((symbol) => symbol.id));
+
+      const callees = db.getCallees(main!.id, "test");
+      expect(callees.length).toBe(1);
+      expect(callees[0].isResolved).toBe(true);
+      expect(callees[0].toSymbolId).toBe(helper!.id);
+    });
+  });
+
   describe("call graph storage", () => {
     it("should store symbols in database", () => {
       const db = openDb();
