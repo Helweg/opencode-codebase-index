@@ -761,8 +761,8 @@ fn merge_small_chunks(chunks: &mut Vec<CodeChunk>) {
         };
 
         let can_merge_without_losing_symbol = !(cur.language == "bash"
-            && cur.chunk_type == "function_definition")
-            && !(chunk.language == "bash" && chunk.chunk_type == "function_definition");
+            && cur.chunk_type == "function_definition"
+            || chunk.language == "bash" && chunk.chunk_type == "function_definition");
 
         if can_merge_without_losing_symbol
             && cur.content.len() < MIN_CHUNK_SIZE * 2
