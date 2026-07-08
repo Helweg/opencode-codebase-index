@@ -11,6 +11,9 @@ The first part is the search query. Look for optional parameters:
 - `type=X` or mentions "functions"/"classes"/"methods" → set chunkType
 - `dir=X` or "in folder X" → set directory filter
 - File extensions like ".ts", "typescript", ".py" → set fileType
+- `author=X` or `blameAuthor=X` → set blameAuthor filter
+- `sha=X` or `blameSha=X` → set blameSha filter
+- `since=YYYY-MM-DD` or `blameSince=YYYY-MM-DD` → set blameSince filter
 
 Call `codebase_peek` with the parsed arguments.
 
@@ -18,6 +21,7 @@ Examples:
 - `/peek authentication logic` → query="authentication logic"
 - `/peek error handling limit=5` → query="error handling", limit=5
 - `/peek validation functions` → query="validation", chunkType="function"
+- `/peek auth logic author=jane@example.com since=2025-01-01` → query="auth logic", blameAuthor="jane@example.com", blameSince="2025-01-01"
 
 If the index doesn't exist, run `index_codebase` first.
 

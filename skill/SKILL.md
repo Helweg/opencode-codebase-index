@@ -69,6 +69,7 @@ Find WHERE code is. Returns metadata only (file, line, name, type).
 
 ```
 codebase_peek(query="validation logic", chunkType="function", directory="src/utils")
+codebase_peek(query="authentication flow", blameAuthor="jane@example.com")
 ```
 
 ### `codebase_search`
@@ -76,6 +77,7 @@ Find code with full content. Use when you need to see implementation.
 
 ```
 codebase_search(query="error handling middleware", fileType="ts", contextLines=2)
+codebase_search(query="rate limiter", blameSince="2025-01-01")
 ```
 
 ### `find_similar`
@@ -132,3 +134,6 @@ remove_knowledge_base(path="/path/to/docs")
 | `chunkType` | `function`, `class`, `interface`, `type`, `method` |
 | `directory` | `"src/api"`, `"tests"` |
 | `fileType` | `"ts"`, `"py"`, `"rs"` |
+| `blameAuthor` | `"jane@example.com"` or `"Jane Doe"` |
+| `blameSha` | `"abc1234"` |
+| `blameSince` | `"2025-01-01"` |

@@ -393,6 +393,7 @@ The plugin exposes these tools to the OpenCode agent:
 - **Use for**: Discovery, understanding flows, finding logic when you don't know the names.
 - **Example**: `"find the middleware that sanitizes input"`
 - **Ranking path**: hybrid retrieval → fusion (`search.fusionStrategy`) → deterministic rerank (`search.rerankTopN`) → filters
+- **Blame filters**: when `indexing.gitBlame.enabled` is `true`, filter with `blameAuthor`, `blameSha`, or `blameSince`.
 
 **Writing good queries:**
 
@@ -411,6 +412,7 @@ The plugin exposes these tools to the OpenCode agent:
 - **Example output**:
   ```
   [1] function "validatePayment" at src/billing.ts:45-67 (score: 0.92)
+      abc1234 | Jane Doe | 2025-03-14 | billing: validate payment state
   [2] class "PaymentProcessor" at src/processor.ts:12-89 (score: 0.87)
 
   Use Read tool to examine specific files.
@@ -786,6 +788,7 @@ String values in `codebase-index.json` can reference environment variables with 
 | `maxDepth` | `5` | Max directory traversal depth. `-1` = unlimited, `0` = only files in root dir, `1` = one level of subdirectories, etc. |
 | `maxFilesPerDirectory` | `100` | Max files to index per directory. Always picks the smallest files first. |
 | `fallbackToTextOnMaxChunks` | `true` | When a file exceeds `maxChunksPerFile`, fallback to text-based (line-by-line) chunking instead of skipping the rest of the file. |
+| `gitBlame.enabled` | `false` | Annotate changed chunks with `git blame` commit SHA, author, author email, commit timestamp, and summary. Enables `blameAuthor`, `blameSha`, and `blameSince` filters. |
 | **search** | | |
 | `maxResults` | `20` | Maximum results to return |
 | `minScore` | `0.1` | Minimum similarity score (0-1). Lower = more results |

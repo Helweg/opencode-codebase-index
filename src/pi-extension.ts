@@ -58,6 +58,9 @@ export default function codebaseIndexPiExtension(pi: ExtensionAPI): void {
       directory: Type.Optional(Type.String({ description: "Filter by directory path" })),
       chunkType: Type.Optional(ChunkType),
       contextLines: Type.Optional(Type.Number({ description: "Extra lines around each match" })),
+      blameAuthor: Type.Optional(Type.String({ description: "Filter by git blame author name or email" })),
+      blameSha: Type.Optional(Type.String({ description: "Filter by git blame commit SHA or prefix" })),
+      blameSince: Type.Optional(Type.String({ description: "Filter to chunks last changed on or after this date" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const results = await searchCodebase(projectRoot(ctx), HOST, params.query, params);
@@ -75,6 +78,9 @@ export default function codebaseIndexPiExtension(pi: ExtensionAPI): void {
       fileType: Type.Optional(Type.String()),
       directory: Type.Optional(Type.String()),
       chunkType: Type.Optional(ChunkType),
+      blameAuthor: Type.Optional(Type.String()),
+      blameSha: Type.Optional(Type.String()),
+      blameSince: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const results = await searchCodebase(projectRoot(ctx), HOST, params.query, { ...params, metadataOnly: true });

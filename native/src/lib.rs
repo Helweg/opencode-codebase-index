@@ -381,6 +381,11 @@ pub struct ChunkData {
     pub node_type: Option<String>,
     pub name: Option<String>,
     pub language: String,
+    pub blame_sha: Option<String>,
+    pub blame_author: Option<String>,
+    pub blame_author_email: Option<String>,
+    pub blame_committed_at: Option<i64>,
+    pub blame_summary: Option<String>,
 }
 
 #[napi(object)]
@@ -498,7 +503,7 @@ impl Database {
     #[napi]
     pub fn upsert_chunk(&self, chunk: ChunkData) -> Result<()> {
         self.with_conn(|conn| {
-            db::upsert_chunk(
+            db::upsert_chunk_with_blame(
                 conn,
                 &chunk.chunk_id,
                 &chunk.content_hash,
@@ -508,6 +513,11 @@ impl Database {
                 chunk.node_type.as_deref(),
                 chunk.name.as_deref(),
                 &chunk.language,
+                chunk.blame_sha.as_deref(),
+                chunk.blame_author.as_deref(),
+                chunk.blame_author_email.as_deref(),
+                chunk.blame_committed_at,
+                chunk.blame_summary.as_deref(),
             )
             .map_err(|e| Error::from_reason(e.to_string()))
         })
@@ -527,6 +537,11 @@ impl Database {
                 node_type: row.node_type,
                 name: row.name,
                 language: row.language,
+                blame_sha: row.blame_sha,
+                blame_author: row.blame_author,
+                blame_author_email: row.blame_author_email,
+                blame_committed_at: row.blame_committed_at,
+                blame_summary: row.blame_summary,
             }))
         })
     }
@@ -547,6 +562,11 @@ impl Database {
                     node_type: row.node_type,
                     name: row.name,
                     language: row.language,
+                    blame_sha: row.blame_sha,
+                    blame_author: row.blame_author,
+                    blame_author_email: row.blame_author_email,
+                    blame_committed_at: row.blame_committed_at,
+                    blame_summary: row.blame_summary,
                 })
                 .collect())
         })
@@ -568,6 +588,11 @@ impl Database {
                     node_type: row.node_type,
                     name: row.name,
                     language: row.language,
+                    blame_sha: row.blame_sha,
+                    blame_author: row.blame_author,
+                    blame_author_email: row.blame_author_email,
+                    blame_committed_at: row.blame_committed_at,
+                    blame_summary: row.blame_summary,
                 })
                 .collect())
         })
@@ -589,6 +614,11 @@ impl Database {
                     node_type: row.node_type,
                     name: row.name,
                     language: row.language,
+                    blame_sha: row.blame_sha,
+                    blame_author: row.blame_author,
+                    blame_author_email: row.blame_author_email,
+                    blame_committed_at: row.blame_committed_at,
+                    blame_summary: row.blame_summary,
                 })
                 .collect())
         })
@@ -651,6 +681,11 @@ impl Database {
                 node_type: c.node_type,
                 name: c.name,
                 language: c.language,
+                blame_sha: c.blame_sha,
+                blame_author: c.blame_author,
+                blame_author_email: c.blame_author_email,
+                blame_committed_at: c.blame_committed_at,
+                blame_summary: c.blame_summary,
             })
             .collect();
         self.with_conn_mut(|conn| {

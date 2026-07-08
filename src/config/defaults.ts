@@ -21,6 +21,7 @@ export function getDefaultIndexingConfig(): IndexingConfig {
     maxDepth: 5,
     maxFilesPerDirectory: 100,
     fallbackToTextOnMaxChunks: true,
+    gitBlame: { enabled: false },
   };
 }
 

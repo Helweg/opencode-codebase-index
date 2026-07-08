@@ -54,6 +54,9 @@ export interface IndexingConfig {
    * instead of skipping the rest of the file. Default: true
    */
   fallbackToTextOnMaxChunks: boolean;
+  gitBlame: {
+    enabled: boolean;
+  };
 }
 
 export interface SearchConfig {
@@ -180,6 +183,11 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     maxDepth: typeof rawIndexing.maxDepth === "number" ? (rawIndexing.maxDepth < -1 ? -1 : rawIndexing.maxDepth) : defaultIndexing.maxDepth,
     maxFilesPerDirectory: typeof rawIndexing.maxFilesPerDirectory === "number" ? Math.max(1, rawIndexing.maxFilesPerDirectory) : defaultIndexing.maxFilesPerDirectory,
     fallbackToTextOnMaxChunks: typeof rawIndexing.fallbackToTextOnMaxChunks === "boolean" ? rawIndexing.fallbackToTextOnMaxChunks : defaultIndexing.fallbackToTextOnMaxChunks,
+    gitBlame: {
+      enabled: rawIndexing.gitBlame && typeof rawIndexing.gitBlame === "object" && typeof (rawIndexing.gitBlame as Record<string, unknown>).enabled === "boolean"
+        ? (rawIndexing.gitBlame as { enabled: boolean }).enabled
+        : defaultIndexing.gitBlame.enabled,
+    },
   };
 
   const rawSearch = (input.search && typeof input.search === "object" ? input.search : {}) as Record<string, unknown>;

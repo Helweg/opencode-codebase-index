@@ -214,6 +214,11 @@ export interface ChunkMetadata {
   name?: string;
   language: string;
   hash: string;
+  blameSha?: string;
+  blameAuthor?: string;
+  blameAuthorEmail?: string;
+  blameCommittedAt?: number;
+  blameSummary?: string;
 }
 
 export function parseFile(filePath: string, content: string): CodeChunk[] {
@@ -704,6 +709,11 @@ export interface ChunkData {
   nodeType?: string;
   name?: string;
   language: string;
+  blameSha?: string;
+  blameAuthor?: string;
+  blameAuthorEmail?: string;
+  blameCommittedAt?: number;
+  blameSummary?: string;
 }
 
 export interface BranchDelta {

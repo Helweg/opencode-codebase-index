@@ -40,6 +40,7 @@ import type { HostMode } from "../config/host.js";
 import { getHostProjectIndexRelativePath, resolveProjectIndexPath } from "../config/paths.js";
 import { getChangedFiles } from "../tools/changed-files.js";
 import type { PrImpactResult } from "./pr-impact-types.js";
+import { getChunkGitBlame, type GitBlameMetadata } from "./git-blame.js";
 
 export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab", "bash"]);
 // Languages whose identifiers are case-insensitive at the language level.
@@ -166,6 +167,7 @@ export interface SearchResult {
   score: number;
   chunkType: string;
   name?: string;
+  blame?: GitBlameMetadata;
 }
 
 export interface HealthCheckResult {
@@ -245,6 +247,60 @@ interface SerializedFailedBatch {
 }
 
 type RankedCandidate = { id: string; score: number; metadata: ChunkMetadata };
+type SearchFilterOptions = {
+  fileType?: string;
+  directory?: string;
+  chunkType?: string;
+  blameAuthor?: string;
+  blameSha?: string;
+  blameSince?: string;
+};
+
+function metadataFromBlame(blame: GitBlameMetadata | undefined): Partial<ChunkMetadata> {
+  if (!blame) {
+    return {};
+  }
+
+  return {
+    blameSha: blame.sha,
+    blameAuthor: blame.author,
+    blameAuthorEmail: blame.authorEmail,
+    blameCommittedAt: blame.committedAt,
+    blameSummary: blame.summary,
+  };
+}
+
+function blameFromChunkData(chunk: ChunkData | null): GitBlameMetadata | undefined {
+  if (!chunk?.blameSha || !chunk.blameAuthor || !chunk.blameAuthorEmail || chunk.blameCommittedAt === undefined || !chunk.blameSummary) {
+    return undefined;
+  }
+
+  return {
+    sha: chunk.blameSha,
+    author: chunk.blameAuthor,
+    authorEmail: chunk.blameAuthorEmail,
+    committedAt: chunk.blameCommittedAt,
+    summary: chunk.blameSummary,
+  };
+}
+
+function blameFromMetadata(metadata: ChunkMetadata): GitBlameMetadata | undefined {
+  if (!metadata.blameSha || !metadata.blameAuthor || !metadata.blameAuthorEmail || metadata.blameCommittedAt === undefined || !metadata.blameSummary) {
+    return undefined;
+  }
+
+  return {
+    sha: metadata.blameSha,
+    author: metadata.blameAuthor,
+    authorEmail: metadata.blameAuthorEmail,
+    committedAt: metadata.blameCommittedAt,
+    summary: metadata.blameSummary,
+  };
+}
+
+function hasBlameMetadata(metadata: ChunkMetadata): boolean {
+  return blameFromMetadata(metadata) !== undefined;
+}
 
 interface RerankDocumentPayload {
   id: string;
@@ -1418,6 +1474,7 @@ function promoteIdentifierMatches(
             name: chunk.name ?? undefined,
             language: chunk.language,
             hash: chunk.contentHash,
+            ...metadataFromBlame(blameFromChunkData(chunk)),
           };
 
           const baselineScore = existing?.score ?? 0.5;
@@ -1534,6 +1591,7 @@ function buildSymbolDefinitionLane(
           name: chunk.name ?? undefined,
           language: chunk.language,
           hash: chunk.contentHash,
+          ...metadataFromBlame(blameFromChunkData(chunk)),
         },
       });
     }
@@ -1745,11 +1803,7 @@ export function mergeTieredResults(
 
 function matchesSearchFilters(
   candidate: RankedCandidate,
-  options: {
-    fileType?: string;
-    directory?: string;
-    chunkType?: string;
-  } | undefined,
+  options: SearchFilterOptions | undefined,
   minScore: number
 ): boolean {
   if (candidate.score < minScore) return false;
@@ -1767,6 +1821,24 @@ function matchesSearchFilters(
 
   if (options?.chunkType && candidate.metadata.chunkType !== options.chunkType) {
     return false;
+  }
+
+  if (options?.blameAuthor) {
+    const author = options.blameAuthor.toLowerCase();
+    const candidateAuthor = candidate.metadata.blameAuthor?.toLowerCase();
+    const candidateEmail = candidate.metadata.blameAuthorEmail?.toLowerCase();
+    if (candidateAuthor !== author && candidateEmail !== author) return false;
+  }
+
+  if (options?.blameSha && !candidate.metadata.blameSha?.toLowerCase().startsWith(options.blameSha.toLowerCase())) {
+    return false;
+  }
+
+  if (options?.blameSince) {
+    const sinceMs = Date.parse(options.blameSince);
+    if (Number.isNaN(sinceMs)) return false;
+    const committedAt = candidate.metadata.blameCommittedAt;
+    if (committedAt === undefined || committedAt < Math.floor(sinceMs / 1000)) return false;
   }
 
   return true;
@@ -3249,6 +3321,7 @@ export class Indexer {
 
     const existingChunks = new Map<string, string>();
     const existingChunksByFile = new Map<string, Set<string>>();
+    const existingMetadataById = new Map<string, ChunkMetadata>();
     for (const { key, metadata } of store.getAllMetadata()) {
       if (scopedRoots && !this.isFileInCurrentScope(metadata.filePath, scopedRoots)) {
         continue;
@@ -3257,6 +3330,7 @@ export class Indexer {
         continue;
       }
       existingChunks.set(key, metadata.hash);
+      existingMetadataById.set(key, metadata);
       const fileChunks = existingChunksByFile.get(metadata.filePath) || new Set();
       fileChunks.add(key);
       existingChunksByFile.set(metadata.filePath, fileChunks);
@@ -3265,6 +3339,8 @@ export class Indexer {
     const currentChunkIds = new Set<string>();
     const currentFilePaths = new Set<string>();
     const pendingChunks: PendingChunk[] = [];
+    const gitBlameEnabled = this.config.indexing.gitBlame.enabled && isGitRepo(this.projectRoot);
+    let backfilledBlameMetadata = false;
 
     for (const filePath of unchangedFilePaths) {
       currentFilePaths.add(filePath);
@@ -3277,6 +3353,56 @@ export class Indexer {
     }
 
     const chunkDataBatch: ChunkData[] = [];
+
+    if (gitBlameEnabled) {
+      const backfillItems: Array<{ id: string; vector: number[]; metadata: ChunkMetadata }> = [];
+
+      for (const chunkId of currentChunkIds) {
+        const metadata = existingMetadataById.get(chunkId);
+        if (!metadata || hasBlameMetadata(metadata)) {
+          continue;
+        }
+
+        const chunk = database.getChunk(chunkId);
+        if (!chunk) {
+          continue;
+        }
+
+        const blame = await getChunkGitBlame(this.projectRoot, chunk.filePath, chunk.startLine, chunk.endLine);
+        const blameMetadata = metadataFromBlame(blame);
+        if (!blameMetadata.blameSha) {
+          continue;
+        }
+
+        chunkDataBatch.push({
+          ...chunk,
+          blameSha: blameMetadata.blameSha,
+          blameAuthor: blameMetadata.blameAuthor,
+          blameAuthorEmail: blameMetadata.blameAuthorEmail,
+          blameCommittedAt: blameMetadata.blameCommittedAt,
+          blameSummary: blameMetadata.blameSummary,
+        });
+
+        const embeddingBuffer = database.getEmbedding(chunk.contentHash);
+        if (!embeddingBuffer) {
+          continue;
+        }
+
+        backfillItems.push({
+          id: chunkId,
+          vector: Array.from(bufferToFloat32Array(embeddingBuffer)),
+          metadata: {
+            ...metadata,
+            ...blameMetadata,
+          },
+        });
+      }
+
+      if (backfillItems.length > 0) {
+        store.addBatch(backfillItems);
+        backfilledBlameMetadata = true;
+      }
+    }
 
     for (const parsed of parsedFiles) {
       currentFilePaths.add(parsed.path);
@@ -3308,6 +3434,12 @@ export class Indexer {
 
         const id = generateChunkId(parsed.path, chunk);
         const contentHash = generateChunkHash(chunk);
+        const existingContentHash = existingChunks.get(id);
+        const existingChunk = gitBlameEnabled ? database.getChunk(id) : null;
+        const blame = gitBlameEnabled && existingContentHash !== contentHash
+          ? await getChunkGitBlame(this.projectRoot, parsed.path, chunk.startLine, chunk.endLine)
+          : blameFromChunkData(existingChunk);
+        const blameMetadata = metadataFromBlame(blame);
         currentChunkIds.add(id);
 
         chunkDataBatch.push({
@@ -3319,9 +3451,14 @@ export class Indexer {
           nodeType: chunk.chunkType,
           name: chunk.name,
           language: chunk.language,
+          blameSha: blameMetadata.blameSha,
+          blameAuthor: blameMetadata.blameAuthor,
+          blameAuthorEmail: blameMetadata.blameAuthorEmail,
+          blameCommittedAt: blameMetadata.blameCommittedAt,
+          blameSummary: blameMetadata.blameSummary,
         });
 
-        if (existingChunks.get(id) === contentHash) {
+        if (existingContentHash === contentHash) {
           fileChunkCount++;
           continue;
         }
@@ -3338,6 +3475,7 @@ export class Indexer {
           name: chunk.name,
           language: chunk.language,
           hash: contentHash,
+          ...blameMetadata,
         };
 
         pendingChunks.push({
@@ -3514,6 +3652,9 @@ export class Indexer {
       database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
       database.clearBranchSymbols(branchCatalogKey);
       database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
+      if (backfilledBlameMetadata) {
+        store.save();
+      }
       if (scopedRoots) {
         this.replaceScopedFileHashCache(currentFileHashes, scopedRoots);
         this.clearScopedFailedBatches(scopedRoots);
@@ -3995,6 +4136,9 @@ export class Indexer {
       filterByBranch?: boolean;
       metadataOnly?: boolean;
       definitionIntent?: boolean;
+      blameAuthor?: string;
+      blameSha?: string;
+      blameSince?: string;
     }
   ): Promise<SearchResult[]> {
     const { store, provider, database } = await this.ensureInitialized();
@@ -4218,6 +4362,7 @@ export class Indexer {
           score: r.score,
           chunkType: r.metadata.chunkType,
           name: r.metadata.name,
+          blame: blameFromMetadata(r.metadata),
         };
       })
     );
@@ -4860,6 +5005,7 @@ export class Indexer {
           score: r.score,
           chunkType: r.metadata.chunkType,
           name: r.metadata.name,
+          blame: blameFromMetadata(r.metadata),
         };
       })
     );

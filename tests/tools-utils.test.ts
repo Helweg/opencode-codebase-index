@@ -468,6 +468,27 @@ describe("tools utils", () => {
       expect(result).toContain("a.ts:1-2");
       expect(result).toContain("0.5");
     });
+
+    it("should include git blame annotation when present", () => {
+      const result = formatCodebasePeek([{
+        filePath: "src/auth.ts",
+        startLine: 45,
+        endLine: 67,
+        content: "",
+        score: 0.92,
+        chunkType: "function",
+        name: "validateSession",
+        blame: {
+          sha: "abc123456789",
+          author: "Jane Doe",
+          authorEmail: "jane@example.com",
+          committedAt: 1741953600,
+          summary: "auth: add session validation",
+        },
+      }]);
+
+      expect(result).toContain("abc1234 | Jane Doe | 2025-03-14 | auth: add session validation");
+    });
   });
 
   describe("formatHealthCheck", () => {
@@ -726,6 +747,28 @@ describe("tools utils", () => {
 
       expect(result).toContain("(similarity: 92.0%)");
       expect(result).not.toContain("(score:");
+    });
+
+    it("should include git blame annotation with full search results", () => {
+      const result = formatSearchResults([{
+        filePath: "src/auth.ts",
+        startLine: 45,
+        endLine: 67,
+        content: "export function validateSession() { return true; }",
+        score: 0.92,
+        chunkType: "function",
+        name: "validateSession",
+        blame: {
+          sha: "abc123456789",
+          author: "Jane Doe",
+          authorEmail: "jane@example.com",
+          committedAt: 1741953600,
+          summary: "auth: add session validation",
+        },
+      }]);
+
+      expect(result).toContain("abc1234 | Jane Doe | 2025-03-14 | auth: add session validation");
+      expect(result).toContain("export function validateSession()");
     });
   });
 });

@@ -30,11 +30,11 @@ describe("Pi package integration", () => {
   });
 
   it("registers first-class Pi tools", () => {
-    const tools: Array<{ name: string }> = [];
+    const tools: Array<{ name: string; parameters?: unknown }> = [];
 
     codebaseIndexPiExtension({
       registerTool(tool) {
-        tools.push({ name: tool.name });
+        tools.push({ name: tool.name, parameters: tool.parameters });
       },
     } as Parameters<typeof codebaseIndexPiExtension>[0]);
 
@@ -55,5 +55,13 @@ describe("Pi package integration", () => {
       "knowledge_base_add",
       "knowledge_base_remove",
     ]));
+
+    const searchParams = JSON.stringify(tools.find((tool) => tool.name === "codebase_search")?.parameters);
+    const peekParams = JSON.stringify(tools.find((tool) => tool.name === "codebase_peek")?.parameters);
+    for (const params of [searchParams, peekParams]) {
+      expect(params).toContain("blameAuthor");
+      expect(params).toContain("blameSha");
+      expect(params).toContain("blameSince");
+    }
   });
 });

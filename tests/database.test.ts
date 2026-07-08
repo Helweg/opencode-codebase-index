@@ -544,6 +544,31 @@ describe("Database", () => {
       expect(db.getStats().chunkCount).toBe(0);
     });
 
+    it("should persist git blame metadata on chunks", () => {
+      db.upsertChunksBatch([{
+        chunkId: "blamed_chunk",
+        contentHash: "hash_blame",
+        filePath: "/auth.ts",
+        startLine: 1,
+        endLine: 5,
+        nodeType: "function",
+        name: "validateSession",
+        language: "typescript",
+        blameSha: "abc123456789",
+        blameAuthor: "Jane Doe",
+        blameAuthorEmail: "jane@example.com",
+        blameCommittedAt: 1741953600,
+        blameSummary: "auth: add session validation",
+      }]);
+
+      const chunk = db.getChunk("blamed_chunk");
+      expect(chunk?.blameSha).toBe("abc123456789");
+      expect(chunk?.blameAuthor).toBe("Jane Doe");
+      expect(chunk?.blameAuthorEmail).toBe("jane@example.com");
+      expect(chunk?.blameCommittedAt).toBe(1741953600);
+      expect(chunk?.blameSummary).toBe("auth: add session validation");
+    });
+
     it("should add chunks to branch in batch", () => {
       const chunks: ChunkData[] = [
         { chunkId: "c1", contentHash: "h1", filePath: "/f.ts", startLine: 1, endLine: 5, language: "ts" },

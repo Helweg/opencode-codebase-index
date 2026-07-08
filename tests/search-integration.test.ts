@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { execFileSync } from "child_process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -111,6 +112,128 @@ export function rerankResults(query: string) { return rankHybridResults(query); 
     expect(topPaths[0]).toContain(path.join("app", "indexer", "index.ts"));
     expect(topPaths).not.toContain(path.join("tests", "fixtures", "call-graph", "same-file-refs.ts"));
     expect(topPaths).not.toContain(path.join("benchmarks", "run.ts"));
+  });
+
+  it("annotates indexed chunks with git blame and filters by blame author", async () => {
+    const authoredDir = fs.mkdtempSync(path.join(os.tmpdir(), "search-blame-"));
+    try {
+      execFileSync("git", ["init"], { cwd: authoredDir });
+      execFileSync("git", ["config", "user.name", "Default User"], { cwd: authoredDir });
+      execFileSync("git", ["config", "user.email", "default@example.com"], { cwd: authoredDir });
+
+      fs.writeFileSync(
+        path.join(authoredDir, "auth.ts"),
+        `export function validateSession() { return "auth session token"; }\n`,
+        "utf-8"
+      );
+      execFileSync("git", ["add", "auth.ts"], { cwd: authoredDir });
+      execFileSync("git", ["commit", "-m", "auth: add session validation"], {
+        cwd: authoredDir,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Jane Doe",
+          GIT_AUTHOR_EMAIL: "jane@example.com",
+          GIT_AUTHOR_DATE: "2025-03-14T12:00:00Z",
+          GIT_COMMITTER_NAME: "Jane Doe",
+          GIT_COMMITTER_EMAIL: "jane@example.com",
+          GIT_COMMITTER_DATE: "2025-03-14T12:00:00Z",
+        },
+      });
+
+      fs.writeFileSync(
+        path.join(authoredDir, "payments.ts"),
+        `export function chargeCard() { return "payment flow"; }\n`,
+        "utf-8"
+      );
+      execFileSync("git", ["add", "payments.ts"], { cwd: authoredDir });
+      execFileSync("git", ["commit", "-m", "payments: add card charge"], {
+        cwd: authoredDir,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Alex Roe",
+          GIT_AUTHOR_EMAIL: "alex@example.com",
+          GIT_AUTHOR_DATE: "2025-04-01T12:00:00Z",
+          GIT_COMMITTER_NAME: "Alex Roe",
+          GIT_COMMITTER_EMAIL: "alex@example.com",
+          GIT_COMMITTER_DATE: "2025-04-01T12:00:00Z",
+        },
+      });
+
+      const disabledConfig = parseConfig({
+        embeddingProvider: "custom",
+        customProvider: {
+          baseUrl: "http://localhost:11434/v1",
+          model: "mock-embedding-model",
+          dimensions: 8,
+        },
+        indexing: {
+          watchFiles: false,
+          gitBlame: { enabled: false },
+        },
+        search: {
+          maxResults: 10,
+          minScore: 0,
+        },
+      });
+      const disabledIndexer = new Indexer(authoredDir, disabledConfig);
+      await disabledIndexer.index();
+      await disabledIndexer.close();
+
+      const config = parseConfig({
+        embeddingProvider: "custom",
+        customProvider: {
+          baseUrl: "http://localhost:11434/v1",
+          model: "mock-embedding-model",
+          dimensions: 8,
+        },
+        indexing: {
+          watchFiles: false,
+          gitBlame: { enabled: true },
+        },
+        search: {
+          maxResults: 10,
+          minScore: 0,
+        },
+      });
+
+      const indexer = new Indexer(authoredDir, config);
+      _indexers.push(indexer);
+      await indexer.index();
+
+      const janeResults = await indexer.search("session token", 5, {
+        metadataOnly: true,
+        filterByBranch: false,
+        blameAuthor: "jane@example.com",
+      });
+
+      expect(janeResults).toHaveLength(1);
+      expect(janeResults[0]?.filePath).toContain("auth.ts");
+      expect(janeResults[0]?.blame?.authorEmail).toBe("jane@example.com");
+      expect(janeResults[0]?.blame?.summary).toBe("auth: add session validation");
+
+      const blameSha = janeResults[0]?.blame?.sha.slice(0, 8);
+      if (!blameSha) {
+        throw new Error("expected blame SHA");
+      }
+
+      const shaResults = await indexer.search("session token", 5, {
+        metadataOnly: true,
+        filterByBranch: false,
+        blameSha,
+      });
+      expect(shaResults).toHaveLength(1);
+      expect(shaResults[0]?.filePath).toContain("auth.ts");
+
+      const sinceResults = await indexer.search("payment flow", 5, {
+        metadataOnly: true,
+        filterByBranch: false,
+        blameSince: "2025-03-20",
+      });
+      expect(sinceResults).toHaveLength(1);
+      expect(sinceResults[0]?.filePath).toContain("payments.ts");
+    } finally {
+      fs.rmSync(authoredDir, { recursive: true, force: true });
+    }
   });
 
   it("prefers documentation paths for doc-intent phrasing with 'where is'", async () => {

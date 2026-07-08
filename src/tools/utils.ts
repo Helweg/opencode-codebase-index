@@ -181,7 +181,7 @@ export function formatCodebasePeek(results: SearchResult[]): string {
   const formatted = results.map((r, idx) => {
     const location = `${r.filePath}:${r.startLine}-${r.endLine}`;
     const name = r.name ? `"${r.name}"` : "(anonymous)";
-    return `[${idx + 1}] ${r.chunkType} ${name} at ${location} (score: ${r.score.toFixed(2)})`;
+    return `[${idx + 1}] ${r.chunkType} ${name} at ${location} (score: ${r.score.toFixed(2)})${formatBlame(r)}`;
   });
 
   return formatted.join("\n");
@@ -280,6 +280,15 @@ function formatResultHeader(result: SearchResult, index: number): string {
     : `[${index + 1}] ${result.chunkType} in ${result.filePath}:${result.startLine}-${result.endLine}`;
 }
 
+function formatBlame(result: SearchResult): string {
+  if (!result.blame) {
+    return "";
+  }
+
+  const date = new Date(result.blame.committedAt * 1000).toISOString().slice(0, 10);
+  return `\n    ${result.blame.sha.slice(0, 7)} | ${result.blame.author} | ${date} | ${result.blame.summary}`;
+}
+
 export function formatDefinitionLookup(results: SearchResult[], query: string): string {
   if (results.length === 0) {
     return `No definition found for "${query}". Try codebase_search for broader discovery, or verify the symbol name.`;
@@ -287,7 +296,7 @@ export function formatDefinitionLookup(results: SearchResult[], query: string): 
 
   const formatted = results.map((r, idx) => {
     const header = formatResultHeader(r, idx);
-    return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
+    return `${header} (score: ${r.score.toFixed(2)})${formatBlame(r)}\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
   });
 
   return formatted.join("\n\n");
@@ -303,7 +312,7 @@ export function formatSearchResults(results: SearchResult[], scoreFormat: ScoreF
       ? `(similarity: ${(r.score * 100).toFixed(1)}%)`
       : `(score: ${r.score.toFixed(2)})`;
 
-    return `${header} ${scoreLabel}\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
+    return `${header} ${scoreLabel}${formatBlame(r)}\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
   });
 
   return formatted.join("\n\n");

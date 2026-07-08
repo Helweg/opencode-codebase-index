@@ -207,6 +207,7 @@ Final line.`;
       const peekCmd = commands.get("peek")!;
       expect(peekCmd.description).toBe("Quickly find likely code locations without returning full code");
       expect(peekCmd.template).toContain("codebase_peek");
+      expect(peekCmd.template).toContain("blameAuthor");
 
       const reindexCmd = commands.get("reindex")!;
       expect(reindexCmd.description).toBe("Fully rebuild the codebase index from scratch");
@@ -216,6 +217,11 @@ Final line.`;
       expect(callGraphCmd.description).toBe("Trace callers, callees, or paths using the call graph");
       expect(callGraphCmd.template).toContain("call_graph");
       expect(callGraphCmd.template).toContain("call_graph_path");
+
+      const searchCmd = commands.get("search")!;
+      expect(searchCmd.template).toContain("blameAuthor");
+      expect(searchCmd.template).toContain("blameSha");
+      expect(searchCmd.template).toContain("blameSince");
     });
   });
 });

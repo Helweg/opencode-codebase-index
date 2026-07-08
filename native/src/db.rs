@@ -13,7 +13,7 @@ pub enum DbError {
 pub type DbResult<T> = Result<T, DbError>;
 
 /// Schema version for migrations
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 /// Maximum number of SQL bind parameters per query.
 /// SQLite defaults to 999 (SQLITE_MAX_VARIABLE_NUMBER). We use 900 to stay safely under.
@@ -81,7 +81,12 @@ fn migrate_schema(conn: &Connection, from_version: i32) -> DbResult<()> {
                 end_line INTEGER NOT NULL,
                 node_type TEXT,
                 name TEXT,
-                language TEXT NOT NULL
+                language TEXT NOT NULL,
+                blame_sha TEXT,
+                blame_author TEXT,
+                blame_author_email TEXT,
+                blame_committed_at INTEGER,
+                blame_summary TEXT
             );
 
             -- Branch catalog: which chunks exist on which branch
@@ -228,6 +233,23 @@ fn migrate_schema(conn: &Connection, from_version: i32) -> DbResult<()> {
         conn.execute_batch(
             r#"
             ALTER TABLE call_edges ADD COLUMN confidence TEXT NOT NULL DEFAULT 'Direct';
+            "#,
+        )?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?)",
+            params![SCHEMA_VERSION.to_string()],
+        )?;
+    }
+
+    if (1..6).contains(&from_version) {
+        conn.execute_batch(
+            r#"
+            ALTER TABLE chunks ADD COLUMN blame_sha TEXT;
+            ALTER TABLE chunks ADD COLUMN blame_author TEXT;
+            ALTER TABLE chunks ADD COLUMN blame_author_email TEXT;
+            ALTER TABLE chunks ADD COLUMN blame_committed_at INTEGER;
+            ALTER TABLE chunks ADD COLUMN blame_summary TEXT;
             "#,
         )?;
 
@@ -389,7 +411,7 @@ pub fn get_missing_embeddings(
 
 /// Insert or update a chunk
 #[allow(clippy::too_many_arguments)]
-pub fn upsert_chunk(
+pub fn upsert_chunk_with_blame(
     conn: &Connection,
     chunk_id: &str,
     content_hash: &str,
@@ -399,11 +421,16 @@ pub fn upsert_chunk(
     node_type: Option<&str>,
     name: Option<&str>,
     language: &str,
+    blame_sha: Option<&str>,
+    blame_author: Option<&str>,
+    blame_author_email: Option<&str>,
+    blame_committed_at: Option<i64>,
+    blame_summary: Option<&str>,
 ) -> DbResult<()> {
     conn.execute(
         r#"
-        INSERT INTO chunks (chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO chunks (chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language, blame_sha, blame_author, blame_author_email, blame_committed_at, blame_summary)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chunk_id) DO UPDATE SET
             content_hash = excluded.content_hash,
             file_path = excluded.file_path,
@@ -411,9 +438,28 @@ pub fn upsert_chunk(
             end_line = excluded.end_line,
             node_type = excluded.node_type,
             name = excluded.name,
-            language = excluded.language
+            language = excluded.language,
+            blame_sha = excluded.blame_sha,
+            blame_author = excluded.blame_author,
+            blame_author_email = excluded.blame_author_email,
+            blame_committed_at = excluded.blame_committed_at,
+            blame_summary = excluded.blame_summary
         "#,
-        params![chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language],
+        params![
+            chunk_id,
+            content_hash,
+            file_path,
+            start_line,
+            end_line,
+            node_type,
+            name,
+            language,
+            blame_sha,
+            blame_author,
+            blame_author_email,
+            blame_committed_at,
+            blame_summary
+        ],
     )?;
     Ok(())
 }
@@ -428,8 +474,8 @@ pub fn upsert_chunks_batch(conn: &mut Connection, chunks: &[ChunkRow]) -> DbResu
     {
         let mut stmt = tx.prepare(
             r#"
-            INSERT INTO chunks (chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO chunks (chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language, blame_sha, blame_author, blame_author_email, blame_committed_at, blame_summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chunk_id) DO UPDATE SET
                 content_hash = excluded.content_hash,
                 file_path = excluded.file_path,
@@ -437,7 +483,12 @@ pub fn upsert_chunks_batch(conn: &mut Connection, chunks: &[ChunkRow]) -> DbResu
                 end_line = excluded.end_line,
                 node_type = excluded.node_type,
                 name = excluded.name,
-                language = excluded.language
+                language = excluded.language,
+                blame_sha = excluded.blame_sha,
+                blame_author = excluded.blame_author,
+                blame_author_email = excluded.blame_author_email,
+                blame_committed_at = excluded.blame_committed_at,
+                blame_summary = excluded.blame_summary
             "#,
         )?;
 
@@ -450,7 +501,12 @@ pub fn upsert_chunks_batch(conn: &mut Connection, chunks: &[ChunkRow]) -> DbResu
                 chunk.end_line,
                 chunk.node_type,
                 chunk.name,
-                chunk.language
+                chunk.language,
+                chunk.blame_sha,
+                chunk.blame_author,
+                chunk.blame_author_email,
+                chunk.blame_committed_at,
+                chunk.blame_summary
             ])?;
         }
     }
@@ -463,7 +519,7 @@ pub fn get_chunk(conn: &Connection, chunk_id: &str) -> DbResult<Option<ChunkRow>
     let result = conn
         .query_row(
             r#"
-            SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language
+            SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language, blame_sha, blame_author, blame_author_email, blame_committed_at, blame_summary
             FROM chunks WHERE chunk_id = ?
             "#,
             params![chunk_id],
@@ -477,6 +533,11 @@ pub fn get_chunk(conn: &Connection, chunk_id: &str) -> DbResult<Option<ChunkRow>
                     node_type: row.get(5)?,
                     name: row.get(6)?,
                     language: row.get(7)?,
+                    blame_sha: row.get(8)?,
+                    blame_author: row.get(9)?,
+                    blame_author_email: row.get(10)?,
+                    blame_committed_at: row.get(11)?,
+                    blame_summary: row.get(12)?,
                 })
             },
         )
@@ -488,7 +549,7 @@ pub fn get_chunk(conn: &Connection, chunk_id: &str) -> DbResult<Option<ChunkRow>
 pub fn get_chunks_by_file(conn: &Connection, file_path: &str) -> DbResult<Vec<ChunkRow>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language
+        SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language, blame_sha, blame_author, blame_author_email, blame_committed_at, blame_summary
         FROM chunks WHERE file_path = ?
         ORDER BY start_line
         "#,
@@ -504,6 +565,11 @@ pub fn get_chunks_by_file(conn: &Connection, file_path: &str) -> DbResult<Vec<Ch
             node_type: row.get(5)?,
             name: row.get(6)?,
             language: row.get(7)?,
+            blame_sha: row.get(8)?,
+            blame_author: row.get(9)?,
+            blame_author_email: row.get(10)?,
+            blame_committed_at: row.get(11)?,
+            blame_summary: row.get(12)?,
         })
     })?;
 
@@ -517,7 +583,7 @@ pub fn get_chunks_by_file(conn: &Connection, file_path: &str) -> DbResult<Vec<Ch
 pub fn get_chunks_by_name(conn: &Connection, name: &str) -> DbResult<Vec<ChunkRow>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language
+        SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language, blame_sha, blame_author, blame_author_email, blame_committed_at, blame_summary
         FROM chunks WHERE name = ?
         "#,
     )?;
@@ -532,6 +598,11 @@ pub fn get_chunks_by_name(conn: &Connection, name: &str) -> DbResult<Vec<ChunkRo
             node_type: row.get(5)?,
             name: row.get(6)?,
             language: row.get(7)?,
+            blame_sha: row.get(8)?,
+            blame_author: row.get(9)?,
+            blame_author_email: row.get(10)?,
+            blame_committed_at: row.get(11)?,
+            blame_summary: row.get(12)?,
         })
     })?;
 
@@ -545,7 +616,7 @@ pub fn get_chunks_by_name(conn: &Connection, name: &str) -> DbResult<Vec<ChunkRo
 pub fn get_chunks_by_name_ci(conn: &Connection, name: &str) -> DbResult<Vec<ChunkRow>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language
+        SELECT chunk_id, content_hash, file_path, start_line, end_line, node_type, name, language, blame_sha, blame_author, blame_author_email, blame_committed_at, blame_summary
         FROM chunks WHERE lower(name) = lower(?)
         "#,
     )?;
@@ -560,6 +631,11 @@ pub fn get_chunks_by_name_ci(conn: &Connection, name: &str) -> DbResult<Vec<Chun
             node_type: row.get(5)?,
             name: row.get(6)?,
             language: row.get(7)?,
+            blame_sha: row.get(8)?,
+            blame_author: row.get(9)?,
+            blame_author_email: row.get(10)?,
+            blame_committed_at: row.get(11)?,
+            blame_summary: row.get(12)?,
         })
     })?;
 
@@ -604,6 +680,11 @@ pub struct ChunkRow {
     pub node_type: Option<String>,
     pub name: Option<String>,
     pub language: String,
+    pub blame_sha: Option<String>,
+    pub blame_author: Option<String>,
+    pub blame_author_email: Option<String>,
+    pub blame_committed_at: Option<i64>,
+    pub blame_summary: Option<String>,
 }
 
 // ============================================================================
@@ -2028,6 +2109,36 @@ mod tests {
         (temp_dir, conn)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn upsert_chunk(
+        conn: &Connection,
+        chunk_id: &str,
+        content_hash: &str,
+        file_path: &str,
+        start_line: u32,
+        end_line: u32,
+        node_type: Option<&str>,
+        name: Option<&str>,
+        language: &str,
+    ) -> DbResult<()> {
+        upsert_chunk_with_blame(
+            conn,
+            chunk_id,
+            content_hash,
+            file_path,
+            start_line,
+            end_line,
+            node_type,
+            name,
+            language,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
     #[test]
     fn test_init_db() {
         let (_temp_dir, conn) = setup_test_db();
@@ -2038,7 +2149,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "5");
+        assert_eq!(version, "6");
     }
 
     #[test]
@@ -2608,7 +2719,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(schema_version, "5");
+        assert_eq!(schema_version, "6");
 
         let on_delete: String = conn
             .query_row("PRAGMA foreign_key_list(call_edges)", [], |row| row.get(6))

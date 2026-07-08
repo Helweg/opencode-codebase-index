@@ -6,9 +6,11 @@ import {
   formatCallGraphCallees,
   formatCallGraphCallers,
   formatCallGraphPath,
+  formatCodebasePeek,
   formatDefinitionLookup,
   formatHealthCheck,
   formatIndexStats,
+  formatSearchResults,
   formatStatus,
 } from "../tools/utils.js";
 import { formatPrImpact } from "../tools/format-pr-impact.js";
@@ -25,7 +27,7 @@ import {
   runIndexCodebase,
   searchCodebase,
 } from "../tools/operations.js";
-import { CHUNK_TYPE_ENUM, type McpServerRuntime, truncateContent } from "./shared.js";
+import { CHUNK_TYPE_ENUM, type McpServerRuntime } from "./shared.js";
 
 export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): void {
   server.tool(
@@ -38,6 +40,9 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
       chunkType: z.enum(CHUNK_TYPE_ENUM).optional().describe("Filter by code chunk type"),
       contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
+      blameAuthor: z.string().optional().describe("Filter by git blame author name or email"),
+      blameSha: z.string().optional().describe("Filter by git blame commit SHA or prefix"),
+      blameSince: z.string().optional().describe("Filter to chunks last changed on or after this date"),
     },
     async (args) => {
       const results = await searchCodebase(runtime.projectRoot, runtime.host, args.query, {
@@ -46,20 +51,16 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
         directory: args.directory,
         chunkType: args.chunkType,
         contextLines: args.contextLines,
+        blameAuthor: args.blameAuthor,
+        blameSha: args.blameSha,
+        blameSince: args.blameSince,
       });
 
       if (results.length === 0) {
         return { content: [{ type: "text", text: "No matching code found. Try a different query or run index_codebase first." }] };
       }
 
-      const formatted = results.map((r, idx) => {
-        const header = r.name
-          ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-          : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
-        return `${header} (score: ${r.score.toFixed(2)})\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
-      });
-
-      return { content: [{ type: "text", text: `Found ${results.length} results for "${args.query}":\n\n${formatted.join("\n\n")}` }] };
+      return { content: [{ type: "text", text: `Found ${results.length} results for "${args.query}":\n\n${formatSearchResults(results, "score")}` }] };
     },
   );
 
@@ -72,6 +73,9 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
       fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
       directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
       chunkType: z.enum(CHUNK_TYPE_ENUM).optional().describe("Filter by code chunk type"),
+      blameAuthor: z.string().optional().describe("Filter by git blame author name or email"),
+      blameSha: z.string().optional().describe("Filter by git blame commit SHA or prefix"),
+      blameSince: z.string().optional().describe("Filter to chunks last changed on or after this date"),
     },
     async (args) => {
       const results = await searchCodebase(runtime.projectRoot, runtime.host, args.query, {
@@ -80,19 +84,16 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
         directory: args.directory,
         chunkType: args.chunkType,
         metadataOnly: true,
+        blameAuthor: args.blameAuthor,
+        blameSha: args.blameSha,
+        blameSince: args.blameSince,
       });
 
       if (results.length === 0) {
         return { content: [{ type: "text", text: "No matching code found. Try a different query or run index_codebase first." }] };
       }
 
-      const formatted = results.map((r, idx) => {
-        const location = `${r.filePath}:${r.startLine}-${r.endLine}`;
-        const name = r.name ? `"${r.name}"` : "(anonymous)";
-        return `[${idx + 1}] ${r.chunkType} ${name} at ${location} (score: ${r.score.toFixed(2)})`;
-      });
-
-      return { content: [{ type: "text", text: `Found ${results.length} locations for "${args.query}":\n\n${formatted.join("\n")}\n\nUse Read tool to examine specific files.` }] };
+      return { content: [{ type: "text", text: `Found ${results.length} locations for "${args.query}":\n\n${formatCodebasePeek(results)}\n\nUse Read tool to examine specific files.` }] };
     },
   );
 
@@ -181,14 +182,7 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
         return { content: [{ type: "text", text: "No similar code found. Try a different snippet or run index_codebase first." }] };
       }
 
-      const formatted = results.map((r, idx) => {
-        const header = r.name
-          ? `[${idx + 1}] ${r.chunkType} "${r.name}" in ${r.filePath}:${r.startLine}-${r.endLine}`
-          : `[${idx + 1}] ${r.chunkType} in ${r.filePath}:${r.startLine}-${r.endLine}`;
-        return `${header} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${truncateContent(r.content)}\n\`\`\``;
-      });
-
-      return { content: [{ type: "text", text: `Found ${results.length} similar code blocks:\n\n${formatted.join("\n\n")}` }] };
+      return { content: [{ type: "text", text: `Found ${results.length} similar code blocks:\n\n${formatSearchResults(results)}` }] };
     },
   );
 

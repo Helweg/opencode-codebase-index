@@ -108,6 +108,9 @@ export async function searchCodebase(
     contextLines?: number;
     metadataOnly?: boolean;
     definitionIntent?: boolean;
+    blameAuthor?: string;
+    blameSha?: string;
+    blameSince?: string;
   } = {},
 ): Promise<SearchResult[]> {
   const indexer = getIndexerForProject(projectRoot, host);
@@ -118,6 +121,9 @@ export async function searchCodebase(
     contextLines: options.contextLines,
     metadataOnly: options.metadataOnly,
     definitionIntent: options.definitionIntent,
+    blameAuthor: options.blameAuthor,
+    blameSha: options.blameSha,
+    blameSince: options.blameSince,
   });
 }
 

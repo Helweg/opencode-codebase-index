@@ -78,6 +78,9 @@ export const codebase_peek: ToolDefinition = tool({
     fileType: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'py', 'rs')"),
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
     chunkType: z.enum(CHUNK_TYPE_VALUES).optional().describe("Filter by code chunk type"),
+    blameAuthor: z.string().optional().describe("Filter by git blame author name or email"),
+    blameSha: z.string().optional().describe("Filter by git blame commit SHA or prefix"),
+    blameSince: z.string().optional().describe("Filter to chunks last changed on or after this date (e.g., 2025-01-01)"),
   },
   async execute(args, context) {
     const results = await searchCodebase(context?.worktree, DEFAULT_HOST, args.query, {
@@ -86,6 +89,9 @@ export const codebase_peek: ToolDefinition = tool({
       directory: args.directory,
       chunkType: args.chunkType,
       metadataOnly: true,
+      blameAuthor: args.blameAuthor,
+      blameSha: args.blameSha,
+      blameSince: args.blameSince,
     });
 
     return formatCodebasePeek(results);
@@ -189,6 +195,9 @@ export const codebase_search: ToolDefinition = tool({
     directory: z.string().optional().describe("Filter by directory path (e.g., 'src/utils', 'lib')"),
     chunkType: z.enum(CHUNK_TYPE_VALUES).optional().describe("Filter by code chunk type"),
     contextLines: z.number().optional().describe("Number of extra lines to include before/after each match (default: 0)"),
+    blameAuthor: z.string().optional().describe("Filter by git blame author name or email"),
+    blameSha: z.string().optional().describe("Filter by git blame commit SHA or prefix"),
+    blameSince: z.string().optional().describe("Filter to chunks last changed on or after this date (e.g., 2025-01-01)"),
   },
   async execute(args, context) {
     const results = await searchCodebase(context?.worktree, DEFAULT_HOST, args.query, {
@@ -197,6 +206,9 @@ export const codebase_search: ToolDefinition = tool({
       directory: args.directory,
       chunkType: args.chunkType,
       contextLines: args.contextLines,
+      blameAuthor: args.blameAuthor,
+      blameSha: args.blameSha,
+      blameSince: args.blameSince,
     });
 
     if (results.length === 0) {
