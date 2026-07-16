@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadMergedConfig } from "../src/config/merger.js";
 import { parseConfig } from "../src/config/schema.js";
 import { Indexer } from "../src/indexer/index.js";
-import { Database, VectorStore } from "../src/native/index.js";
+import { Database, InvertedIndex, VectorStore } from "../src/native/index.js";
 import { hashContent } from "../src/native/index.js";
 
 describe("indexer clearIndex force rebuild", () => {
@@ -165,6 +165,44 @@ describe("indexer clearIndex force rebuild", () => {
     await expect(restartedIndexer.index()).rejects.toThrow("Run index_codebase with force=true to rebuild the index");
   });
 
+  it("keeps an in-flight search usable while the same Indexer reloads for a mutation", async () => {
+    const indexer = createIndexer(tempDir, 8);
+    await indexer.index();
+    const immediateFetch = fetchSpy.getMockImplementation()!;
+    let releaseSearch: (() => void) | null = null;
+    let notifySearchStarted: (() => void) | null = null;
+    const searchStarted = new Promise<void>((resolve) => { notifySearchStarted = resolve; });
+    fetchSpy.mockImplementation(async (url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+      if (body.input?.includes("slow query")) {
+        notifySearchStarted?.();
+        await new Promise<void>((resolve) => { releaseSearch = resolve; });
+      }
+      return immediateFetch(url, init);
+    });
+
+    const searchPromise = indexer.search("slow query");
+    await searchStarted;
+    await expect(indexer.index()).resolves.toMatchObject({ failedChunks: 0 });
+    releaseSearch?.();
+
+    await expect(searchPromise).resolves.toEqual(expect.any(Array));
+  });
+
+  it("reloads persisted state only once for a force mutation lease", async () => {
+    const indexer = createIndexer(tempDir, 8);
+    await indexer.index();
+    const vectorLoad = vi.spyOn(VectorStore.prototype, "load");
+    const invertedLoad = vi.spyOn(InvertedIndex.prototype, "load");
+
+    await indexer.forceIndex();
+
+    expect(vectorLoad).toHaveBeenCalledOnce();
+    expect(invertedLoad).toHaveBeenCalledOnce();
+    vectorLoad.mockRestore();
+    invertedLoad.mockRestore();
+  });
+
   it("rejects force clearing an inherited project index from a fresh worktree", async () => {
     const mainRepoDir = path.join(tempDir, "main-repo");
     const worktreeDir = path.join(tempDir, "worktree-feature");
@@ -209,6 +247,54 @@ describe("indexer clearIndex force rebuild", () => {
     await expect(inheritedIndexer.clearIndex()).rejects.toThrow(
       "Project-scoped force rebuild is unsafe while using an inherited worktree index"
     );
+  });
+
+  it("preserves an inherited project index when its crashed owner needs recovery", async () => {
+    const mainRepoDir = path.join(tempDir, "main-repo-recovery");
+    const worktreeDir = path.join(tempDir, "worktree-recovery");
+    const worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "recovery");
+    const mainSourceFile = path.join(mainRepoDir, "src", "index.ts");
+
+    fs.mkdirSync(path.join(mainRepoDir, ".git", "refs", "heads"), { recursive: true });
+    fs.mkdirSync(path.join(mainRepoDir, ".opencode"), { recursive: true });
+    fs.mkdirSync(path.dirname(mainSourceFile), { recursive: true });
+    fs.mkdirSync(worktreeGitDir, { recursive: true });
+    fs.mkdirSync(worktreeDir, { recursive: true });
+    fs.writeFileSync(path.join(mainRepoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+    fs.writeFileSync(path.join(mainRepoDir, ".git", "refs", "heads", "main"), "1111111111111111111111111111111111111111\n");
+    fs.writeFileSync(path.join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
+    fs.writeFileSync(path.join(worktreeGitDir, "HEAD"), "ref: refs/heads/recovery\n");
+    fs.writeFileSync(path.join(worktreeGitDir, "commondir"), "../..\n");
+    fs.writeFileSync(path.join(mainRepoDir, ".opencode", "codebase-index.json"), JSON.stringify({
+      embeddingProvider: "custom",
+      customProvider: { baseUrl: "http://localhost:11434/v1", model: "mock-8d", dimensions: 8 },
+      scope: "project",
+      indexing: { watchFiles: false, retries: 0, retryDelayMs: 1 },
+    }, null, 2));
+    fs.writeFileSync(mainSourceFile, "export function preserved() { return true; }\n");
+
+    const mainIndexer = createIndexer(mainRepoDir, 8);
+    await mainIndexer.index();
+    await mainIndexer.close();
+    const inheritedIndexPath = path.join(mainRepoDir, ".opencode", "index");
+    const lockPath = path.join(inheritedIndexPath, "indexing.lock");
+    fs.mkdirSync(lockPath);
+    fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({
+      pid: 2_147_483_647,
+      hostname: os.hostname(),
+      startedAt: new Date().toISOString(),
+      operation: "index",
+      token: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    }));
+
+    const inheritedIndexer = trackIndexer(new Indexer(worktreeDir, parseConfig(loadMergedConfig(worktreeDir))));
+    await expect(inheritedIndexer.index()).rejects.toThrow(
+      "Interrupted indexing recovery is unsafe while using an inherited worktree index"
+    );
+
+    expect(fs.existsSync(path.join(inheritedIndexPath, "codebase.db"))).toBe(true);
+    expect(fs.existsSync(path.join(inheritedIndexPath, "vectors"))).toBe(true);
+    expect(fs.readdirSync(inheritedIndexPath).some((name) => name.startsWith("indexing.lock.recovery."))).toBe(true);
   });
 
   it("allows codex force clearing a local legacy OpenCode project index", async () => {
@@ -859,13 +945,14 @@ describe("indexer clearIndex force rebuild", () => {
     const stats = await indexer.index();
     expect(stats.indexedChunks).toBeGreaterThan(0);
 
-    const database = (indexer as unknown as { database: Database }).database!;
-    vi.spyOn(database, "gcOrphanEmbeddings").mockReturnValue(0);
-    vi.spyOn(database, "gcOrphanChunks").mockImplementation(() => {
+    const gcEmbeddingsSpy = vi.spyOn(Database.prototype, "gcOrphanEmbeddings").mockReturnValue(0);
+    const gcChunksSpy = vi.spyOn(Database.prototype, "gcOrphanChunks").mockImplementation(() => {
       throw new Error("SQLite error: database disk image is malformed");
     });
 
     const result = await indexer.healthCheck();
+    gcEmbeddingsSpy.mockRestore();
+    gcChunksSpy.mockRestore();
     expect(result.resetCorruptedIndex).toBe(true);
     expect(result.warning).toContain("reset the local index");
 
@@ -914,13 +1001,14 @@ describe("indexer clearIndex force rebuild", () => {
     const indexer = createIndexer(projectA, 8, "global");
     await indexer.index();
 
-    const database = (indexer as unknown as { database: Database }).database;
-    vi.spyOn(database, "gcOrphanEmbeddings").mockReturnValue(0);
-    vi.spyOn(database, "gcOrphanChunks").mockImplementation(() => {
+    const gcEmbeddingsSpy = vi.spyOn(Database.prototype, "gcOrphanEmbeddings").mockReturnValue(0);
+    const gcChunksSpy = vi.spyOn(Database.prototype, "gcOrphanChunks").mockImplementation(() => {
       throw new Error("SQLite error: database disk image is malformed");
     });
 
     await expect(indexer.healthCheck()).rejects.toThrow("Automatic repair is disabled for global scope");
+    gcEmbeddingsSpy.mockRestore();
+    gcChunksSpy.mockRestore();
   });
 
   it("surfaces rebuild guidance when automatic orphan GC resets a corrupted local index", async () => {
@@ -944,8 +1032,7 @@ describe("indexer clearIndex force rebuild", () => {
     const initialStats = await indexer.index();
     expect(initialStats.indexedChunks).toBeGreaterThan(0);
 
-    const database = (indexer as unknown as { database: Database }).database;
-    vi.spyOn(database, "getStats").mockReturnValue({
+    const getStatsSpy = vi.spyOn(Database.prototype, "getStats").mockReturnValue({
       embeddingCount: 2,
       chunkCount: 1,
       branchChunkCount: 1,
@@ -953,9 +1040,11 @@ describe("indexer clearIndex force rebuild", () => {
       symbolCount: 0,
       callEdgeCount: 0,
     });
-    const realGcOrphanEmbeddings = database.gcOrphanEmbeddings.bind(database);
-    vi.spyOn(database, "gcOrphanEmbeddings").mockImplementation(() => realGcOrphanEmbeddings());
-    vi.spyOn(database, "gcOrphanChunks").mockImplementation(() => {
+    const realGcOrphanEmbeddings = Database.prototype.gcOrphanEmbeddings;
+    const gcEmbeddingsSpy = vi.spyOn(Database.prototype, "gcOrphanEmbeddings").mockImplementation(function () {
+      return realGcOrphanEmbeddings.call(this);
+    });
+    const gcChunksSpy = vi.spyOn(Database.prototype, "gcOrphanChunks").mockImplementation(() => {
       throw new Error("SQLite error: database disk image is malformed");
     });
 
@@ -972,6 +1061,9 @@ describe("indexer clearIndex force rebuild", () => {
     ].join("\n"), "utf-8");
 
     const result = await indexer.index();
+    getStatsSpy.mockRestore();
+    gcEmbeddingsSpy.mockRestore();
+    gcChunksSpy.mockRestore();
     expect(maybeRunOrphanGc).toHaveBeenCalled();
     expect(result.resetCorruptedIndex).toBe(true);
     expect(result.warning).toContain("reset the local index");

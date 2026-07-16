@@ -53,7 +53,7 @@ describe("watcher config refresh", () => {
       expect(indexer.index).toHaveBeenCalledTimes(1);
     }, { timeout: 2500 });
 
-    watcher.stop();
+    await watcher.stop();
   });
 
   it("refreshes the codex indexer cache before reindexing when legacy OpenCode config changes", async () => {
@@ -81,7 +81,7 @@ describe("watcher config refresh", () => {
       expect(indexer.index).toHaveBeenCalledTimes(1);
     }, { timeout: 2500 });
 
-    watcher.stop();
+    await watcher.stop();
   });
 
   it("refreshes from explicit config path when configured", async () => {
@@ -114,7 +114,7 @@ describe("watcher config refresh", () => {
       expect(indexer.index).toHaveBeenCalledTimes(1);
     }, { timeout: 2500 });
 
-    watcher.stop();
+    await watcher.stop();
   });
 
   it("does not refresh from project config when explicit config path is configured", async () => {
@@ -145,6 +145,6 @@ describe("watcher config refresh", () => {
     expect(operationMocks.refreshIndexerForDirectory).not.toHaveBeenCalled();
     expect(indexer.index).not.toHaveBeenCalled();
 
-    watcher.stop();
+    await watcher.stop();
   });
 });

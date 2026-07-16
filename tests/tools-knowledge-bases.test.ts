@@ -54,6 +54,18 @@ const { indexerInstances, MockIndexer } = vi.hoisted(() => {
       skippedFiles: [],
       parseFailures: [],
     });
+    public forceIndex = vi.fn().mockResolvedValue({
+      totalFiles: 0,
+      totalChunks: 0,
+      indexedChunks: 0,
+      failedChunks: 0,
+      tokensUsed: 0,
+      durationMs: 0,
+      existingChunks: 0,
+      removedChunks: 0,
+      skippedFiles: [],
+      parseFailures: [],
+    });
 
     public healthCheck = vi.fn().mockResolvedValue({
       removed: 0,
