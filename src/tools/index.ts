@@ -111,9 +111,9 @@ export const index_codebase: ToolDefinition = tool({
       context.metadata({ title, metadata });
     });
 
-    return result.kind === "estimate"
-      ? formatCostEstimate(result.estimate)
-      : formatIndexStats(result.stats, args.verbose ?? false);
+    if (result.kind === "estimate") return formatCostEstimate(result.estimate);
+    if (result.kind === "busy") return result.text;
+    return formatIndexStats(result.stats, args.verbose ?? false);
   },
 });
 

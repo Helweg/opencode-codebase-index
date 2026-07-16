@@ -107,10 +107,13 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
     },
     async (args) => {
       const result = await runIndexCodebase(runtime.projectRoot, runtime.host, args);
-      const text = result.kind === "estimate"
-        ? formatCostEstimate(result.estimate)
-        : formatIndexStats(result.stats, args.verbose ?? false);
-      return { content: [{ type: "text", text }] };
+      if (result.kind === "estimate") {
+        return { content: [{ type: "text", text: formatCostEstimate(result.estimate) }] };
+      }
+      if (result.kind === "busy") {
+        return { content: [{ type: "text", text: result.text }], isError: true };
+      }
+      return { content: [{ type: "text", text: formatIndexStats(result.stats, args.verbose ?? false) }] };
     },
   );
 

@@ -2,9 +2,10 @@ import { existsSync, realpathSync, statSync } from "fs";
 import * as path from "path";
 import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
 import { parseConfig, type ParsedCodebaseIndexConfig } from "../config/schema.js";
-import { getHostProjectIndexRelativePath, getHostProjectConfigRelativePath, resolveWorktreeFallbackProjectIndexPath } from "../config/paths.js";
+import { getHostProjectIndexRelativePath, getHostProjectConfigRelativePath, resolveProjectIndexPath, resolveWorktreeFallbackProjectIndexPath } from "../config/paths.js";
 import type { HostMode } from "../config/host.js";
 import { Indexer } from "../indexer/index.js";
+import { isIndexLockContentionError, withIndexLock } from "../indexer/index-lock.js";
 import { findKnowledgeBasePathIndex, hasMatchingKnowledgeBasePath, resolveKnowledgeBasePath } from "./knowledge-base-paths.js";
 import { calculatePercentage, formatProgressTitle, formatStatus } from "./utils.js";
 import type { LogLevel } from "../config/schema.js";
@@ -205,42 +206,72 @@ export async function runIndexCodebase(
   host: HostMode,
   args: { force?: boolean; estimateOnly?: boolean; verbose?: boolean },
   onProgress?: ProgressCb,
-): Promise<{ kind: "estimate"; estimate: CostEstimate } | { kind: "stats"; stats: IndexStats }> {
+): Promise<
+  | { kind: "estimate"; estimate: CostEstimate }
+  | { kind: "stats"; stats: IndexStats }
+  | { kind: "busy"; text: string }
+> {
   const root = getProjectRoot(projectRoot, host);
   const key = getIndexerCacheKey(root, host);
-  const cachedConfig = configCache.get(key);
   let indexer = getIndexerForProject(root, host);
+  const runtimeConfig = configCache.get(key)!;
 
-  if (args.estimateOnly) {
-    return { kind: "estimate", estimate: await indexer.estimateCost() };
-  }
-
-  if (args.force) {
-    if (shouldForceLocalizeProjectIndex(root, host)) {
-      materializeLocalProjectConfig(root, loadProjectConfigLayer(root, host), host);
-      refreshIndexerForDirectory(root, host, cachedConfig);
-      indexer = getIndexerForProject(root, host);
+  try {
+    if (args.estimateOnly) {
+      return { kind: "estimate", estimate: await indexer.estimateCost() };
     }
-    await indexer.clearIndex();
-    refreshIndexerForDirectory(root, host, cachedConfig);
-    indexer = getIndexerForProject(root, host);
-  }
 
-  const stats = await indexer.index((progress) => {
-    if (onProgress) {
-      return onProgress(formatProgressTitle(progress), {
-        phase: progress.phase,
-        filesProcessed: progress.filesProcessed,
-        totalFiles: progress.totalFiles,
-        chunksProcessed: progress.chunksProcessed,
-        totalChunks: progress.totalChunks,
-        percentage: calculatePercentage(progress),
+    const runIndex = async (target: Indexer): Promise<IndexStats> => {
+      const operation = args.force ? target.forceIndex.bind(target) : target.index.bind(target);
+      return operation((progress) => {
+        if (onProgress) {
+          return onProgress(formatProgressTitle(progress), {
+            phase: progress.phase,
+            filesProcessed: progress.filesProcessed,
+            totalFiles: progress.totalFiles,
+            chunksProcessed: progress.chunksProcessed,
+            totalChunks: progress.totalChunks,
+            percentage: calculatePercentage(progress),
+          });
+        }
+        return Promise.resolve();
       });
-    }
-    return Promise.resolve();
-  });
+    };
 
-  return { kind: "stats", stats };
+    let stats: IndexStats;
+    if (args.force && shouldForceLocalizeProjectIndex(root, host)) {
+      const inheritedIndexPath = resolveProjectIndexPath(root, runtimeConfig.scope, host);
+      stats = await withIndexLock(inheritedIndexPath, "force-index", async () => {
+        materializeLocalProjectConfig(root, loadProjectConfigLayer(root, host), host);
+        refreshIndexerForDirectory(root, host, runtimeConfig);
+        indexer = getIndexerForProject(root, host);
+        return runIndex(indexer);
+      }, { completeRecoveries: false });
+    } else {
+      stats = await runIndex(indexer);
+    }
+
+    return { kind: "stats", stats };
+  } catch (error) {
+    if (!isIndexLockContentionError(error)) throw error;
+    const owner = error.owner;
+    const ownerText = owner
+      ? `PID ${owner.pid}, opération ${owner.operation}, depuis ${owner.startedAt}`
+      : "propriétaire non lisible";
+    if (error.reason === "legacy-lock") {
+      return {
+        kind: "busy",
+        text: `INDEX_BUSY : ancien format de verrou détecté (${ownerText}). Vérifiez le PID et retirez ce verrou manuellement uniquement s'il est obsolète.`,
+      };
+    }
+    if (error.reason === "unknown-owner") {
+      return {
+        kind: "busy",
+        text: `INDEX_BUSY : propriétaire du verrou illisible ou distant (${ownerText}). Reprise automatique refusée ; une vérification manuelle est nécessaire.`,
+      };
+    }
+    return { kind: "busy", text: `INDEX_BUSY : indexation déjà en cours (${ownerText}).` };
+  }
 }
 
 export async function getIndexStatus(projectRoot: string | undefined, host: HostMode): Promise<StatusResult> {

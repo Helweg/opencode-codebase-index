@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fsPromises } from "fs";
+import { existsSync, readFileSync, statSync, writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fsPromises } from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
 import { execFile } from "child_process";
@@ -41,6 +41,17 @@ import { getHostProjectIndexRelativePath, resolveProjectIndexPath } from "../con
 import { getChangedFiles } from "../tools/changed-files.js";
 import type { PrImpactResult } from "./pr-impact-types.js";
 import { getChunkGitBlame, type GitBlameMetadata } from "./git-blame.js";
+import {
+  acquireIndexLock,
+  completeLeaseRecovery,
+  createLeaseTemporaryPath,
+  recoverLeaseArtifacts,
+  releaseIndexLock,
+  removeLeaseTemporaryPath,
+  type IndexLockLease,
+  type IndexLockOwner,
+  type IndexMutationOperation,
+} from "./index-lock.js";
 
 export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab", "bash"]);
 // Languages whose identifiers are case-insensitive at the language level.
@@ -1883,7 +1894,8 @@ export class Indexer {
   private readonly queryCacheTtlMs = 5 * 60 * 1000;
   private readonly querySimilarityThreshold = 0.85;
   private indexCompatibility: IndexCompatibility | null = null;
-  private indexingLockPath: string = "";
+  private activeIndexLease: IndexLockLease | null = null;
+  private initializationPromise: Promise<void> | null = null;
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig, host: HostMode = "opencode") {
     this.projectRoot = projectRoot;
@@ -1892,12 +1904,100 @@ export class Indexer {
     this.indexPath = this.getIndexPath();
     this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
     this.failedBatchesPath = path.join(this.indexPath, "failed-batches.json");
-    this.indexingLockPath = path.join(this.indexPath, "indexing.lock");
     this.logger = initializeLogger(config.debug);
   }
 
   private getIndexPath(): string {
     return resolveProjectIndexPath(this.projectRoot, this.config.scope, this.host);
+  }
+
+  private isLocalProjectIndexPath(): boolean {
+    const localProjectIndexPaths = [path.join(this.projectRoot, getHostProjectIndexRelativePath(this.host))];
+    if (this.host !== "opencode") {
+      localProjectIndexPaths.push(path.join(this.projectRoot, getHostProjectIndexRelativePath("opencode")));
+    }
+
+    return localProjectIndexPaths.some((localPath) => {
+      if (!existsSync(localPath) || !existsSync(this.indexPath)) {
+        return path.resolve(this.indexPath) === path.resolve(localPath);
+      }
+      const indexStats = statSync(this.indexPath);
+      const localStats = statSync(localPath);
+      return indexStats.dev === localStats.dev && indexStats.ino === localStats.ino;
+    });
+  }
+
+  private resetLoadedIndexState(): void {
+    this.database?.close();
+    this.store = null;
+    this.invertedIndex = null;
+    this.database = null;
+    this.provider = null;
+    this.configuredProviderInfo = null;
+    this.reranker = null;
+    this.indexCompatibility = null;
+    this.fileHashCache.clear();
+  }
+
+  private refreshLoadedIndexState(): void {
+    if (!this.store || !this.invertedIndex || !this.configuredProviderInfo) return;
+    this.store.load();
+    this.invertedIndex.load();
+    this.fileHashCache.clear();
+    this.loadFileHashCache();
+    this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
+  }
+
+  private async withIndexMutationLease<T>(
+    operation: IndexMutationOperation,
+    callback: (recoveredOwners: readonly IndexLockOwner[]) => Promise<T>,
+  ): Promise<T> {
+    const lease = acquireIndexLock(this.indexPath, operation);
+    this.activeIndexLease = lease;
+
+    let result: T | undefined;
+    let callbackError: unknown;
+    let callbackFailed = false;
+    try {
+      result = await callback(lease.recoveries.map(({ owner }) => owner));
+    } catch (error) {
+      callbackFailed = true;
+      callbackError = error;
+    }
+    if (!callbackFailed) {
+      try {
+        completeLeaseRecovery(lease);
+      } catch (error) {
+        callbackFailed = true;
+        callbackError = error;
+      }
+    }
+    let releaseError: unknown;
+    try {
+      if (!releaseIndexLock(lease)) {
+        releaseError = new Error(`Lost ownership of index mutation lease ${lease.owner.token}`);
+      } else if (this.activeIndexLease?.owner.token === lease.owner.token) {
+        this.activeIndexLease = null;
+      }
+    } catch (error) {
+      releaseError = error;
+      if (!existsSync(lease.lockPath) && this.activeIndexLease?.owner.token === lease.owner.token) {
+        this.activeIndexLease = null;
+      }
+    }
+    if (releaseError !== undefined) {
+      if (callbackFailed) throw new AggregateError([callbackError, releaseError], "Index mutation and lease release both failed");
+      throw releaseError;
+    }
+    if (callbackFailed) throw callbackError;
+    return result as T;
+  }
+
+  private requireActiveLease(): IndexLockLease {
+    if (!this.activeIndexLease) {
+      throw new Error("Index mutation attempted without an active interprocess lease");
+    }
+    return this.activeIndexLease;
   }
 
   private loadFileHashCache(): void {
@@ -1928,10 +2028,15 @@ export class Indexer {
   }
 
   private atomicWriteSync(targetPath: string, data: string): void {
-    const tempPath = `${targetPath}.tmp`;
+    const lease = this.requireActiveLease();
+    const tempPath = createLeaseTemporaryPath(targetPath, lease.owner, "tmp");
     mkdirSync(path.dirname(targetPath), { recursive: true });
-    writeFileSync(tempPath, data);
-    renameSync(tempPath, targetPath);
+    try {
+      writeFileSync(tempPath, data);
+      renameSync(tempPath, targetPath);
+    } finally {
+      removeLeaseTemporaryPath(tempPath);
+    }
   }
 
   private getScopedRoots(): string[] {
@@ -2364,33 +2469,23 @@ export class Indexer {
     };
   }
 
-  private checkForInterruptedIndexing(): boolean {
-    return existsSync(this.indexingLockPath);
-  }
-
-  private acquireIndexingLock(): void {
-    const lockData = {
-      startedAt: new Date().toISOString(),
-      pid: process.pid,
-    };
-    writeFileSync(this.indexingLockPath, JSON.stringify(lockData));
-  }
-
-  private releaseIndexingLock(): void {
-    if (existsSync(this.indexingLockPath)) {
-      unlinkSync(this.indexingLockPath);
-    }
-  }
-
-  private async recoverFromInterruptedIndexing(): Promise<void> {
-    this.logger.warn("Detected interrupted indexing session, recovering...");
-
-    if (existsSync(this.fileHashCachePath)) {
-      unlinkSync(this.fileHashCachePath);
+  private async recoverFromInterruptedIndexingUnlocked(owners: readonly IndexLockOwner[]): Promise<void> {
+    for (const owner of owners) {
+      this.logger.warn("Detected interrupted indexing session, recovering...", {
+        pid: owner.pid,
+        hostname: owner.hostname,
+        operation: owner.operation,
+        startedAt: owner.startedAt,
+      });
     }
 
-    await this.healthCheck();
-    this.releaseIndexingLock();
+    if (this.config.scope === "global") {
+      if (existsSync(this.fileHashCachePath)) {
+        unlinkSync(this.fileHashCachePath);
+      }
+
+      await this.healthCheckUnlocked();
+    }
 
     this.logger.info("Recovery complete, next index will re-process all files");
   }
@@ -2451,7 +2546,7 @@ export class Indexer {
       }
       return;
     }
-    writeFileSync(this.failedBatchesPath, JSON.stringify(batches, null, 2));
+    this.atomicWriteSync(this.failedBatchesPath, JSON.stringify(batches, null, 2));
   }
 
   private collectRetryableFailedChunks(
@@ -2704,6 +2799,15 @@ export class Indexer {
   }
 
   async initialize(): Promise<void> {
+    await this.withIndexMutationLease("initialize", async (recoveredOwners) => {
+      await this.ensureInitializedUnlocked(recoveredOwners);
+    });
+  }
+
+  private async initializeUnlocked(
+    recoveredOwners: readonly IndexLockOwner[] = [],
+    options: { skipAutoGc?: boolean } = {},
+  ): Promise<void> {
     if (this.config.embeddingProvider === 'custom') {
       if (!this.config.customProvider) {
         throw new Error("embeddingProvider is 'custom' but customProvider config is missing.");
@@ -2749,9 +2853,24 @@ export class Indexer {
 
     const dimensions = this.configuredProviderInfo.modelInfo.dimensions;
     const storePath = path.join(this.indexPath, "vectors");
+    if (recoveredOwners.length > 0 && this.config.scope === "project" && !this.isLocalProjectIndexPath()) {
+      throw new Error(
+        "Interrupted indexing recovery is unsafe while using an inherited worktree index. " +
+        "Run index_codebase with force=true to create a local project index boundary."
+      );
+    }
+    for (const recoveredOwner of recoveredOwners) {
+      recoverLeaseArtifacts(this.indexPath, recoveredOwner, [
+        storePath,
+        `${storePath}.meta.json`,
+      ]);
+    }
+    if (recoveredOwners.length > 0 && this.config.scope === "project") {
+      await this.resetLocalIndexArtifacts();
+    }
     this.store = new VectorStore(storePath, dimensions);
 
-    const indexFilePath = path.join(this.indexPath, "vectors.usearch");
+    const indexFilePath = storePath;
     if (existsSync(indexFilePath)) {
       this.store.load();
     }
@@ -2795,12 +2914,10 @@ export class Indexer {
       this.logger.branch("debug", "Not a git repository, using default branch");
     }
 
-    // Recover from interrupted indexing AFTER store, invertedIndex, and database
-    // are all initialized. healthCheck() calls ensureInitialized() which checks
-    // these fields — if they're not set, it re-enters initialize() causing infinite
-    // recursion and 70GB+ memory usage.
-    if (this.checkForInterruptedIndexing()) {
-      await this.recoverFromInterruptedIndexing();
+    // La récupération reste dans le lease nouvellement acquis et ne dépend
+    // jamais de la simple présence d'un verrou appartenant à un processus vivant.
+    if (recoveredOwners.length > 0) {
+      await this.recoverFromInterruptedIndexingUnlocked(recoveredOwners);
     }
 
     if (dbIsNew && this.store.count() > 0) {
@@ -2819,7 +2936,7 @@ export class Indexer {
     }
 
     // Auto-GC: Run garbage collection if enabled and interval has elapsed
-    if (this.config.indexing.autoGc) {
+    if (this.config.indexing.autoGc && !options.skipAutoGc) {
       await this.maybeRunAutoGc();
     }
   }
@@ -2843,7 +2960,7 @@ export class Indexer {
     }
 
     if (shouldRunGc) {
-      const result = await this.healthCheck();
+      const result = await this.healthCheckUnlocked();
       if (result.warning) {
         this.database.setMetadata(STARTUP_WARNING_METADATA_KEY, result.warning);
       } else {
@@ -2894,10 +3011,11 @@ export class Indexer {
       .filter(({ key }) => !excludedSet.has(key));
 
     const storeBasePath = path.join(this.indexPath, "vectors");
-    const storeIndexPath = `${storeBasePath}.usearch`;
+    const storeIndexPath = storeBasePath;
     const storeMetadataPath = `${storeBasePath}.meta.json`;
-    const backupIndexPath = `${storeIndexPath}.bak`;
-    const backupMetadataPath = `${storeMetadataPath}.bak`;
+    const lease = this.requireActiveLease();
+    const backupIndexPath = createLeaseTemporaryPath(storeIndexPath, lease.owner, "bak");
+    const backupMetadataPath = createLeaseTemporaryPath(storeMetadataPath, lease.owner, "bak");
 
     let backedUpIndex = false;
     let backedUpMetadata = false;
@@ -2992,6 +3110,30 @@ export class Indexer {
     return `Detected a corrupted local SQLite index at ${dbPath} and reset the local index. Run index_codebase to rebuild search data.`;
   }
 
+  private async resetLocalIndexArtifacts(): Promise<void> {
+    this.store = null;
+    this.invertedIndex = null;
+    this.database?.close();
+    this.database = null;
+    this.indexCompatibility = null;
+    this.fileHashCache.clear();
+
+    const resetPaths = [
+      path.join(this.indexPath, "codebase.db"),
+      path.join(this.indexPath, "codebase.db-shm"),
+      path.join(this.indexPath, "codebase.db-wal"),
+      path.join(this.indexPath, "vectors"),
+      path.join(this.indexPath, "vectors.usearch"),
+      path.join(this.indexPath, "vectors.meta.json"),
+      path.join(this.indexPath, "inverted-index.json"),
+      path.join(this.indexPath, "file-hashes.json"),
+      path.join(this.indexPath, "failed-batches.json"),
+    ];
+
+    await Promise.all(resetPaths.map((targetPath) => fsPromises.rm(targetPath, { recursive: true, force: true })));
+    await fsPromises.mkdir(this.indexPath, { recursive: true });
+  }
+
   private async tryResetCorruptedIndex(stage: string, error: unknown): Promise<boolean> {
     if (!isSqliteCorruptionError(error)) {
       return false;
@@ -3016,34 +3158,7 @@ export class Indexer {
       error: errorMessage,
     });
 
-    this.store = null;
-    this.invertedIndex = null;
-    this.database?.close();
-    this.database = null;
-    this.indexCompatibility = null;
-    this.fileHashCache.clear();
-
-    const resetPaths = [
-      path.join(this.indexPath, "codebase.db"),
-      path.join(this.indexPath, "codebase.db-shm"),
-      path.join(this.indexPath, "codebase.db-wal"),
-      path.join(this.indexPath, "vectors.usearch"),
-      path.join(this.indexPath, "inverted-index.json"),
-      path.join(this.indexPath, "file-hashes.json"),
-      path.join(this.indexPath, "failed-batches.json"),
-      path.join(this.indexPath, "indexing.lock"),
-      path.join(this.indexPath, "vectors"),
-    ];
-
-    await Promise.all(resetPaths.map(async (targetPath) => {
-      try {
-        await fsPromises.rm(targetPath, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup. The follow-up reinitialization will recreate what it needs.
-      }
-    }));
-
-    await fsPromises.mkdir(this.indexPath, { recursive: true });
+    await this.resetLocalIndexArtifacts();
     return true;
   }
 
@@ -3191,7 +3306,10 @@ export class Indexer {
     database: Database;
   }> {
     if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
-      await this.initialize();
+      this.initializationPromise ??= this.initialize().finally(() => {
+        this.initializationPromise = null;
+      });
+      await this.initializationPromise;
     }
     return {
       store: this.store!,
@@ -3199,6 +3317,43 @@ export class Indexer {
       invertedIndex: this.invertedIndex!,
       configuredProviderInfo: this.configuredProviderInfo!,
       database: this.database!,
+    };
+  }
+
+  private async ensureInitializedUnlocked(recoveredOwners: readonly IndexLockOwner[] = []): Promise<{
+    store: VectorStore;
+    provider: EmbeddingProviderInterface;
+    invertedIndex: InvertedIndex;
+    configuredProviderInfo: ConfiguredProviderInfo;
+    database: Database;
+  }> {
+    if (recoveredOwners.length > 0) {
+      this.resetLoadedIndexState();
+      await this.initializeUnlocked(recoveredOwners);
+    } else if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
+      await this.initializeUnlocked();
+    } else {
+      this.refreshLoadedIndexState();
+    }
+    return this.requireLoadedIndexState();
+  }
+
+  private requireLoadedIndexState(): {
+    store: VectorStore;
+    provider: EmbeddingProviderInterface;
+    invertedIndex: InvertedIndex;
+    configuredProviderInfo: ConfiguredProviderInfo;
+    database: Database;
+  } {
+    if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
+      throw new Error("Index state is not initialized");
+    }
+    return {
+      store: this.store,
+      provider: this.provider,
+      invertedIndex: this.invertedIndex,
+      configuredProviderInfo: this.configuredProviderInfo,
+      database: this.database,
     };
   }
 
@@ -3219,7 +3374,19 @@ export class Indexer {
   }
 
   async index(onProgress?: ProgressCallback): Promise<IndexStats> {
-    const { store, provider, invertedIndex, database, configuredProviderInfo } = await this.ensureInitialized();
+    return this.withIndexMutationLease("index", async (recoveredOwners) => {
+      return this.indexUnlocked(onProgress, recoveredOwners);
+    });
+  }
+
+  private async indexUnlocked(
+    onProgress?: ProgressCallback,
+    recoveredOwners: readonly IndexLockOwner[] = [],
+    stateReady = false,
+  ): Promise<IndexStats> {
+    const { store, provider, invertedIndex, database, configuredProviderInfo } = stateReady
+      ? this.requireLoadedIndexState()
+      : await this.ensureInitializedUnlocked(recoveredOwners);
     const scopedRoots = this.config.scope === "global" ? this.getScopedRoots() : null;
     const branchCatalogKey = this.getBranchCatalogKey();
     const forceScopedReembed = scopedRoots !== null && database.getMetadata(this.getProjectForceReembedMetadataKey()) === "true";
@@ -3232,7 +3399,6 @@ export class Indexer {
       );
     }
 
-    this.acquireIndexingLock();
     this.logger.recordIndexingStart();
     this.logger.info("Starting indexing", { projectRoot: this.projectRoot });
 
@@ -3673,7 +3839,6 @@ export class Indexer {
         chunksProcessed: 0,
         totalChunks: 0,
       });
-      this.releaseIndexingLock();
       return stats;
     }
 
@@ -3702,7 +3867,6 @@ export class Indexer {
         chunksProcessed: 0,
         totalChunks: 0,
       });
-      this.releaseIndexingLock();
       return stats;
     }
 
@@ -4035,7 +4199,6 @@ export class Indexer {
       totalChunks: pendingChunks.length,
     });
 
-    this.releaseIndexingLock();
     return stats;
   }
 
@@ -4415,8 +4578,23 @@ export class Indexer {
     };
   }
 
+  async forceIndex(onProgress?: ProgressCallback): Promise<IndexStats> {
+    return this.withIndexMutationLease("force-index", async (recoveredOwners) => {
+      await this.ensureInitializedUnlocked(recoveredOwners);
+      await this.clearIndexUnlocked();
+      return this.indexUnlocked(onProgress, [], true);
+    });
+  }
+
   async clearIndex(): Promise<void> {
-    const { store, invertedIndex, database } = await this.ensureInitialized();
+    await this.withIndexMutationLease("clear", async (recoveredOwners) => {
+      await this.ensureInitializedUnlocked(recoveredOwners);
+      await this.clearIndexUnlocked();
+    });
+  }
+
+  private async clearIndexUnlocked(): Promise<void> {
+    const { store, invertedIndex, database } = this.requireLoadedIndexState();
 
     if (this.config.scope === "global") {
       store.load();
@@ -4483,15 +4661,7 @@ export class Indexer {
       return;
     }
 
-    const localProjectIndexPaths = [path.join(this.projectRoot, getHostProjectIndexRelativePath(this.host))];
-    if (this.host !== "opencode") {
-      localProjectIndexPaths.push(path.join(this.projectRoot, getHostProjectIndexRelativePath("opencode")));
-    }
-
-    const isLocalProjectIndex = localProjectIndexPaths.some(
-      (localPath) => path.resolve(this.indexPath) === path.resolve(localPath)
-    );
-    if (!isLocalProjectIndex) {
+    if (!this.isLocalProjectIndexPath()) {
       throw new Error(
         "Project-scoped force rebuild is unsafe while using an inherited worktree index. " +
         "Create a local project config boundary before clearing the index."
@@ -4526,7 +4696,14 @@ export class Indexer {
   }
 
   async healthCheck(): Promise<HealthCheckResult> {
-    const { store, invertedIndex, database } = await this.ensureInitialized();
+    return this.withIndexMutationLease("health-check", async (recoveredOwners) => {
+      await this.ensureInitializedUnlocked(recoveredOwners);
+      return this.healthCheckUnlocked();
+    });
+  }
+
+  private async healthCheckUnlocked(): Promise<HealthCheckResult> {
+    const { store, invertedIndex, database } = this.requireLoadedIndexState();
 
     this.logger.gc("info", "Starting health check");
 
@@ -4591,7 +4768,7 @@ export class Indexer {
         throw error;
       }
 
-      await this.ensureInitialized();
+      await this.initializeUnlocked(undefined, { skipAutoGc: true });
 
       return {
         removed: 0,
@@ -4617,7 +4794,14 @@ export class Indexer {
   }
 
   async retryFailedBatches(): Promise<{ succeeded: number; failed: number; remaining: number }> {
-    const { store, provider, invertedIndex, database, configuredProviderInfo } = await this.ensureInitialized();
+    return this.withIndexMutationLease("retry-failed-batches", async (recoveredOwners) => {
+      await this.ensureInitializedUnlocked(recoveredOwners);
+      return this.retryFailedBatchesUnlocked();
+    });
+  }
+
+  private async retryFailedBatchesUnlocked(): Promise<{ succeeded: number; failed: number; remaining: number }> {
+    const { store, provider, invertedIndex, database, configuredProviderInfo } = this.requireLoadedIndexState();
     const maxChunkTokens = getSafeEmbeddingChunkTokenLimit(configuredProviderInfo);
     const providerRateLimits = this.getProviderRateLimits(configuredProviderInfo.provider);
 
