@@ -329,6 +329,30 @@ describe("indexer clearIndex force rebuild", () => {
     expect(clearedDb.getStats().chunkCount).toBe(0);
   });
 
+  it("keeps mutations on the canonical index after a project symlink is retargeted", async () => {
+    const indexParent = path.join(tempDir, ".opencode");
+    const indexLink = path.join(indexParent, "index");
+    const firstTarget = path.join(tempHome, "canonical-index-a");
+    const secondTarget = path.join(tempHome, "canonical-index-b");
+    fs.mkdirSync(indexParent, { recursive: true });
+    fs.mkdirSync(firstTarget, { recursive: true });
+    fs.mkdirSync(secondTarget, { recursive: true });
+    fs.symlinkSync(firstTarget, indexLink, "dir");
+
+    const indexer = createIndexer(tempDir, 8);
+    await indexer.index();
+    expect(fs.existsSync(path.join(firstTarget, "codebase.db"))).toBe(true);
+
+    fs.unlinkSync(indexLink);
+    fs.symlinkSync(secondTarget, indexLink, "dir");
+    fs.writeFileSync(sourceFile, "export function canonicalUpdate() { return 'updated'; }\n", "utf-8");
+
+    await indexer.index();
+
+    expect(fs.existsSync(path.join(firstTarget, "codebase.db"))).toBe(true);
+    expect(fs.existsSync(path.join(secondTarget, "codebase.db"))).toBe(false);
+  });
+
   it("clears only the current project from a shared global index when compatibility is unchanged", async () => {
     vi.stubEnv("HOME", tempHome);
     vi.stubEnv("USERPROFILE", tempHome);
@@ -1518,13 +1542,14 @@ describe("indexer clearIndex force rebuild", () => {
     const fileHashCachePath = path.join(tempHome, ".opencode", "global-index", "file-hashes.json");
     fs.mkdirSync(path.dirname(fileHashCachePath), { recursive: true });
     fs.writeFileSync(fileHashCachePath, "{", "utf-8");
+    const canonicalFileHashCachePath = fs.realpathSync.native(fileHashCachePath);
 
     await indexer.clearIndex();
 
     const logs = indexer.getLogger().getLogs().filter((entry) => entry.level === "warn");
     expect(logs.some((entry) =>
       entry.message === "Failed to load file hash cache, resetting cache state"
-      && entry.data?.fileHashCachePath === fileHashCachePath
+      && entry.data?.fileHashCachePath === canonicalFileHashCachePath
     )).toBe(true);
   });
 

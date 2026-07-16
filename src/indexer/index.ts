@@ -1953,6 +1953,9 @@ export class Indexer {
     callback: (recoveredOwners: readonly IndexLockOwner[]) => Promise<T>,
   ): Promise<T> {
     const lease = acquireIndexLock(this.indexPath, operation);
+    this.indexPath = lease.canonicalIndexPath;
+    this.fileHashCachePath = path.join(this.indexPath, "file-hashes.json");
+    this.failedBatchesPath = path.join(this.indexPath, "failed-batches.json");
     this.activeIndexLease = lease;
 
     let result: T | undefined;

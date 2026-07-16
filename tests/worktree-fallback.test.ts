@@ -211,7 +211,7 @@ describe("worktree fallback (issue #60)", () => {
       const status = await indexer.getStatus();
 
       expect(resolveProjectIndexPath(worktreeDir, "project")).toBe(path.join(mainRepoDir, ".opencode", "index"));
-      expect(status.indexPath).toBe(path.join(mainRepoDir, ".opencode", "index"));
+      expect(status.indexPath).toBe(fs.realpathSync.native(path.join(mainRepoDir, ".opencode", "index")));
       expect(status.currentBranch).toBe("feature/x/y");
     } finally {
       await indexer.close();
