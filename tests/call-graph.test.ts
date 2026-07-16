@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { extractCalls, Database, hashContent, parseFiles } from "../src/native/index.js";
 import type { SymbolData, CallEdgeData } from "../src/native/index.js";
+import { parseConfig } from "../src/config/schema.js";
 import {
+  Indexer,
   CALL_GRAPH_LANGUAGES,
   CALL_GRAPH_SYMBOL_CHUNK_TYPES,
   CASE_INSENSITIVE_LANGUAGES,
@@ -688,6 +690,144 @@ const math = @import("math.zig");
       expect(importCalls.length).toBeGreaterThanOrEqual(2);
       expect(importCalls.some((c) => c.calleeName.includes("std"))).toBe(true);
       expect(importCalls.some((c) => c.calleeName.includes("math.zig"))).toBe(true);
+    });
+  });
+
+  describe("metal call extraction", () => {
+    const metalFixturePath = path.join(
+      __dirname,
+      "fixtures",
+      "metal",
+      "representative.metal",
+    );
+
+    it("should extract direct, template, member, and qualified calls", () => {
+      const content = fs.readFileSync(metalFixturePath, "utf-8");
+      const calls = extractCalls(content, "metal");
+      const callNames = calls.map((call) => call.calleeName);
+
+      expect(callNames).toEqual(
+        expect.arrayContaining([
+          "shade",
+          "scaled_value",
+          "sample",
+          "adjust",
+          "clamp",
+          "threadgroup_barrier",
+          "simd_sum",
+        ]),
+      );
+      expect(calls.find((call) => call.calleeName === "sample")?.callType).toBe(
+        "MethodCall",
+      );
+      expect(calls.find((call) => call.calleeName === "clamp")?.callType).toBe(
+        "MethodCall",
+      );
+    });
+
+    it("should expose named Metal functions as call graph symbols", () => {
+      const content = fs.readFileSync(metalFixturePath, "utf-8");
+      const filePath = "/shaders/representative.metal";
+      const parsed = parseFiles([{ path: filePath, content }]);
+      const symbolNames = parsed[0].chunks
+        .filter((chunk) => CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType))
+        .map((chunk) => chunk.name);
+
+      expect(CALL_GRAPH_LANGUAGES.has("metal")).toBe(true);
+      expect(symbolNames).toEqual(
+        expect.arrayContaining([
+          "scaled_value",
+          "shade",
+          "adjust",
+          "vertex_main",
+          "fragment_main",
+          "reduce_kernel",
+        ]),
+      );
+    });
+
+    it("should resolve Metal function and method calls through the Indexer", async () => {
+      const baseContent = fs.readFileSync(metalFixturePath, "utf-8");
+      const longBody = Array.from(
+        { length: 160 },
+        (_, index) => `  value += ${index}.0f * 0.0f;`,
+      ).join("\n");
+      const content = `${baseContent}
+
+inline float long_helper(float value) {
+${longBody}
+  return value;
+}
+
+kernel void long_kernel(const device float* input [[buffer(0)]],
+                        device float* output [[buffer(1)]],
+                        uint gid [[thread_position_in_grid]]) {
+  output[gid] = long_helper(input[gid]);
+}
+`;
+      const filePath = path.join(tempDir, "representative.metal");
+      fs.writeFileSync(filePath, content, "utf-8");
+
+      const longHelperChunks = parseFiles([{ path: filePath, content }])[0].chunks
+        .filter((chunk) => chunk.name === "long_helper");
+      expect(longHelperChunks.length).toBeGreaterThan(1);
+
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+        async (_url, init) => {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            input?: string[];
+          };
+          const texts = Array.isArray(body.input) ? body.input : [];
+          return new Response(
+            JSON.stringify({
+              data: texts.map((_text, index) => ({
+                embedding: Array.from(
+                  { length: 8 },
+                  (_, dimension) => ((index + dimension + 1) % 9) / 9,
+                ),
+              })),
+              usage: { total_tokens: Math.max(1, texts.length * 8) },
+            }),
+            { status: 200 },
+          );
+        },
+      );
+      const config = parseConfig({
+        embeddingProvider: "custom",
+        customProvider: {
+          baseUrl: "http://localhost:11434/v1",
+          model: "mock-model",
+          dimensions: 8,
+          requestIntervalMs: 0,
+        },
+        indexing: { watchFiles: false },
+      });
+      const indexer = new Indexer(tempDir, config);
+
+      try {
+        const stats = await indexer.index();
+        expect(stats.totalFiles).toBe(1);
+
+        const expectedCallers = [
+          ["shade", "fragment_main"],
+          ["adjust", "reduce_kernel"],
+          ["long_helper", "long_kernel"],
+        ] as const;
+        for (const [targetName, callerName] of expectedCallers) {
+          const callers = await indexer.getCallers(targetName);
+          expect(callers).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                fromSymbolName: callerName,
+                isResolved: true,
+              }),
+            ]),
+          );
+        }
+      } finally {
+        await indexer.close();
+        fetchSpy.mockRestore();
+      }
     });
   });
 

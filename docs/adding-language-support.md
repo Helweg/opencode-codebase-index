@@ -30,6 +30,7 @@ The implementer still needs to know or look up:
 - the grammar crate
 - the parser constant
 - the node kinds for declarations, comments, and calls
+- la licence de la grammaire, son historique de versions et sa compatibilité avec le runtime tree-sitter du dépôt
 
 So this guide is a **repo wiring guide**, not a replacement for the target language's tree-sitter grammar docs.
 
@@ -52,6 +53,7 @@ If you are unsure, aim for **semantic parsing first**. It is much easier to land
 - `native/src/parser.rs` uses the correct tree-sitter grammar
 - semantic chunks are produced for the main declaration types
 - `tests/native.test.ts` covers the language
+- toute nouvelle dépendance de grammaire possède une entrée verrouillée et l'attribution de licence requise
 - docs are updated if user-facing support claims changed
 - `npm run build`, `npm run typecheck`, `npm run lint`, and `npm run test:run` all pass
 
@@ -80,6 +82,13 @@ If you are unsure, aim for **semantic parsing first**. It is much easier to land
 - `src/indexer/index.ts` — call-graph language + symbol chunk-type allowlists
 - `tests/call-graph.test.ts` — call-graph coverage
 
+### Seulement lors de l'ajout d'une dépendance de grammaire
+
+- `native/Cargo.toml` — déclaration de la crate de grammaire
+- `native/Cargo.lock` — version résolue de manière reproductible
+- fichier de licence ou de notices tierces du dépôt — attribution imposée par la licence de la dépendance
+- `package.json` — inclusion d'un nouveau fichier de notices dans le paquet publié, le cas échéant
+
 ### Usually update too
 
 - `README.md` — supported-language claims
@@ -103,6 +112,8 @@ Use this exact sequence:
 - [ ] Check whether the extensions are already present in `src/config/constants.ts`
 - [ ] Add the language to `Language`, `from_extension()`, `as_str()`, and `from_string()` in `native/src/types.rs`
 - [ ] Add the grammar crate in `native/Cargo.toml` if needed
+- [ ] Vérifier le texte de licence, l'historique de versions, la publication dans un registre et la compatibilité ABI tree-sitter de la grammaire
+- [ ] Mettre à jour `native/Cargo.lock` et ajouter l'attribution requise si une crate de grammaire est ajoutée
 - [ ] Add parser selection, comment node kinds, and semantic node kinds in `native/src/parser.rs`
 - [ ] Add one parser test in `tests/native.test.ts`
 - [ ] Run `npm run build` and `npm run test:run`
@@ -150,6 +161,8 @@ Start with narrow, declaration-like nodes:
 - modules / namespaces
 
 Avoid broad container nodes unless the grammar gives you no better option.
+
+Si un wrapper tel qu'un template ou un namespace contient des déclarations, vérifier si le marquer comme sémantique empêche le parcours d'atteindre les fonctions ou types réellement recherchés.
 
 ### `tests/native.test.ts`
 
@@ -247,6 +260,10 @@ npm run test:run
 `php` files are already included in `src/config/constants.ts`, but PHP is not yet wired in `native/src/types.rs`, `native/src/parser.rs`, or `native/queries/`.
 
 So a PHP PR is mainly a **semantic parsing** change, with **optional call-graph support**.
+
+## Note pratique pour Metal
+
+Metal utilise un libellé `Language::Metal` dédié tout en réutilisant la grammaire C++ existante. Cela évite une nouvelle dépendance fragile, mais exige tout de même des nœuds sémantiques propres à Metal, une extraction des noms de déclarations et une requête d'appels. Les tests doivent vérifier les types courts, les méthodes imbriquées, les noms exacts des fonctions sous les templates et les qualificateurs d'étape shader; la seule construction réussie de l'arbre ne suffit pas, car des nœuds de récupération tree-sitter peuvent subsister autour de la syntaxe propre à Metal. Les régions composées uniquement de macros doivent aussi être vérifiées séparément: dans un fichier mixte, celles qui ne sont couvertes par aucune déclaration sémantique peuvent rester hors des chunks.
 
 ## One-line summary
 
