@@ -42,7 +42,7 @@ import { getChangedFiles } from "../tools/changed-files.js";
 import type { PrImpactResult } from "./pr-impact-types.js";
 import { getChunkGitBlame, type GitBlameMetadata } from "./git-blame.js";
 
-export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab", "bash"]);
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab", "bash", "c", "cpp"]);
 // Languages whose identifiers are case-insensitive at the language level.
 // The Rust call_extractor lowercases callee names for these languages (except
 // constructors and imports), so same-file resolution in this file must use
@@ -61,6 +61,9 @@ export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "enum_declaration",
   "function_definition",
   "class_definition",
+  "class_specifier",
+  "struct_specifier",
+  "namespace_definition",
   "decorated_definition",
   "method_declaration",
   "type_declaration",
@@ -85,6 +88,19 @@ export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "const_statement",
   "class_name_statement",
 ]);
+
+const C_FAMILY_TYPE_SYMBOL_CHUNK_TYPES = new Set(["class_specifier", "struct_specifier"]);
+
+function isCompatibleCFamilyCallTarget(
+  language: string,
+  callType: string,
+  symbolKind: string,
+): boolean {
+  if (language !== "c" && language !== "cpp") return true;
+  if (symbolKind === "namespace_definition") return callType === "Import";
+  if (!C_FAMILY_TYPE_SYMBOL_CHUNK_TYPES.has(symbolKind)) return true;
+  return callType === "Constructor" || callType === "Inherits" || callType === "Implements";
+}
 
 function float32ArrayToBuffer(arr: number[]): Buffer {
   const float32 = new Float32Array(arr);
@@ -3603,7 +3619,11 @@ export class Indexer {
         // Resolve same-file calls (with the same case-insensitivity rules
         // used to build symbolsByName above).
         for (const edge of edges) {
-          const candidates = symbolsByName.get(normalizeSymbolKey(edge.targetName));
+          const candidates = symbolsByName
+            .get(normalizeSymbolKey(edge.targetName))
+            ?.filter((symbol) =>
+              isCompatibleCFamilyCallTarget(fileLanguage, edge.callType, symbol.kind)
+            );
           if (candidates && candidates.length === 1) {
             database.resolveCallEdge(edge.id, candidates[0].id);
           }

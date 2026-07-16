@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Graphe d'appels C et C++** : ajout de l'extraction Tree-sitter des appels directs, membres et qualifiés, des constructeurs explicites, des includes et des imports de namespaces.
+
 ## [0.14.0] - 2026-07-08
 
 ### Added
