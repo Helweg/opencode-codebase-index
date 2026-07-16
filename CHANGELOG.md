@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Parser-backed source discovery**: Added `.mts`, `.cts`, `.cxx`, `.hxx`, and `.cs` to the default include patterns.
+
 ## [0.14.0] - 2026-07-08
 
 ### Added
