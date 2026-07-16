@@ -48,7 +48,7 @@ export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", 
 // constructors and imports), so same-file resolution in this file must use
 // the same normalization when looking up symbols by name. Keep this set in
 // sync with the matching branch in native/src/call_extractor.rs.
-export const CASE_INSENSITIVE_LANGUAGES = new Set(["apex"]);
+export const CASE_INSENSITIVE_LANGUAGES = new Set(["apex", "php"]);
 export const CALL_GRAPH_SYMBOL_CHUNK_TYPES = new Set([
   "function_declaration",
   "function",

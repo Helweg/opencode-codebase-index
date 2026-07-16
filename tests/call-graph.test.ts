@@ -1,13 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { parseConfig } from "../src/config/schema.js";
 import { extractCalls, Database, hashContent, parseFiles } from "../src/native/index.js";
 import type { SymbolData, CallEdgeData } from "../src/native/index.js";
 import {
   CALL_GRAPH_LANGUAGES,
   CALL_GRAPH_SYMBOL_CHUNK_TYPES,
   CASE_INSENSITIVE_LANGUAGES,
+  Indexer,
 } from "../src/indexer/index.js";
 
 const fixturesDir = path.join(__dirname, "fixtures", "call-graph");
@@ -220,6 +222,96 @@ describe("call-graph", () => {
         const importNames = importCalls.map((c) => c.calleeName);
         expect(importNames).toContain("StringHelper");
         expect(importNames).toContain("ArrayHelper");
+      });
+    });
+
+    describe("php same-file case-insensitive resolution", () => {
+      it("resolves a mixed-case same-file PHP function call through the Indexer", async () => {
+        const phpContent = `<?php
+use Vendor\\Package\\ImportedService;
+
+function callBuildReport(): string {
+    // Cette fonction reste assez grande pour former un chunk sémantique indépendant.
+    return BUILDREPORT();
+}
+
+function buildReport(): string {
+    // La déclaration avec casse mixte reste un symbole indépendant du graphe.
+    return "report";
+}
+
+function createReportBuilder(): ReportBuilder {
+    // Le constructeur est vérifié avec la résolution insensible à la casse.
+    return new ReportBuilder();
+}
+
+class ReportBuilder {
+    public function build(): string {
+        return "report";
+    }
+}
+`;
+        const callSites = extractCalls(phpContent, "php");
+        const importSite = callSites.find((site) => site.callType === "Import");
+        expect(importSite?.calleeName).toBe("ImportedService");
+
+        const projectDir = path.join(tempDir, "php-project");
+        fs.mkdirSync(projectDir, { recursive: true });
+        fs.writeFileSync(path.join(projectDir, "report.php"), phpContent, "utf-8");
+
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init?) => {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+          const data = (body.input ?? []).map(() => ({ embedding: Array(8).fill(0.125) }));
+          return new Response(
+            JSON.stringify({ data, usage: { total_tokens: Math.max(1, data.length) } }),
+            { status: 200 },
+          );
+        });
+        const config = parseConfig({
+          embeddingProvider: "custom",
+          customProvider: {
+            baseUrl: "http://localhost:11434/v1",
+            model: "mock-model",
+            dimensions: 8,
+          },
+          indexing: { watchFiles: false },
+        });
+        const indexer = new Indexer(projectDir, config);
+
+        try {
+          await indexer.index();
+
+          const symbols = await indexer.getSymbolsForBranch();
+          const caller = symbols.find((symbol) => symbol.name === "callBuildReport");
+          const target = symbols.find((symbol) => symbol.name === "buildReport");
+          const factory = symbols.find((symbol) => symbol.name === "createReportBuilder");
+          const classSymbol = symbols.find((symbol) => symbol.name === "ReportBuilder");
+          expect(caller).toBeDefined();
+          expect(target).toBeDefined();
+          expect(factory).toBeDefined();
+          expect(classSymbol).toBeDefined();
+
+          const functionEdge = (await indexer.getCallees(caller!.id)).find(
+            (edge) => edge.targetName === "buildreport",
+          );
+          expect(functionEdge).toMatchObject({
+            callType: "Call",
+            isResolved: true,
+            toSymbolId: target!.id,
+          });
+
+          const constructorEdge = (await indexer.getCallees(factory!.id)).find(
+            (edge) => edge.callType === "Constructor",
+          );
+          expect(constructorEdge).toMatchObject({
+            targetName: "ReportBuilder",
+            isResolved: true,
+            toSymbolId: classSymbol!.id,
+          });
+        } finally {
+          await indexer.close();
+          fetchSpy.mockRestore();
+        }
       });
     });
 
