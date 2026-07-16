@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Support de Metal Shading Language** : découverte par défaut des fichiers `.metal`, chunks sémantiques dédiés pour les fonctions, méthodes et types Metal, noms fiables sous les templates et qualificateurs shader, et extraction des appels directs, templates, membres et qualifiés via la grammaire C++ existante.
+
 ## [0.14.0] - 2026-07-08
 
 ### Added

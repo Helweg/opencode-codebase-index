@@ -43,6 +43,7 @@ pub fn parse_file_internal(file_path: &str, content: &str) -> Result<Vec<CodeChu
         Language::Bash => tree_sitter_bash::LANGUAGE.into(),
         Language::C => tree_sitter_c::LANGUAGE.into(),
         Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        Language::Metal => tree_sitter_cpp::LANGUAGE.into(),
         Language::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
         Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
@@ -147,9 +148,10 @@ fn extract_semantic_nodes(
             let content = &source[start_byte..end_byte];
 
             if content.len() >= MIN_CHUNK_SIZE
+                || *language == Language::Metal
                 || (*language == Language::Bash && node_type == "function_definition")
             {
-                let name = extract_name(cursor, source);
+                let name = extract_name(cursor, source, language);
 
                 let start_line = if leading_comment.is_some() {
                     source[..start_byte].lines().count() as u32
@@ -174,7 +176,13 @@ fn extract_semantic_nodes(
             }
         }
 
-        if !is_semantic && !skip_children && cursor.goto_first_child() {
+        let descend_into_metal_type = *language == Language::Metal
+            && matches!(
+                node_type,
+                "class_specifier" | "struct_specifier" | "union_specifier"
+            );
+        if (!is_semantic || descend_into_metal_type) && !skip_children && cursor.goto_first_child()
+        {
             extract_semantic_nodes(cursor, source, language, chunks, depth + 1);
             cursor.goto_parent();
         }
@@ -304,7 +312,7 @@ fn is_comment_node(node_type: &str, language: &Language) -> bool {
         Language::CSharp => matches!(node_type, "comment"),
         Language::Ruby => matches!(node_type, "comment"),
         Language::Bash => matches!(node_type, "comment"),
-        Language::C | Language::Cpp => matches!(node_type, "comment"),
+        Language::C | Language::Cpp | Language::Metal => matches!(node_type, "comment"),
         Language::Toml => matches!(node_type, "comment"),
         Language::Yaml => matches!(node_type, "comment"),
         Language::Php => matches!(node_type, "comment"),
@@ -480,6 +488,17 @@ lazy_static! {
         set.insert("template_declaration");
         set
     };
+    static ref METAL_SEMANTIC_NODES: HashSet<&'static str> = {
+        let mut set = HashSet::new();
+        set.insert("function_definition");
+        set.insert("class_specifier");
+        set.insert("struct_specifier");
+        set.insert("union_specifier");
+        set.insert("enum_specifier");
+        set.insert("type_definition");
+        set.insert("alias_declaration");
+        set
+    };
     static ref TOML_SEMANTIC_NODES: HashSet<&'static str> = {
         let mut set = HashSet::new();
         set.insert("table");
@@ -572,6 +591,7 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
         Language::Bash => BASH_SEMANTIC_NODES.contains(node_type),
         Language::C => C_SEMANTIC_NODES.contains(node_type),
         Language::Cpp => CPP_SEMANTIC_NODES.contains(node_type),
+        Language::Metal => METAL_SEMANTIC_NODES.contains(node_type),
         Language::Toml => TOML_SEMANTIC_NODES.contains(node_type),
         Language::Yaml => YAML_SEMANTIC_NODES.contains(node_type),
         Language::Php => PHP_SEMANTIC_NODES.contains(node_type),
@@ -591,7 +611,11 @@ fn is_semantic_node(node_type: &str, language: &Language) -> bool {
     result
 }
 
-fn extract_name(cursor: &tree_sitter::TreeCursor, source: &str) -> Option<String> {
+fn extract_name(
+    cursor: &tree_sitter::TreeCursor,
+    source: &str,
+    language: &Language,
+) -> Option<String> {
     #[cfg(debug_assertions)]
     let start = Instant::now();
     #[cfg(debug_assertions)]
@@ -600,6 +624,32 @@ fn extract_name(cursor: &tree_sitter::TreeCursor, source: &str) -> Option<String
     }
 
     let node = cursor.node();
+
+    if *language == Language::Metal {
+        if matches!(node.kind(), "function_definition" | "type_definition") {
+            if let Some(declarator) = node.child_by_field_name("declarator") {
+                if let Some(name) = extract_metal_declarator_name(declarator, source) {
+                    #[cfg(debug_assertions)]
+                    {
+                        let elapsed = start.elapsed().as_micros();
+                        PERF_STATS.lock().unwrap().extract_name_time += elapsed;
+                    }
+                    return Some(name);
+                }
+            }
+        }
+
+        if let Some(name_node) = node.child_by_field_name("name") {
+            if let Some(name) = extract_metal_declarator_name(name_node, source) {
+                #[cfg(debug_assertions)]
+                {
+                    let elapsed = start.elapsed().as_micros();
+                    PERF_STATS.lock().unwrap().extract_name_time += elapsed;
+                }
+                return Some(name);
+            }
+        }
+    }
 
     let extract_identifier = |n: tree_sitter::Node| -> Option<String> {
         let kind = n.kind();
@@ -707,6 +757,36 @@ fn extract_name(cursor: &tree_sitter::TreeCursor, source: &str) -> Option<String
     None
 }
 
+fn extract_metal_declarator_name(node: tree_sitter::Node, source: &str) -> Option<String> {
+    if matches!(
+        node.kind(),
+        "identifier" | "field_identifier" | "type_identifier" | "operator_name"
+    ) {
+        return Some(source[node.start_byte()..node.end_byte()].to_string());
+    }
+
+    if let Some(name) = node.child_by_field_name("name") {
+        if let Some(result) = extract_metal_declarator_name(name, source) {
+            return Some(result);
+        }
+    }
+
+    if let Some(declarator) = node.child_by_field_name("declarator") {
+        if let Some(result) = extract_metal_declarator_name(declarator, source) {
+            return Some(result);
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(result) = extract_metal_declarator_name(child, source) {
+            return Some(result);
+        }
+    }
+
+    None
+}
+
 fn split_large_chunk(chunk: CodeChunk, chunks: &mut Vec<CodeChunk>) {
     let lines: Vec<&str> = chunk.content.lines().collect();
     let total_lines = lines.len();
@@ -760,9 +840,10 @@ fn merge_small_chunks(chunks: &mut Vec<CodeChunk>) {
             continue;
         };
 
-        let can_merge_without_losing_symbol = !(cur.language == "bash"
-            && cur.chunk_type == "function_definition"
-            || chunk.language == "bash" && chunk.chunk_type == "function_definition");
+        let can_merge_without_losing_symbol = cur.language != "metal"
+            && chunk.language != "metal"
+            && !(cur.language == "bash" && cur.chunk_type == "function_definition"
+                || chunk.language == "bash" && chunk.chunk_type == "function_definition");
 
         if can_merge_without_losing_symbol
             && cur.content.len() < MIN_CHUNK_SIZE * 2

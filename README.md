@@ -301,7 +301,7 @@ graph TD
 
 1. **Parsing**: We use `tree-sitter` to intelligently parse your code into meaningful blocks (functions, classes, interfaces). JSDoc comments and docstrings are automatically included with their associated code.
 
-**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, JSON, TOML, YAML, Zig, GDScript, MATLAB†
+**Supported Languages (Tree-sitter semantic parsing)**: TypeScript, JavaScript, Python, Rust, Go, Java, C#, Ruby, PHP, Apex, Bash, C, C++, Metal, JSON, TOML, YAML, Zig, GDScript, MATLAB†
 
 † MATLAB (`.m`) is opt-in — see below.
 
@@ -315,7 +315,7 @@ graph TD
 **/*.{sql,graphql,proto}        **/*.{yaml,yml,toml}
 **/*.{md,mdx}                   **/*.{sh,bash,zsh}
 **/*.{txt,html,htm}              **/*.{cls,trigger}
-**/*.zig                         **/*.gd
+**/*.zig                         **/*.gd                         **/*.metal
 ```
 
 Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*.pdf"`, `"**/*.csv"`).
@@ -324,6 +324,8 @@ Use `include` to replace defaults, or `additionalInclude` to extend (e.g. `"**/*
 ```json
 { "additionalInclude": ["**/*.m"] }
 ```
+
+**Portée du parsing Metal** : les fichiers `.metal` utilisent un langage Metal dédié, adossé à la grammaire tree-sitter C++ existante. Les fonctions, méthodes, fonctions templates, structs, unions, enums, alias et points d'entrée shader (`vertex`, `fragment`, `kernel`), ainsi que les attributs et espaces d'adressage Metal courants sont indexés sémantiquement. Les appels directs, templates, membres et qualifiés alimentent le graphe d'appels. Les qualificateurs propres à Metal peuvent encore produire des nœuds de récupération tree-sitter; les constructeurs de types intégrés ou les macros peuvent apparaître comme appels non résolus. Dans un fichier mixte, une région constituée uniquement de macros et située hors d'une déclaration sémantique peut ne produire aucun chunk; un fichier sans aucune déclaration reconnue conserve le fallback par lignes. Les overloads distincts portant le même nom restent volontairement ambigus lors de la résolution same-file. Le parseur vise donc des symboles fiables pour la recherche et le graphe d'appels, pas un AST Metal entièrement exempt d'erreurs.
 
 **Max File Size**: Default 1MB (1048576 bytes). Configure via `indexing.maxFileSize` (bytes).
 2. **Chunking**: Large blocks are split with overlapping windows to preserve context across chunk boundaries.
@@ -452,7 +454,7 @@ Returns recent debug logs with optional filtering.
 
 ### `call_graph`
 
-Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, Apex, Zig, GDScript, MATLAB, and Bash.
+Query the call graph to find callers or callees of a function/method. Automatically built during indexing for TypeScript, JavaScript, Python, Go, Rust, PHP, Apex, Zig, GDScript, MATLAB, Bash, and Metal.
 
 - **Use for**: Understanding code flow, tracing dependencies, impact analysis.
 - **Parameters**: `name` (function name), `direction` (`callers` or `callees`), `symbolId` (required for `callees`, returned by previous queries), `relationshipType` (optional: `Call`, `MethodCall`, `Constructor`, `Import`, `Inherits`, `Implements`).
@@ -1178,7 +1180,7 @@ The Rust native module handles performance-critical operations:
 - **usearch**: High-performance vector similarity search with F16 quantization
 - **SQLite**: Persistent storage for embeddings, chunks, branch catalog, symbols, and call edges
 - **BM25 inverted index**: Fast keyword search for hybrid retrieval
-- **Call graph extraction**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports (TypeScript/JavaScript, Python, Go, Rust, PHP, Apex, Zig, GDScript, MATLAB, Bash)
+- **Call graph extraction**: Tree-sitter query-based extraction of function calls, method calls, constructors, and imports (TypeScript/JavaScript, Python, Go, Rust, PHP, Apex, Zig, GDScript, MATLAB, Bash, Metal)
 - **xxhash**: Fast content hashing for change detection
 
 Rebuild with: `npm run build:native` (requires Rust toolchain)

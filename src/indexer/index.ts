@@ -42,7 +42,7 @@ import { getChangedFiles } from "../tools/changed-files.js";
 import type { PrImpactResult } from "./pr-impact-types.js";
 import { getChunkGitBlame, type GitBlameMetadata } from "./git-blame.js";
 
-export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab", "bash"]);
+export const CALL_GRAPH_LANGUAGES = new Set(["typescript", "tsx", "javascript", "jsx", "python", "go", "rust", "php", "apex", "zig", "gdscript", "matlab", "bash", "metal"]);
 // Languages whose identifiers are case-insensitive at the language level.
 // The Rust call_extractor lowercases callee names for these languages (except
 // constructors and imports), so same-file resolution in this file must use
@@ -3530,6 +3530,23 @@ export class Indexer {
 
       for (const chunk of parsed.chunks) {
         if (!chunk.name || !CALL_GRAPH_SYMBOL_CHUNK_TYPES.has(chunk.chunkType)) continue;
+
+        // Les grandes fonctions Metal sont découpées en chunks qui se chevauchent.
+        // Un seul symbole doit couvrir la déclaration complète pour que la
+        // résolution same-file ne confonde pas ces fragments avec des overloads.
+        const existingMetalSymbol = chunk.language === "metal"
+          ? fileSymbols.find((symbol) =>
+              symbol.name === chunk.name
+              && symbol.kind === chunk.chunkType
+              && symbol.startLine <= chunk.endLine
+              && chunk.startLine <= symbol.endLine
+            )
+          : undefined;
+        if (existingMetalSymbol) {
+          existingMetalSymbol.startLine = Math.min(existingMetalSymbol.startLine, chunk.startLine);
+          existingMetalSymbol.endLine = Math.max(existingMetalSymbol.endLine, chunk.endLine);
+          continue;
+        }
 
         const symbolId = `sym_${hashContent(parsed.path + ":" + chunk.name + ":" + chunk.chunkType + ":" + chunk.startLine).slice(0, 16)}`;
         const symbol: SymbolData = {
