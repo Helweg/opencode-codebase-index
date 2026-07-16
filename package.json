@@ -59,6 +59,7 @@
   },
   "files": [
     "dist",
+    "THIRD_PARTY_LICENSES.md",
     "native/*.node",
     "skill",
     "commands",

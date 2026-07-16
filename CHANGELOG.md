@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Support Swift** : ajout du parsing sémantique Tree-sitter, des symboles imbriqués et du graphe d'appels Swift avec une résolution sensible à la casse et fondée sur les noms.
+
 ## [0.14.0] - 2026-07-08
 
 ### Added
