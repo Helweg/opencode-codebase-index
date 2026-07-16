@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Couverture PHP 8.x** : Ajout d'un fixture et de tests de grammaire, chunks sémantiques et graphe d'appels pour PHP 8.0 à 8.4 et les syntaxes PHP 8.5 prises en charge.
+
+### Changed
+
+- **Grammaire PHP** : Mise à jour de `tree-sitter-php` de 0.23.11 à 0.24.2 pour accepter notamment les constantes d'enum, les attributs sur constantes et l'opérateur pipe `|>`, sans changement de licence MIT.
+
+### Fixed
+
+- **Graphe d'appels PHP** : Les références de callable de première classe ne sont plus enregistrées comme des appels; les opérandes directs ou parenthésés du pipe PHP 8.5 restent enregistrés comme des invocations réelles, et les appels relatifs `namespace\…` restent extraits avec la grammaire 0.24.2.
+- **Guide d'ajout de langage** : Correction de la note obsolète qui indiquait que PHP n'était pas branché au parseur et au graphe d'appels.
+
 ## [0.14.0] - 2026-07-08
 
 ### Added
