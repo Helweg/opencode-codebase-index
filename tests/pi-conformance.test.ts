@@ -5,6 +5,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const operationMocks = vi.hoisted(() => ({
   getCallGraphData: vi.fn(),
   getCallGraphPath: vi.fn(),
+  getIndexHealthCheck: vi.fn(),
+  runIndexHealthCheck: vi.fn(),
 }));
 
 vi.mock("../src/tools/operations.js", () => ({
@@ -12,7 +14,7 @@ vi.mock("../src/tools/operations.js", () => ({
   findSimilarCode: vi.fn(() => []),
   getCallGraphData: operationMocks.getCallGraphData,
   getCallGraphPath: operationMocks.getCallGraphPath,
-  getIndexHealthCheck: vi.fn(),
+  getIndexHealthCheck: operationMocks.getIndexHealthCheck,
   getIndexLogs: vi.fn(() => ({ text: "" })),
   getIndexMetrics: vi.fn(() => ({ text: "" })),
   getIndexStatus: vi.fn(),
@@ -21,6 +23,7 @@ vi.mock("../src/tools/operations.js", () => ({
   listKnowledgeBases: vi.fn(() => "No knowledge bases configured."),
   removeKnowledgeBase: vi.fn(() => "Removed knowledge base"),
   runIndexCodebase: vi.fn(),
+  runIndexHealthCheck: operationMocks.runIndexHealthCheck,
   searchCodebase: vi.fn(() => []),
 }));
 
@@ -54,6 +57,8 @@ describe("Pi adapter conformance", () => {
   beforeEach(() => {
     operationMocks.getCallGraphData.mockReset();
     operationMocks.getCallGraphPath.mockReset();
+    operationMocks.getIndexHealthCheck.mockReset();
+    operationMocks.runIndexHealthCheck.mockReset();
   });
 
   it("formats caller results like other host adapters", async () => {
@@ -131,5 +136,26 @@ describe("Pi adapter conformance", () => {
     expect(result?.content[0]?.text).toContain("[start] createOrder (src/order.ts:10)");
     expect(result?.content[0]?.text).toContain("--MethodCall--> chargeCard (src/pay.ts:33)");
     expect(result?.details).toHaveLength(2);
+  });
+
+  it("returns INDEX_BUSY details from the Pi health-check tool", async () => {
+    operationMocks.getIndexHealthCheck.mockRejectedValue(new Error("raw health-check operation must not be used"));
+    operationMocks.runIndexHealthCheck.mockResolvedValue({
+      kind: "busy",
+      text: "INDEX_BUSY : indexation déjà en cours (PID 4444, opération health-check, depuis 2026-07-17T10:00:00.000Z).",
+    });
+    const tools = await registerPiTools();
+
+    const result = await tools.get("index_health_check")?.execute(
+      "tool-call",
+      {},
+      new AbortController().signal,
+      () => {},
+      { cwd: "/repo" },
+    );
+
+    expect(result?.content[0]?.text).toContain("INDEX_BUSY");
+    expect(result?.content[0]?.text).toContain("PID 4444");
+    expect(result?.details).toEqual({ code: "INDEX_BUSY" });
   });
 });

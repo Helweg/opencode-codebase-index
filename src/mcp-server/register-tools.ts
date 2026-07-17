@@ -18,13 +18,13 @@ import {
   findSimilarCode,
   getCallGraphData,
   getCallGraphPath,
-  getIndexHealthCheck,
   getIndexLogs,
   getIndexMetrics,
   getIndexStatus,
   getPrImpact,
   implementationLookup,
   runIndexCodebase,
+  runIndexHealthCheck,
   searchCodebase,
 } from "../tools/operations.js";
 import { CHUNK_TYPE_ENUM, type McpServerRuntime } from "./shared.js";
@@ -132,8 +132,11 @@ export function registerMcpTools(server: McpServer, runtime: McpServerRuntime): 
     "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
     {},
     async () => {
-      const result = await getIndexHealthCheck(runtime.projectRoot, runtime.host);
-      return { content: [{ type: "text", text: formatHealthCheck(result) }] };
+      const result = await runIndexHealthCheck(runtime.projectRoot, runtime.host);
+      if (result.kind === "busy") {
+        return { content: [{ type: "text" as const, text: result.text }], isError: true };
+      }
+      return { content: [{ type: "text" as const, text: formatHealthCheck(result.health) }] };
     },
   );
 

@@ -21,12 +21,35 @@ type IndexStats = Awaited<ReturnType<Indexer["index"]>>;
 type StatusResult = Awaited<ReturnType<Indexer["getStatus"]>>;
 type HealthCheckResult = Awaited<ReturnType<Indexer["healthCheck"]>>;
 type PrImpactResult = Awaited<ReturnType<Indexer["getPrImpact"]>>;
+type IndexBusyResult = { kind: "busy"; text: string };
 
 type ProgressCb = (title: string, metadata: Record<string, unknown>) => void | Promise<void>;
 
 const indexerCache = new Map<IndexerCacheKey, Indexer>();
 const configCache = new Map<IndexerCacheKey, ParsedCodebaseIndexConfig>();
 const defaultProjectRoots = new Map<HostMode, string>();
+
+function getIndexBusyResult(error: unknown): IndexBusyResult | null {
+  if (!isIndexLockContentionError(error)) return null;
+
+  const owner = error.owner;
+  const ownerText = owner
+    ? `PID ${owner.pid}, opération ${owner.operation}, depuis ${owner.startedAt}`
+    : "propriétaire non lisible";
+  if (error.reason === "legacy-lock") {
+    return {
+      kind: "busy",
+      text: `INDEX_BUSY : ancien format de verrou détecté (${ownerText}). Vérifiez le PID et retirez ce verrou manuellement uniquement s'il est obsolète.`,
+    };
+  }
+  if (error.reason === "unknown-owner") {
+    return {
+      kind: "busy",
+      text: `INDEX_BUSY : propriétaire du verrou illisible ou distant (${ownerText}). Reprise automatique refusée ; une vérification manuelle est nécessaire.`,
+    };
+  }
+  return { kind: "busy", text: `INDEX_BUSY : indexation déjà en cours (${ownerText}).` };
+}
 
 function getProjectRoot(projectRoot: string | undefined, host: HostMode): string {
   if (projectRoot) {
@@ -209,7 +232,7 @@ export async function runIndexCodebase(
 ): Promise<
   | { kind: "estimate"; estimate: CostEstimate }
   | { kind: "stats"; stats: IndexStats }
-  | { kind: "busy"; text: string }
+  | IndexBusyResult
 > {
   const root = getProjectRoot(projectRoot, host);
   const key = getIndexerCacheKey(root, host);
@@ -253,24 +276,9 @@ export async function runIndexCodebase(
 
     return { kind: "stats", stats };
   } catch (error) {
-    if (!isIndexLockContentionError(error)) throw error;
-    const owner = error.owner;
-    const ownerText = owner
-      ? `PID ${owner.pid}, opération ${owner.operation}, depuis ${owner.startedAt}`
-      : "propriétaire non lisible";
-    if (error.reason === "legacy-lock") {
-      return {
-        kind: "busy",
-        text: `INDEX_BUSY : ancien format de verrou détecté (${ownerText}). Vérifiez le PID et retirez ce verrou manuellement uniquement s'il est obsolète.`,
-      };
-    }
-    if (error.reason === "unknown-owner") {
-      return {
-        kind: "busy",
-        text: `INDEX_BUSY : propriétaire du verrou illisible ou distant (${ownerText}). Reprise automatique refusée ; une vérification manuelle est nécessaire.`,
-      };
-    }
-    return { kind: "busy", text: `INDEX_BUSY : indexation déjà en cours (${ownerText}).` };
+    const busyResult = getIndexBusyResult(error);
+    if (!busyResult) throw error;
+    return busyResult;
   }
 }
 
@@ -282,6 +290,19 @@ export async function getIndexStatus(projectRoot: string | undefined, host: Host
 export async function getIndexHealthCheck(projectRoot: string | undefined, host: HostMode): Promise<HealthCheckResult> {
   const indexer = getIndexerForProject(projectRoot, host);
   return indexer.healthCheck();
+}
+
+export async function runIndexHealthCheck(
+  projectRoot: string | undefined,
+  host: HostMode,
+): Promise<{ kind: "health"; health: HealthCheckResult } | IndexBusyResult> {
+  try {
+    return { kind: "health", health: await getIndexHealthCheck(projectRoot, host) };
+  } catch (error) {
+    const busyResult = getIndexBusyResult(error);
+    if (!busyResult) throw error;
+    return busyResult;
+  }
 }
 
 export async function getPrImpact(

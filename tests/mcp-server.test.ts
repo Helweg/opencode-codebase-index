@@ -521,6 +521,32 @@ describe("MCP server tools and prompts", () => {
     expect(content[0].text).toContain("healthy");
   });
 
+  it("should return an explicit INDEX_BUSY result from index_health_check", async () => {
+    const owner = {
+      pid: 4343,
+      hostname: "local-test",
+      startedAt: "2026-07-17T10:00:00.000Z",
+      operation: "health-check" as const,
+      token: "health-owner-token",
+    };
+    const indexer = (await import("../src/tools/operations.js")).getIndexerForProject("/tmp/test-project", "opencode");
+    vi.mocked(indexer.healthCheck).mockRejectedValueOnce(
+      new IndexLockContentionError("/tmp/indexing.lock", owner, "active"),
+    );
+
+    const result = await client.callTool({
+      name: "index_health_check",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const content = result.content as Array<{ type: string; text?: string }>;
+    expect(content[0].text).toContain("INDEX_BUSY");
+    expect(content[0].text).toContain("PID 4343");
+    expect(content[0].text).toContain("opération health-check");
+    expect(content[0].text).toContain(owner.startedAt);
+  });
+
   it("should surface corruption reset guidance in index_health_check output", async () => {
     mockHealthCheckResult = {
       removed: 0,
