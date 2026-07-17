@@ -16,6 +16,7 @@ function createIndexerMock(overrides: {
 
 describe("startAutoIndex", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -28,7 +29,8 @@ describe("startAutoIndex", () => {
     expect(indexer.index).toHaveBeenCalledOnce();
   });
 
-  it("coalesces INDEX_BUSY without logging an error", async () => {
+  it.each(["active", "reclaiming"] as const)("coalesces and retries %s INDEX_BUSY", async (reason) => {
+    vi.useFakeTimers();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const owner = {
       pid: process.pid,
@@ -38,13 +40,21 @@ describe("startAutoIndex", () => {
       token: "busy-owner",
     };
     const indexer = createIndexerMock({
-      index: vi.fn().mockRejectedValue(new IndexLockContentionError("/tmp/indexing.lock", owner, "active")),
+      index: vi.fn()
+        .mockRejectedValueOnce(new IndexLockContentionError("/tmp/indexing.lock", owner, reason))
+        .mockResolvedValueOnce(undefined),
     });
 
     startAutoIndex(indexer, "/tmp/project");
-    await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledOnce());
+    startAutoIndex(indexer, "/tmp/project");
+    expect(indexer.index).toHaveBeenCalledOnce();
+    await Promise.resolve();
     await Promise.resolve();
 
+    expect(indexer.index).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(indexer.index).toHaveBeenCalledTimes(2);
     expect(consoleError).not.toHaveBeenCalled();
   });
 

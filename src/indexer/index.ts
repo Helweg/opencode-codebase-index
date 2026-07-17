@@ -2802,9 +2802,24 @@ export class Indexer {
   }
 
   async initialize(): Promise<void> {
-    await this.withIndexMutationLease("initialize", async (recoveredOwners) => {
-      await this.ensureInitializedUnlocked(recoveredOwners);
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+      return;
+    }
+    if (this.store && this.provider && this.invertedIndex && this.configuredProviderInfo && this.database) {
+      return;
+    }
+    await this.initializeOnce([], { skipAutoGc: true });
+  }
+
+  private async initializeOnce(
+    recoveredOwners: readonly IndexLockOwner[],
+    options: { skipAutoGc?: boolean },
+  ): Promise<void> {
+    this.initializationPromise ??= this.initializeUnlocked(recoveredOwners, options).finally(() => {
+      this.initializationPromise = null;
     });
+    await this.initializationPromise;
   }
 
   private async initializeUnlocked(
@@ -3308,11 +3323,11 @@ export class Indexer {
     configuredProviderInfo: ConfiguredProviderInfo;
     database: Database;
   }> {
-    if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
-      this.initializationPromise ??= this.initialize().finally(() => {
-        this.initializationPromise = null;
-      });
+    if (this.initializationPromise) {
       await this.initializationPromise;
+    }
+    if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
+      await this.initialize();
     }
     return {
       store: this.store!,
@@ -3330,13 +3345,20 @@ export class Indexer {
     configuredProviderInfo: ConfiguredProviderInfo;
     database: Database;
   }> {
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+    }
+
     if (recoveredOwners.length > 0) {
       this.resetLoadedIndexState();
-      await this.initializeUnlocked(recoveredOwners);
+      await this.initializeOnce(recoveredOwners, { skipAutoGc: true });
     } else if (!this.store || !this.provider || !this.invertedIndex || !this.configuredProviderInfo || !this.database) {
-      await this.initializeUnlocked();
+      await this.initializeOnce([], { skipAutoGc: true });
     } else {
       this.refreshLoadedIndexState();
+    }
+    if (this.config.indexing.autoGc) {
+      await this.maybeRunAutoGc();
     }
     return this.requireLoadedIndexState();
   }

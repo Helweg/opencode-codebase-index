@@ -12,6 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 import { parseConfig } from "../src/config/schema.js";
 import { Indexer } from "../src/indexer/index.js";
+import { acquireIndexLock, releaseIndexLock } from "../src/indexer/index-lock.js";
 import { Database, InvertedIndex, VectorStore } from "../src/native/index.js";
 
 interface WorkerMessage {
@@ -309,7 +310,7 @@ describe("multiprocess indexing", () => {
     await embeddingServer.waitForIdle();
   }
 
-  function createLocalIndexer(): Indexer {
+  function createLocalIndexer(autoGc = false): Indexer {
     const config = parseConfig({
       embeddingProvider: "custom",
       scope: "project",
@@ -327,7 +328,7 @@ describe("multiprocess indexing", () => {
       indexing: {
         autoIndex: false,
         watchFiles: false,
-        autoGc: false,
+        autoGc,
         retries: 0,
         retryDelayMs: 1,
         gitBlame: { enabled: false },
@@ -417,6 +418,100 @@ describe("multiprocess indexing", () => {
     await embeddingServer.waitForIdle();
     expect(embeddingServer.requestCount).toBe(1);
     expect(embeddingServer.maxActive).toBe(1);
+    assertIndexIntegrity();
+  });
+
+  it("keeps a cold status read outside a live writer lease", async () => {
+    await seedIndex();
+    embeddingServer.reset();
+    const indexPath = path.join(projectRoot, ".opencode", "index");
+    const lease = acquireIndexLock(indexPath, "index");
+    const ownerBefore = readOwner();
+
+    try {
+      const status = await createLocalIndexer().getStatus();
+
+      expect(status.indexed).toBe(true);
+      expect(status.vectorCount).toBeGreaterThan(0);
+      expect(readOwner()).toBe(ownerBefore);
+      expect(embeddingServer.requestCount).toBe(0);
+      expect(fs.readdirSync(indexPath).filter((name) => name.startsWith("indexing.lock.recovery."))).toEqual([]);
+    } finally {
+      releaseIndexLock(lease);
+    }
+  });
+
+  it("coordinates a cold reader and writer on the same Indexer", async () => {
+    const indexer = createLocalIndexer();
+    const [status, stats] = await Promise.all([
+      indexer.getStatus(),
+      indexer.index(),
+    ]);
+
+    expect(status.provider).toBe("custom");
+    expect(stats.indexedChunks).toBeGreaterThan(0);
+    expect(embeddingServer.requestCount).toBe(1);
+    expect(embeddingServer.maxActive).toBe(1);
+    assertIndexIntegrity();
+  });
+
+  it("waits for writer-first initialization on the same Indexer", async () => {
+    const indexer = createLocalIndexer();
+    const indexing = indexer.index();
+    const status = indexer.getStatus();
+    const [stats, statusResult] = await Promise.all([indexing, status]);
+
+    expect(stats.indexedChunks).toBeGreaterThan(0);
+    expect(statusResult.compatibility).not.toBeNull();
+    expect(embeddingServer.requestCount).toBe(1);
+    assertIndexIntegrity();
+  });
+
+  it("defers auto-GC from a cold reader to the next writer", async () => {
+    const indexer = createLocalIndexer(true);
+    const indexPath = path.join(projectRoot, ".opencode", "index");
+
+    await indexer.getStatus();
+    const databaseBeforeWriter = new Database(path.join(indexPath, "codebase.db"));
+    expect(databaseBeforeWriter.getMetadata("lastGcTimestamp")).toBeNull();
+    databaseBeforeWriter.close();
+    expect(embeddingServer.requestCount).toBe(0);
+
+    await indexer.index();
+    const databaseAfterWriter = new Database(path.join(indexPath, "codebase.db"));
+    expect(databaseAfterWriter.getMetadata("lastGcTimestamp")).not.toBeNull();
+    databaseAfterWriter.close();
+    assertIndexIntegrity();
+  });
+
+  it("leaves crashed-writer recovery to the next writer", async () => {
+    await seedIndex();
+    embeddingServer.reset();
+    fs.writeFileSync(sourcePath, "export function recovered() { return 'after-crash'; }\n");
+    embeddingServer.block();
+    const crashed = await createWorker();
+    crashed.send({ type: "run", operation: "index" });
+    await embeddingServer.waitForRequestCount(1);
+    await crashed.kill();
+    embeddingServer.release();
+    await embeddingServer.waitForIdle();
+    embeddingServer.reset();
+
+    const indexPath = path.join(projectRoot, ".opencode", "index");
+    const ownerBeforeRead = readOwner();
+    await createLocalIndexer().getStatus();
+
+    expect(readOwner()).toBe(ownerBeforeRead);
+    expect(embeddingServer.requestCount).toBe(0);
+    expect(fs.readdirSync(indexPath).filter((name) => name.startsWith("indexing.lock.recovery."))).toEqual([]);
+
+    await createLocalIndexer().index();
+    await embeddingServer.waitForIdle();
+    embeddingServer.reset();
+
+    const recoveredStatus = await createLocalIndexer().getStatus();
+    expect(recoveredStatus.indexed).toBe(true);
+    expect(embeddingServer.requestCount).toBe(0);
     assertIndexIntegrity();
   });
 

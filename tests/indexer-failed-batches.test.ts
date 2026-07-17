@@ -1207,8 +1207,6 @@ describe("indexer failed batch recovery", () => {
     const failedBatchesPath = path.join(tempDir, ".opencode", "index", "failed-batches.json");
     fs.mkdirSync(path.dirname(failedBatchesPath), { recursive: true });
     fs.writeFileSync(failedBatchesPath, "{", "utf-8");
-    const canonicalFailedBatchesPath = fs.realpathSync.native(failedBatchesPath);
-
     const indexer = createIndexer();
     await indexer.initialize();
     await indexer.getStatus();
@@ -1216,7 +1214,7 @@ describe("indexer failed batch recovery", () => {
     const logs = indexer.getLogger().getLogs().filter((entry) => entry.level === "warn");
     expect(logs.some((entry) =>
       entry.message === "Failed to load failed batch state, skipping persisted retries"
-      && entry.data?.failedBatchesPath === canonicalFailedBatchesPath
+      && entry.data?.failedBatchesPath === failedBatchesPath
     )).toBe(true);
   });
 
