@@ -1,8 +1,7 @@
 import { existsSync, realpathSync, statSync } from "fs";
 import * as path from "path";
-import { loadProjectConfigLayer, materializeLocalProjectConfig } from "../config/merger.js";
 import { parseConfig, type ParsedCodebaseIndexConfig } from "../config/schema.js";
-import { getHostProjectIndexRelativePath, getHostProjectConfigRelativePath, resolveWorktreeFallbackProjectIndexPath } from "../config/paths.js";
+import { getHostProjectConfigRelativePath } from "../config/paths.js";
 import type { HostMode } from "../config/host.js";
 import { Indexer } from "../indexer/index.js";
 import { findKnowledgeBasePathIndex, hasMatchingKnowledgeBasePath, resolveKnowledgeBasePath } from "./knowledge-base-paths.js";
@@ -84,16 +83,6 @@ export function refreshIndexerForDirectory(
   const indexer = new Indexer(projectRoot, config, host);
   indexerCache.set(key, indexer);
   configCache.set(key, config);
-}
-
-export function shouldForceLocalizeProjectIndex(projectRoot: string | undefined, host: HostMode = "opencode"): boolean {
-  const root = getProjectRoot(projectRoot, host);
-  const localIndexPath = path.join(root, getHostProjectIndexRelativePath(host));
-  if (existsSync(localIndexPath)) {
-    return false;
-  }
-  const inheritedIndexPath = resolveWorktreeFallbackProjectIndexPath(root, host);
-  return inheritedIndexPath !== null;
 }
 
 export async function searchCodebase(
@@ -216,11 +205,6 @@ export async function runIndexCodebase(
   }
 
   if (args.force) {
-    if (shouldForceLocalizeProjectIndex(root, host)) {
-      materializeLocalProjectConfig(root, loadProjectConfigLayer(root, host), host);
-      refreshIndexerForDirectory(root, host, cachedConfig);
-      indexer = getIndexerForProject(root, host);
-    }
     await indexer.clearIndex();
     refreshIndexerForDirectory(root, host, cachedConfig);
     indexer = getIndexerForProject(root, host);

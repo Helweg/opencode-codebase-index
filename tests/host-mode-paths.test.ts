@@ -130,11 +130,11 @@ describe("host-aware path resolution", () => {
     expect(loaded.knowledgeBases).toEqual(["legacy-global-docs"]);
   });
 
-  it("falls back to legacy worktree index when codex index is absent", () => {
+  it("uses a codex-local worktree index when only the main repo has a legacy index", () => {
     fs.mkdirSync(path.join(mainRepoDir, ".opencode", "index"), { recursive: true });
 
     expect(resolveProjectIndexPath(worktreeDir, "project", "codex")).toBe(
-      path.join(mainRepoDir, ".opencode", "index"),
+      path.join(worktreeDir, ".codebase-index", "index"),
     );
   });
 
@@ -165,12 +165,16 @@ describe("host-aware path resolution", () => {
     );
   });
 
-  it("prefers codex-index inheritance before legacy when both exist", () => {
-    fs.mkdirSync(path.join(mainRepoDir, ".codebase-index", "index"), { recursive: true });
-    fs.mkdirSync(path.join(mainRepoDir, ".opencode", "index"), { recursive: true });
+  it.each([
+    ["opencode", ".opencode"],
+    ["codex", ".codebase-index"],
+    ["pi", ".codebase-index"],
+    ["claude", ".claude"],
+  ] as const)("keeps the %s project index local to the worktree", (host, indexDir) => {
+    fs.mkdirSync(path.join(mainRepoDir, indexDir, "index"), { recursive: true });
 
-    expect(resolveProjectIndexPath(worktreeDir, "project", "codex")).toBe(
-      path.join(mainRepoDir, ".codebase-index", "index"),
+    expect(resolveProjectIndexPath(worktreeDir, "project", host)).toBe(
+      path.join(worktreeDir, indexDir, "index"),
     );
   });
 
@@ -178,7 +182,7 @@ describe("host-aware path resolution", () => {
     fs.mkdirSync(path.join(homeDir, ".opencode", "global-index"), { recursive: true });
 
     expect(resolveGlobalIndexPath("codex")).toBe(path.join(homeDir, ".opencode", "global-index"));
-    expect(resolveProjectIndexPath(mainRepoDir, "global", "codex")).toBe(
+    expect(resolveProjectIndexPath(worktreeDir, "global", "codex")).toBe(
       path.join(homeDir, ".opencode", "global-index"),
     );
   });

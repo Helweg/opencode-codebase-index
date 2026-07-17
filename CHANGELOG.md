@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Git worktree index isolation**: Keep project indexes local to each worktree while continuing to inherit project configuration from the main checkout, preventing cross-worktree index mutations and stale absolute paths.
+
 ## [0.14.0] - 2026-07-08
 
 ### Added

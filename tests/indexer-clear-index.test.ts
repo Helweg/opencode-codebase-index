@@ -47,6 +47,8 @@ describe("indexer clearIndex force rebuild", () => {
 
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clear-index-indexer-"));
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "clear-index-home-"));
+    vi.stubEnv("HOME", tempHome);
+    vi.stubEnv("USERPROFILE", tempHome);
     fs.mkdirSync(path.join(tempDir, "src"), { recursive: true });
     sourceFile = path.join(tempDir, "src", "index.ts");
     fs.writeFileSync(
@@ -165,7 +167,7 @@ describe("indexer clearIndex force rebuild", () => {
     await expect(restartedIndexer.index()).rejects.toThrow("Run index_codebase with force=true to rebuild the index");
   });
 
-  it("rejects force clearing an inherited project index from a fresh worktree", async () => {
+  it("clears only the worktree-local index when project config is inherited", async () => {
     const mainRepoDir = path.join(tempDir, "main-repo");
     const worktreeDir = path.join(tempDir, "worktree-feature");
     const worktreeGitDir = path.join(mainRepoDir, ".git", "worktrees", "feature");
@@ -205,10 +207,16 @@ describe("indexer clearIndex force rebuild", () => {
     embeddingDimensions = 8;
     await createIndexer(mainRepoDir, 8).index();
 
-    const inheritedIndexer = trackIndexer(new Indexer(worktreeDir, parseConfig(loadMergedConfig(worktreeDir))));
-    await expect(inheritedIndexer.clearIndex()).rejects.toThrow(
-      "Project-scoped force rebuild is unsafe while using an inherited worktree index"
-    );
+    const mainDb = trackDb(new Database(path.join(mainRepoDir, ".opencode", "index", "codebase.db")));
+    const mainStatsBefore = mainDb.getStats();
+
+    const worktreeIndexer = trackIndexer(new Indexer(worktreeDir, parseConfig(loadMergedConfig(worktreeDir))));
+    await expect(worktreeIndexer.clearIndex()).resolves.toBeUndefined();
+
+    expect(mainDb.getStats()).toEqual(mainStatsBefore);
+    const localDb = trackDb(new Database(path.join(worktreeDir, ".opencode", "index", "codebase.db")));
+    expect(localDb.getStats().chunkCount).toBe(0);
+    expect(localDb.getStats().embeddingCount).toBe(0);
   });
 
   it("allows codex force clearing a local legacy OpenCode project index", async () => {
