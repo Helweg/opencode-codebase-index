@@ -326,6 +326,14 @@ export class VectorStore {
     this.inner.load();
   }
 
+  loadStrict(): void {
+    this.inner.loadStrict();
+  }
+
+  hasFingerprint(): boolean {
+    return this.inner.hasFingerprint();
+  }
+
   count(): number {
     return this.inner.count();
   }

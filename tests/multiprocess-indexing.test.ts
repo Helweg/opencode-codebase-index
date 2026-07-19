@@ -335,7 +335,14 @@ describe("multiprocess indexing", () => {
     await embeddingServer.waitForIdle();
   }
 
-  function createLocalIndexer(autoGc = false): Indexer {
+  function createLocalIndexer(
+    autoGc = false,
+    search?: {
+      fusionStrategy?: "weighted" | "rrf";
+      hybridWeight?: number;
+      minScore?: number;
+    },
+  ): Indexer {
     const config = parseConfig({
       embeddingProvider: "custom",
       scope: "project",
@@ -358,6 +365,7 @@ describe("multiprocess indexing", () => {
         retryDelayMs: 1,
         gitBlame: { enabled: false },
       },
+      search,
       debug: { enabled: false },
     });
     const indexer = new Indexer(projectRoot, config);
@@ -523,6 +531,26 @@ describe("multiprocess indexing", () => {
     }
   });
 
+  it("falls back to semantic-only ranking when weighted BM25 is unavailable", async () => {
+    await seedIndex();
+    embeddingServer.reset();
+    const indexPath = path.join(projectRoot, ".opencode", "index");
+    const invertedIndexPath = path.join(indexPath, "inverted-index.json");
+    const unreadableBm25 = "{partial";
+    fs.writeFileSync(invertedIndexPath, unreadableBm25);
+    const indexer = createLocalIndexer(false, {
+      fusionStrategy: "weighted",
+      hybridWeight: 1,
+      minScore: 0.1,
+    });
+
+    const results = await indexer.search("conceptual behavior flow");
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(fs.readFileSync(invertedIndexPath, "utf-8")).toBe(unreadableBm25);
+    expect(embeddingServer.inputs).toEqual(["conceptual behavior flow"]);
+  });
+
   it("reports an unreadable vector store without replacing it", async () => {
     await seedIndex();
     embeddingServer.reset();
@@ -548,6 +576,95 @@ describe("multiprocess indexing", () => {
     const recoveredStatus = await indexer.getStatus();
     expect(recoveredStatus.indexed).toBe(true);
     expect(recoveredStatus.warning).toBeUndefined();
+    expect(embeddingServer.requestCount).toBe(0);
+  });
+
+  it("rejects a valid vector metadata file from a different publication", async () => {
+    await seedIndex();
+    embeddingServer.reset();
+    const indexPath = path.join(projectRoot, ".opencode", "index");
+    const vectorPath = path.join(indexPath, "vectors");
+    const metadataPath = `${vectorPath}.meta.json`;
+    const originalMetadata = fs.readFileSync(metadataPath);
+    const published = new VectorStore(vectorPath, 8);
+    published.loadStrict();
+    const foreignPath = path.join(tempDir, "foreign-vectors");
+    const foreign = new VectorStore(foreignPath, 8);
+    published.getAllMetadata().forEach(({ metadata }, index) => {
+      foreign.add(
+        `foreign-${index}`,
+        Array.from({ length: 8 }, (_, dimension) => index + dimension / 10),
+        { ...metadata, hash: `foreign-hash-${index}` },
+      );
+    });
+    foreign.save();
+    fs.copyFileSync(`${foreignPath}.meta.json`, metadataPath);
+    const reader = createLocalIndexer();
+
+    const mismatchedStatus = await reader.getStatus();
+    expect(mismatchedStatus.indexed).toBe(false);
+    expect(mismatchedStatus.warning).toMatch(/vector.*fingerprint.*index_codebase/i);
+    await expect(reader.search("alpha")).rejects.toThrow(/vector.*fingerprint.*index_codebase/i);
+    expect(embeddingServer.requestCount).toBe(0);
+
+    fs.writeFileSync(metadataPath, originalMetadata);
+    const recoveredStatus = await reader.getStatus();
+    expect(recoveredStatus.indexed).toBe(true);
+    expect(recoveredStatus.warning).toBeUndefined();
+    expect(embeddingServer.requestCount).toBe(0);
+  });
+
+  it("requires a writer to fingerprint a structurally valid legacy vector pair", async () => {
+    await seedIndex();
+    embeddingServer.reset();
+    const indexPath = path.join(projectRoot, ".opencode", "index");
+    const metadataPath = path.join(indexPath, "vectors.meta.json");
+    const legacyMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as Record<string, unknown>;
+    delete legacyMetadata.vector_fingerprint;
+    fs.writeFileSync(metadataPath, JSON.stringify(legacyMetadata));
+    const reader = createLocalIndexer();
+
+    const legacyStatus = await reader.getStatus();
+
+    expect(legacyStatus.indexed).toBe(false);
+    expect(legacyStatus.warning).toMatch(/vector.*fingerprint.*index_codebase/i);
+    expect(embeddingServer.requestCount).toBe(0);
+    expect((JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as Record<string, unknown>).vector_fingerprint).toBeUndefined();
+
+    const writer = await createWorker();
+    writer.send({ type: "run", operation: "index" });
+    expect((await writer.waitFor((message) => message.type === "result")).ok).toBe(true);
+    await writer.waitForExit();
+    expect(embeddingServer.requestCount).toBe(0);
+    expect((JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as Record<string, unknown>).vector_fingerprint).toBeTypeOf("string");
+
+    const recoveredStatus = await reader.getStatus();
+    expect(recoveredStatus.indexed).toBe(true);
+    expect(recoveredStatus.warning).toBeUndefined();
+    expect(embeddingServer.requestCount).toBe(0);
+  });
+
+  it("fingerprints an empty legacy vector pair after a successful writer publication", async () => {
+    await seedIndex();
+    embeddingServer.reset();
+    fs.rmSync(sourcePath);
+    await createLocalIndexer().index();
+    expect(embeddingServer.requestCount).toBe(0);
+
+    const indexPath = path.join(projectRoot, ".opencode", "index");
+    const metadataPath = path.join(indexPath, "vectors.meta.json");
+    const legacyMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as Record<string, unknown>;
+    delete legacyMetadata.vector_fingerprint;
+    fs.writeFileSync(metadataPath, JSON.stringify(legacyMetadata));
+    const reader = createLocalIndexer();
+    expect((await reader.getStatus()).warning).toMatch(/vector.*fingerprint.*index_codebase/i);
+
+    const writer = await createWorker();
+    writer.send({ type: "run", operation: "index" });
+    expect((await writer.waitFor((message) => message.type === "result")).ok).toBe(true);
+    await writer.waitForExit();
+
+    expect((JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as Record<string, unknown>).vector_fingerprint).toBeTypeOf("string");
     expect(embeddingServer.requestCount).toBe(0);
   });
 
@@ -824,6 +941,83 @@ describe("multiprocess indexing", () => {
     expect(statusResult.compatibility).not.toBeNull();
     expect(embeddingServer.requestCount).toBe(1);
     assertIndexIntegrity();
+  });
+
+  it("refreshes a stale writer instance after another writer publishes", async () => {
+    const indexer = createLocalIndexer();
+    await indexer.index();
+    await embeddingServer.waitForIdle();
+    embeddingServer.reset();
+
+    fs.writeFileSync(
+      sourcePath,
+      "export function alpha() { return 'alpha'; }\nexport function publicationmarker() { return 'publicationmarker'; }\n",
+    );
+    const externalWriter = await createWorker();
+    externalWriter.send({ type: "run", operation: "index" });
+    expect((await externalWriter.waitFor((message) => message.type === "result")).ok).toBe(true);
+    await externalWriter.waitForExit();
+    await embeddingServer.waitForIdle();
+    embeddingServer.reset();
+
+    const results = await indexer.search("publicationmarker");
+    expect(results.some((result) => result.name === "publicationmarker")).toBe(true);
+    const removedResults = await indexer.search("beta");
+    expect(removedResults.every((result) => result.name !== "beta")).toBe(true);
+    expect(embeddingServer.inputs).toEqual(["publicationmarker", "beta"]);
+
+    embeddingServer.reset();
+    fs.appendFileSync(sourcePath, "export function writeragain() { return 'writeragain'; }\n");
+    await expect(indexer.index()).resolves.toMatchObject({ indexedChunks: expect.any(Number) });
+    expect(embeddingServer.inputs.some((input) => input.includes("writeragain"))).toBe(true);
+    assertIndexIntegrity();
+  });
+
+  it("clears a lost local lease before refreshing a later external publication", async () => {
+    const indexer = createLocalIndexer();
+    embeddingServer.block();
+    const indexing = indexer.index();
+    await embeddingServer.waitForRequestCount(1);
+    fs.rmSync(path.join(projectRoot, ".opencode", "index", "indexing.lock"), {
+      recursive: true,
+      force: true,
+    });
+    embeddingServer.release();
+    await expect(indexing).rejects.toThrow(/lost ownership/i);
+    expect(Reflect.get(indexer, "writerArtifactFingerprint")).toBeNull();
+    await embeddingServer.waitForIdle();
+    embeddingServer.reset();
+
+    fs.writeFileSync(sourcePath, "export function afterlostlease() { return 'afterlostlease'; }\n");
+    const externalWriter = await createWorker();
+    externalWriter.send({ type: "run", operation: "index" });
+    expect((await externalWriter.waitFor((message) => message.type === "result")).ok).toBe(true);
+    await externalWriter.waitForExit();
+    await embeddingServer.waitForIdle();
+    embeddingServer.reset();
+
+    const results = await indexer.search("afterlostlease");
+    expect(results.some((result) => result.name === "afterlostlease")).toBe(true);
+    expect(embeddingServer.inputs).toEqual(["afterlostlease"]);
+  });
+
+  it("clears transient reader issues after a successful writer reload", async () => {
+    const indexer = createLocalIndexer();
+    await indexer.index();
+    await embeddingServer.waitForIdle();
+    embeddingServer.reset();
+    const invertedIndexPath = path.join(projectRoot, ".opencode", "index", "inverted-index.json");
+    const readableBm25 = fs.readFileSync(invertedIndexPath);
+    fs.writeFileSync(invertedIndexPath, "{partial");
+
+    const degradedStatus = await indexer.getStatus();
+    expect(degradedStatus.warning).toMatch(/keyword.*semantic search/i);
+
+    fs.writeFileSync(invertedIndexPath, readableBm25);
+    await indexer.index();
+    const healthyStatus = await indexer.getStatus();
+    expect(healthyStatus.warning).toBeUndefined();
+    expect(embeddingServer.requestCount).toBe(0);
   });
 
   it("defers auto-GC from a cold reader to the next writer", async () => {

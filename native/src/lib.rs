@@ -119,7 +119,7 @@ impl VectorStore {
     }
 
     #[napi]
-    pub fn save(&self) -> Result<()> {
+    pub fn save(&mut self) -> Result<()> {
         self.inner
             .save()
             .map_err(|e| Error::from_reason(e.to_string()))
@@ -130,6 +130,18 @@ impl VectorStore {
         self.inner
             .load()
             .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn load_strict(&mut self) -> Result<()> {
+        self.inner
+            .load_strict()
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub fn has_fingerprint(&self) -> bool {
+        self.inner.has_fingerprint()
     }
 
     #[napi]

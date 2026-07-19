@@ -365,7 +365,7 @@ describe("MCP server tools and prompts", () => {
     const content = result.content as Array<{ type: string; text?: string }>;
     expect(content[0].text).toContain("INDEX_BUSY");
     expect(content[0].text).toContain("PID 4242");
-    expect(content[0].text).toContain("opération index");
+    expect(content[0].text).toContain("operation index");
     expect(content[0].text).toContain(owner.startedAt);
   });
 
@@ -383,8 +383,32 @@ describe("MCP server tools and prompts", () => {
     expect(result.isError).toBe(true);
     const content = result.content as Array<{ type: string; text?: string }>;
     expect(content[0].text).toContain("INDEX_BUSY");
-    expect(content[0].text).toContain("Reprise automatique refusée");
-    expect(content[0].text).toContain("vérification manuelle");
+    expect(content[0].text).toContain("Automatic recovery was refused");
+    expect(content[0].text).toContain("manual verification");
+  });
+
+  it("should explain legacy locks in English", async () => {
+    const owner = {
+      pid: 4243,
+      hostname: "local-test",
+      startedAt: "2026-07-16T12:00:00.000Z",
+      operation: "index" as const,
+      token: "legacy-owner-token",
+    };
+    const indexer = (await import("../src/tools/operations.js")).getIndexerForProject("/tmp/test-project", "opencode");
+    vi.mocked(indexer.index).mockRejectedValueOnce(
+      new IndexLockContentionError("/tmp/indexing.lock", owner, "legacy-lock"),
+    );
+
+    const result = await client.callTool({
+      name: "index_codebase",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    const content = result.content as Array<{ type: string; text?: string }>;
+    expect(content[0].text).toContain("legacy lock format detected");
+    expect(content[0].text).toContain("remove this lock manually only if it is stale");
   });
 
   it("should surface failed batch diagnostics in index_status output", async () => {
@@ -543,7 +567,7 @@ describe("MCP server tools and prompts", () => {
     const content = result.content as Array<{ type: string; text?: string }>;
     expect(content[0].text).toContain("INDEX_BUSY");
     expect(content[0].text).toContain("PID 4343");
-    expect(content[0].text).toContain("opération health-check");
+    expect(content[0].text).toContain("operation health-check");
     expect(content[0].text).toContain(owner.startedAt);
   });
 

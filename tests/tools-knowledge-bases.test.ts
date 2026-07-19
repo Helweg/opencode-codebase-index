@@ -131,7 +131,7 @@ describe("knowledge base tool config refresh", () => {
 
     expect(result).toContain("INDEX_BUSY");
     expect(result).toContain("PID 4242");
-    expect(result).toContain("opération health-check");
+    expect(result).toContain("operation health-check");
     expect(result).toContain(owner.startedAt);
   });
 

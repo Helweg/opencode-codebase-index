@@ -142,7 +142,7 @@ describe("Pi adapter conformance", () => {
     operationMocks.getIndexHealthCheck.mockRejectedValue(new Error("raw health-check operation must not be used"));
     operationMocks.runIndexHealthCheck.mockResolvedValue({
       kind: "busy",
-      text: "INDEX_BUSY : indexation déjà en cours (PID 4444, opération health-check, depuis 2026-07-17T10:00:00.000Z).",
+      text: "INDEX_BUSY: another index operation is already in progress (PID 4444, operation health-check, since 2026-07-17T10:00:00.000Z).",
     });
     const tools = await registerPiTools();
 

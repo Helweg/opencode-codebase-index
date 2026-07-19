@@ -34,21 +34,21 @@ function getIndexBusyResult(error: unknown): IndexBusyResult | null {
 
   const owner = error.owner;
   const ownerText = owner
-    ? `PID ${owner.pid}, opération ${owner.operation}, depuis ${owner.startedAt}`
-    : "propriétaire non lisible";
+    ? `PID ${owner.pid}, operation ${owner.operation}, since ${owner.startedAt}`
+    : "unreadable owner";
   if (error.reason === "legacy-lock") {
     return {
       kind: "busy",
-      text: `INDEX_BUSY : ancien format de verrou détecté (${ownerText}). Vérifiez le PID et retirez ce verrou manuellement uniquement s'il est obsolète.`,
+      text: `INDEX_BUSY: legacy lock format detected (${ownerText}). Verify the PID and remove this lock manually only if it is stale.`,
     };
   }
   if (error.reason === "unknown-owner") {
     return {
       kind: "busy",
-      text: `INDEX_BUSY : propriétaire du verrou illisible ou distant (${ownerText}). Reprise automatique refusée ; une vérification manuelle est nécessaire.`,
+      text: `INDEX_BUSY: unreadable or remote lock owner (${ownerText}). Automatic recovery was refused; manual verification is required.`,
     };
   }
-  return { kind: "busy", text: `INDEX_BUSY : indexation déjà en cours (${ownerText}).` };
+  return { kind: "busy", text: `INDEX_BUSY: another index operation is already in progress (${ownerText}).` };
 }
 
 function getProjectRoot(projectRoot: string | undefined, host: HostMode): string {

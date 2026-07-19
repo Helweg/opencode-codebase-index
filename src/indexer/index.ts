@@ -1916,6 +1916,7 @@ export class Indexer {
   private readIssues: IndexReadIssue[] = [];
   private retiredDatabases: Database[] = [];
   private readerArtifactFingerprint: ReaderArtifactFingerprint | null = null;
+  private writerArtifactFingerprint: ReaderArtifactFingerprint | null = null;
   private readerArtifactRetryAfter = new Map<IndexReadIssue["component"], number>();
 
   constructor(projectRoot: string, config: ParsedCodebaseIndexConfig, host: HostMode = "opencode") {
@@ -1966,6 +1967,7 @@ export class Indexer {
     this.initializationMode = "none";
     this.readIssues = [];
     this.readerArtifactFingerprint = null;
+    this.writerArtifactFingerprint = null;
     this.readerArtifactRetryAfter.clear();
     this.fileHashCache.clear();
   }
@@ -1977,6 +1979,8 @@ export class Indexer {
     this.fileHashCache.clear();
     this.loadFileHashCache();
     this.indexCompatibility = this.validateIndexCompatibility(this.configuredProviderInfo);
+    this.readIssues = [];
+    this.readerArtifactRetryAfter.clear();
   }
 
   private async withIndexMutationLease<T>(
@@ -2001,6 +2005,7 @@ export class Indexer {
     if (!callbackFailed) {
       try {
         completeLeaseRecovery(lease);
+        this.writerArtifactFingerprint = this.captureReaderArtifactFingerprint();
       } catch (error) {
         callbackFailed = true;
         callbackError = error;
@@ -2010,11 +2015,16 @@ export class Indexer {
     try {
       if (!releaseIndexLock(lease)) {
         releaseError = new Error(`Lost ownership of index mutation lease ${lease.owner.token}`);
+        this.writerArtifactFingerprint = null;
+        if (this.activeIndexLease?.owner.token === lease.owner.token) {
+          this.activeIndexLease = null;
+        }
       } else if (this.activeIndexLease?.owner.token === lease.owner.token) {
         this.activeIndexLease = null;
       }
     } catch (error) {
       releaseError = error;
+      this.writerArtifactFingerprint = null;
       if (!existsSync(lease.lockPath) && this.activeIndexLease?.owner.token === lease.owner.token) {
         this.activeIndexLease = null;
       }
@@ -2919,12 +2929,12 @@ export class Indexer {
 
   private getVectorReadIssueMessage(): string {
     if (this.config.scope === "global") {
-      return "Shared vector index could not be read. Restore or repair the complete shared vector artifacts; automatic reset is disabled for global scope.";
+      return "Shared vector index could not be read. Restore or repair the complete fingerprinted shared vector artifacts; automatic reset is disabled for global scope.";
     }
     if (!this.isLocalProjectIndexPath()) {
-      return "Vector index could not be read from an inherited project index. Restore or repair it from the checkout that owns the index; do not remove or rebuild it from this worktree.";
+      return "Vector index could not be read from an inherited project index. Restore or fingerprint it from the checkout that owns the index; do not remove or rebuild it from this worktree.";
     }
-    return "Vector index could not be read. Restore a complete published vector pair, or, after the active writer finishes, remove this checkout's local index directory and run index_codebase to rebuild it.";
+    return "Vector index could not be read. Run index_codebase after the active writer finishes to fingerprint a structurally valid legacy pair, or remove this checkout's local index directory and run index_codebase to rebuild it.";
   }
 
   private getKeywordReadIssueMessage(): string {
@@ -3019,7 +3029,7 @@ export class Indexer {
       if (vectorStoreExists && vectorMetadataExists) {
         try {
           const store = new VectorStore(storePath, this.configuredProviderInfo.modelInfo.dimensions);
-          store.load();
+          store.loadStrict();
           this.store = store;
           issues.delete("vectors");
           this.readerArtifactRetryAfter.delete("vectors");
@@ -3085,6 +3095,43 @@ export class Indexer {
     this.readerArtifactFingerprint = currentFingerprint;
   }
 
+  private refreshInactiveWriterArtifacts(): boolean {
+    if (this.initializationMode !== "writer" || this.activeIndexLease) {
+      return true;
+    }
+
+    const previousFingerprint = this.writerArtifactFingerprint;
+    const currentFingerprint = this.captureReaderArtifactFingerprint();
+    const retryDue = this.readIssues.some((issue) =>
+      Date.now() >= (this.readerArtifactRetryAfter.get(issue.component) ?? 0)
+    );
+    const artifactsChanged = !previousFingerprint ||
+      currentFingerprint.vectors !== previousFingerprint.vectors ||
+      currentFingerprint.keyword !== previousFingerprint.keyword ||
+      currentFingerprint.database !== previousFingerprint.database ||
+      currentFingerprint.databaseIdentity !== previousFingerprint.databaseIdentity;
+    if (!artifactsChanged && !retryDue) {
+      return true;
+    }
+    if (
+      !previousFingerprint ||
+      currentFingerprint.databaseIdentity !== previousFingerprint.databaseIdentity
+    ) {
+      return false;
+    }
+
+    this.initializationMode = "reader";
+    this.readerArtifactFingerprint = previousFingerprint;
+    try {
+      this.refreshReaderArtifacts();
+      this.writerArtifactFingerprint = this.readerArtifactFingerprint ?? currentFingerprint;
+    } finally {
+      this.readerArtifactFingerprint = null;
+      this.initializationMode = "writer";
+    }
+    return true;
+  }
+
   private async initializeUnlocked(
     mode: Exclude<InitializationMode, "none">,
     recoveredOwners: readonly IndexLockOwner[] = [],
@@ -3144,7 +3191,7 @@ export class Indexer {
     if (mode === "writer") {
       await fsPromises.mkdir(this.indexPath, { recursive: true });
 
-      // La récupération interrompue reste entièrement sous le lease writer.
+      // Interrupted recovery remains entirely under the writer lease.
       if (recoveredOwners.length > 0 && this.config.scope === "project" && !this.isLocalProjectIndexPath()) {
         throw new Error(
           "Interrupted indexing recovery is unsafe while using an inherited worktree index. " +
@@ -3198,7 +3245,7 @@ export class Indexer {
         this.recordReadIssue("vectors", vectorReadFailureMessage);
       } else if (vectorStoreExists) {
         try {
-          this.store.load();
+          this.store.loadStrict();
         } catch (error) {
           this.recordReadIssue("vectors", vectorReadFailureMessage, error);
           this.store = new VectorStore(storePath, dimensions);
@@ -3461,6 +3508,7 @@ export class Indexer {
     this.initializationMode = "none";
     this.readIssues = [];
     this.readerArtifactFingerprint = null;
+    this.writerArtifactFingerprint = null;
     this.readerArtifactRetryAfter.clear();
     this.fileHashCache.clear();
 
@@ -3662,6 +3710,18 @@ export class Indexer {
         await this.initialize();
         initializedReader = true;
         continue;
+      }
+      if (
+        this.initializationMode === "writer" &&
+        !this.activeIndexLease &&
+        !initializedReader
+      ) {
+        if (!this.refreshInactiveWriterArtifacts()) {
+          this.resetLoadedIndexState(true);
+          await this.initialize();
+          initializedReader = true;
+          continue;
+        }
       }
       if (
         this.initializationMode === "reader" &&
@@ -4195,7 +4255,11 @@ export class Indexer {
       database.addChunksToBranchBatch(branchCatalogKey, Array.from(currentChunkIds));
       database.clearBranchSymbols(branchCatalogKey);
       database.addSymbolsToBranchBatch(branchCatalogKey, Array.from(allSymbolIds));
-      if (backfilledBlameMetadata) {
+      const vectorPath = path.join(this.indexPath, "vectors");
+      const shouldFingerprintLegacyPair = !store.hasFingerprint() &&
+        existsSync(vectorPath) &&
+        existsSync(`${vectorPath}.meta.json`);
+      if (backfilledBlameMetadata || shouldFingerprintLegacyPair) {
         store.save();
       }
       if (scopedRoots) {
@@ -4701,6 +4765,10 @@ export class Indexer {
     const maxResults = limit ?? this.config.search.maxResults;
     const hybridWeight = options?.hybridWeight ?? this.config.search.hybridWeight;
     const fusionStrategy = this.config.search.fusionStrategy;
+    const effectiveHybridWeight = fusionStrategy === "weighted" &&
+      readIssues.some((issue) => issue.component === "keyword")
+      ? 0
+      : hybridWeight;
     const rrfK = this.config.search.rrfK;
     const rerankTopN = this.config.search.rerankTopN;
     const filterByBranch = options?.filterByBranch ?? true;
@@ -4710,7 +4778,7 @@ export class Indexer {
     this.logger.search("debug", "Starting search", {
       query,
       maxResults,
-      hybridWeight,
+      hybridWeight: effectiveHybridWeight,
       fusionStrategy,
       rrfK,
       rerankTopN,
@@ -4779,7 +4847,7 @@ export class Indexer {
       rrfK,
       rerankTopN,
       limit: maxResults,
-      hybridWeight,
+      hybridWeight: effectiveHybridWeight,
       prioritizeSourcePaths: sourceIntent,
     });
     const rerankedCombined = await this.rerankCandidatesWithApi(query, combined, {
@@ -5944,6 +6012,7 @@ export class Indexer {
     this.initializationMode = "none";
     this.readIssues = [];
     this.readerArtifactFingerprint = null;
+    this.writerArtifactFingerprint = null;
     this.readerArtifactRetryAfter.clear();
   }
 }

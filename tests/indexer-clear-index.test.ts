@@ -893,6 +893,7 @@ describe("indexer clearIndex force rebuild", () => {
 
     fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors.usearch"), { force: true });
     fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors"), { recursive: true, force: true });
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors.meta.json"), { force: true });
     fs.writeFileSync(
       path.join(tempHome, ".opencode", "global-index", "file-hashes.json"),
       JSON.stringify({}, null, 2),
@@ -937,6 +938,7 @@ describe("indexer clearIndex force rebuild", () => {
 
     fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors.usearch"), { force: true });
     fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors"), { recursive: true, force: true });
+    fs.rmSync(path.join(tempHome, ".opencode", "global-index", "vectors.meta.json"), { force: true });
     fs.writeFileSync(
       path.join(tempHome, ".opencode", "global-index", "file-hashes.json"),
       JSON.stringify({}, null, 2),
