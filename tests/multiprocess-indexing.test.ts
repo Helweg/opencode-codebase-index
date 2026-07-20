@@ -695,6 +695,42 @@ describe("multiprocess indexing", () => {
     },
   );
 
+  it.each(["vectors", "vectors.meta.json"])(
+    "rejects an incomplete vector publication during fresh writer initialization when %s is missing",
+    async (missingName) => {
+      await seedIndex();
+      embeddingServer.reset();
+      const indexPath = path.join(projectRoot, ".opencode", "index");
+      const missingPath = path.join(indexPath, missingName);
+      const retainedPath = path.join(
+        indexPath,
+        missingName === "vectors" ? "vectors.meta.json" : "vectors",
+      );
+      const retainedBefore = fs.readFileSync(retainedPath);
+      const databasePath = path.join(indexPath, "codebase.db");
+      const database = new Database(databasePath);
+      const statsBefore = database.getStats();
+      const branchChunkIdsBefore = database.getBranchChunkIds("default");
+      database.close();
+      fs.rmSync(missingPath, { force: true });
+
+      const writer = await createWorker();
+      writer.send({ type: "run", operation: "index" });
+      const result = await writer.waitFor((message) => message.type === "result");
+      await writer.waitForExit();
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/incomplete vector publication/i);
+      expect(embeddingServer.requestCount).toBe(0);
+      expect(fs.existsSync(missingPath)).toBe(false);
+      expect(fs.readFileSync(retainedPath)).toEqual(retainedBefore);
+      const reloadedDatabase = new Database(databasePath);
+      expect(reloadedDatabase.getStats()).toEqual(statsBefore);
+      expect(reloadedDatabase.getBranchChunkIds("default")).toEqual(branchChunkIdsBefore);
+      reloadedDatabase.close();
+    },
+  );
+
   it("reports an unreadable database without resetting published artifacts", async () => {
     await seedIndex();
     embeddingServer.reset();

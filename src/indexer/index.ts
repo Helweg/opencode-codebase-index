@@ -3181,6 +3181,7 @@ export class Indexer {
 
     const dimensions = this.configuredProviderInfo.modelInfo.dimensions;
     const storePath = path.join(this.indexPath, "vectors");
+    const vectorMetadataPath = `${storePath}.meta.json`;
     const invertedIndexPath = path.join(this.indexPath, "inverted-index.json");
     const dbPath = path.join(this.indexPath, "codebase.db");
     let dbIsNew = !existsSync(dbPath);
@@ -3209,7 +3210,7 @@ export class Indexer {
       }
 
       this.store = new VectorStore(storePath, dimensions);
-      if (existsSync(storePath)) {
+      if (existsSync(storePath) || existsSync(vectorMetadataPath)) {
         this.store.load();
       }
 
@@ -3237,7 +3238,6 @@ export class Indexer {
       }
     } else {
       this.store = new VectorStore(storePath, dimensions);
-      const vectorMetadataPath = `${storePath}.meta.json`;
       const vectorStoreExists = existsSync(storePath);
       const vectorMetadataExists = existsSync(vectorMetadataPath);
       const vectorReadFailureMessage = this.getVectorReadIssueMessage();
