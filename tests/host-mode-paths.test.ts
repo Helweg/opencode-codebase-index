@@ -292,6 +292,21 @@ describe("host-aware path resolution", () => {
     );
   });
 
+  it("prefers jcode native global index when jcode global config exists even if index is not present", () => {
+    fs.mkdirSync(path.join(homeDir, ".config", "codebase-index"), { recursive: true });
+    fs.writeFileSync(
+      path.join(homeDir, ".config", "codebase-index", "config.json"),
+      JSON.stringify({ scope: "global" }, null, 2),
+      "utf-8",
+    );
+    fs.mkdirSync(path.join(homeDir, ".opencode", "global-index"), { recursive: true });
+
+    expect(resolveGlobalIndexPath("jcode")).toBe(path.join(homeDir, ".codebase-index", "global-index"));
+    expect(resolveProjectIndexPath(mainRepoDir, "global", "jcode")).toBe(
+      path.join(homeDir, ".codebase-index", "global-index"),
+    );
+  });
+
   it("uses claude-native writable config path", () => {
     expect(resolveWritableProjectConfigPath(mainRepoDir, "claude")).toBe(
       path.join(mainRepoDir, ".claude", "codebase-index.json"),

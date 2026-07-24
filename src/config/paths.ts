@@ -73,6 +73,10 @@ function hasHostProjectConfig(projectRoot: string, host: HostMode): boolean {
   return existsSync(path.join(projectRoot, getProjectConfigRelativePath(host)));
 }
 
+function hasHostGlobalConfig(host: HostMode): boolean {
+  return existsSync(getGlobalConfigPath(host));
+}
+
 export function getGlobalIndexPath(host: HostMode = "opencode"): string {
   switch (host) {
     case "opencode":
@@ -120,6 +124,10 @@ export function resolveGlobalIndexPath(host: HostMode = "opencode"): string {
   }
 
   if (host !== "opencode") {
+    if (hasHostGlobalConfig(host)) {
+      return hostIndexPath;
+    }
+
     const legacyIndexPath = getGlobalIndexPath("opencode");
     if (existsSync(legacyIndexPath)) {
       return legacyIndexPath;
