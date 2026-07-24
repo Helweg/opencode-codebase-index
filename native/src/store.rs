@@ -63,7 +63,7 @@ impl VectorStoreInner {
         }
 
         let mut key_to_id: Vec<_> = stored.key_to_id.iter().collect();
-        key_to_id.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        key_to_id.sort_unstable_by_key(|(key, _)| *key);
         Self::update_fingerprint_bytes(&mut hasher, b"key_to_id");
         hasher.update(&(key_to_id.len() as u64).to_le_bytes());
         for (key, id) in key_to_id {
@@ -72,7 +72,7 @@ impl VectorStoreInner {
         }
 
         let mut metadata: Vec<_> = stored.metadata.iter().collect();
-        metadata.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        metadata.sort_unstable_by_key(|(key, _)| *key);
         Self::update_fingerprint_bytes(&mut hasher, b"metadata");
         hasher.update(&(metadata.len() as u64).to_le_bytes());
         for (key, value) in metadata {
@@ -346,15 +346,13 @@ impl VectorStoreInner {
             .transpose()?
             .unwrap_or_default();
 
-        if stored.vector_fingerprint.is_none() {
-            if require_fingerprint {
-                return Err(anyhow!(
-                    "Missing vector fingerprint: a leased writer must publish this legacy vector pair before readers can load it"
-                ));
-            }
-
-            // Structural validation cannot prove that an unfingerprinted legacy pair is
-            // semantically matched. A leased writer may only establish a new baseline.
+        // Structural validation cannot prove that an unfingerprinted legacy pair is
+        // semantically matched. A leased writer may only establish a new baseline,
+        // while readers require an existing fingerprint.
+        if stored.vector_fingerprint.is_none() && require_fingerprint {
+            return Err(anyhow!(
+                "Missing vector fingerprint: a leased writer must publish this legacy vector pair before readers can load it"
+            ));
         }
 
         let index_path_str = self
