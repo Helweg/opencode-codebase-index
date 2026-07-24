@@ -54,6 +54,54 @@ export class UserService {
       expect(chunks.some((c) => c.content.includes("class UserService"))).toBe(true);
     });
 
+    it.each(["module.mts", "module.cts"])(
+      "should classify and semantically parse %s as TypeScript",
+      (filePath) => {
+        const content = `
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase();
+}
+`;
+        const chunks = parseFile(filePath, content);
+
+        expect(chunks.some((c) => c.chunkType === "function_declaration")).toBe(true);
+        expect(chunks.every((c) => c.language === "typescript")).toBe(true);
+      }
+    );
+
+    it.each(["widget.cxx", "widget.hxx"])(
+      "should classify and semantically parse %s as C++",
+      (filePath) => {
+        const content = `
+#include <string>
+
+std::string normalize_name(const std::string& value) {
+  return value;
+}
+`;
+        const chunks = parseFile(filePath, content);
+
+        expect(chunks.some((c) => c.chunkType === "function_definition")).toBe(true);
+        expect(chunks.every((c) => c.language === "cpp")).toBe(true);
+      }
+    );
+
+    it("should classify and semantically parse .cs files as C#", () => {
+      const content = `
+public class UserService
+{
+    public string NormalizeName(string value)
+    {
+        return value.Trim().ToLowerInvariant();
+    }
+}
+`;
+      const chunks = parseFile("UserService.cs", content);
+
+      expect(chunks.some((c) => c.chunkType === "class_declaration")).toBe(true);
+      expect(chunks.every((c) => c.language === "csharp")).toBe(true);
+    });
+
     it("should parse JavaScript files", () => {
       const content = `
 function greet(name) {

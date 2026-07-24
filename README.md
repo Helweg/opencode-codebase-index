@@ -309,8 +309,8 @@ graph TD
 
 **Default File Patterns**:
 ```
-**/*.{ts,tsx,js,jsx,mjs,cjs}    **/*.{py,pyi}
-**/*.{go,rs,java,kt,scala}      **/*.{c,cpp,cc,h,hpp}
+**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}    **/*.{py,pyi}
+**/*.{go,rs,java,cs,kt,scala}            **/*.{c,cpp,cc,cxx,h,hpp,hxx}
 **/*.{rb,php,inc,swift}         **/*.{vue,svelte,astro}
 **/*.{sql,graphql,proto}        **/*.{yaml,yml,toml}
 **/*.{md,mdx}                   **/*.{sh,bash,zsh}
