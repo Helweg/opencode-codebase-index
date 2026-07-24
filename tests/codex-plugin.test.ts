@@ -23,11 +23,12 @@ describe("Codex plugin host mode", () => {
     expect(parseHostMode("codex")).toBe("codex");
     expect(parseHostMode("claude")).toBe("claude");
     expect(parseHostMode("pi")).toBe("pi");
+    expect(parseHostMode("jcode")).toBe("jcode");
   });
 
   it("rejects unknown host mode with a clear error", () => {
     expect(() => parseHostMode("weird"))
-      .toThrow("Invalid host mode: weird. Allowed values: opencode, codex, claude, pi.");
+      .toThrow("Invalid host mode: weird. Allowed values: opencode, codex, claude, pi, jcode.");
   });
 
   it("exposes Codex plugin manifest and MCP command", () => {

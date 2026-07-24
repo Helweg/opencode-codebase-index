@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **First-class Jcode integration**: Added the `jcode` MCP host mode, neutral `.codebase-index/` storage, legacy OpenCode state fallback, automated host-path coverage, and global multi-repository setup guidance for Jcode v0.56.0 and newer.
+
 ### Fixed
 
 - **Parser-backed source discovery**: Added `.mts`, `.cts`, `.cxx`, `.hxx`, and `.cs` to the default include patterns.
