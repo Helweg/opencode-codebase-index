@@ -1,6 +1,6 @@
 {
   "name": "opencode-codebase-index",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Semantic codebase indexing and search for OpenCode - find code by meaning, not just keywords",
   "type": "module",
   "main": "dist/index.js",
@@ -33,7 +33,7 @@
     "pi"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "build": "npm run build:ts && npm run build:native",
