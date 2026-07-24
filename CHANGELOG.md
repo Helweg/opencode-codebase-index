@@ -7,13 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-24
+
 ### Added
 
 - **First-class Jcode integration**: Added the `jcode` MCP host mode, neutral `.codebase-index/` storage, legacy OpenCode state fallback, automated host-path coverage, and global multi-repository setup guidance for Jcode v0.56.0 and newer.
 
+### Changed
+
+- **Node.js runtime requirement**: Raised the supported Node.js version from 18 to 20 to use patched runtime dependencies.
+
 ### Fixed
 
+- **Multiprocess index safety**: Serialized index mutations across processes with canonical-path leases, kept cold readers non-mutating, hardened atomic vector and BM25 publication, and added recovery for incomplete or crashed publications.
 - **Parser-backed source discovery**: Added `.mts`, `.cts`, `.cxx`, `.hxx`, and `.cs` to the default include patterns.
+
+### Security
+
+- **Dependency vulnerabilities**: Updated vulnerable runtime and development dependency chains, including Hono, `@hono/node-server`, `body-parser`, `fast-uri`, `brace-expansion`, `js-yaml`, and Pi's shrinkwrapped dependencies. `npm audit` now reports zero vulnerabilities.
 
 ## [0.14.0] - 2026-07-08
 
@@ -402,7 +413,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File watcher for automatic re-indexing
 - OpenCode tools: `codebase_search`, `index_codebase`, `index_status`, `index_health_check`
 
-[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/Helweg/opencode-codebase-index/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Helweg/opencode-codebase-index/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/Helweg/opencode-codebase-index/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/Helweg/opencode-codebase-index/compare/v0.13.0...v0.13.1
