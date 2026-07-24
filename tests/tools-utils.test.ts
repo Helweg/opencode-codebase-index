@@ -338,6 +338,26 @@ describe("tools utils", () => {
       expect(result).toContain("INDEXING WARNING");
       expect(result).toContain("failed-batches.json");
     });
+
+    it("should surface a degraded reader warning while semantic data remains usable", () => {
+      const status: StatusResult = {
+        indexed: true,
+        vectorCount: 100,
+        provider: "google",
+        model: "gemini-embedding-001",
+        indexPath: "/tmp/index",
+        currentBranch: "default",
+        baseBranch: "default",
+        compatibility: { compatible: true },
+        failedBatchesCount: 0,
+        warning: "Keyword index could not be read; semantic search remains available. Run index_codebase to repair it under the writer lease.",
+      };
+      const result = formatStatus(status);
+
+      expect(result).toContain("Indexed chunks: 100");
+      expect(result).toContain("INDEX WARNING");
+      expect(result).toContain("semantic search remains available");
+    });
   });
 
   describe("formatProgressTitle", () => {

@@ -6,7 +6,6 @@ import { formatPrImpact } from "./tools/format-pr-impact.js";
 import {
   addKnowledgeBase,
   findSimilarCode,
-  getIndexHealthCheck,
   getIndexLogs,
   getIndexMetrics,
   getIndexStatus,
@@ -15,6 +14,7 @@ import {
   listKnowledgeBases,
   removeKnowledgeBase,
   runIndexCodebase,
+  runIndexHealthCheck,
   searchCodebase,
 } from "./tools/operations.js";
 import {
@@ -133,9 +133,9 @@ export default function codebaseIndexPiExtension(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await runIndexCodebase(projectRoot(ctx), HOST, params);
-      return result.kind === "estimate"
-        ? text(formatCostEstimate(result.estimate), result.estimate)
-        : text(formatIndexStats(result.stats, params.verbose ?? false), result.stats);
+      if (result.kind === "estimate") return text(formatCostEstimate(result.estimate), result.estimate);
+      if (result.kind === "busy") return text(result.text, { code: "INDEX_BUSY" });
+      return text(formatIndexStats(result.stats, params.verbose ?? false), result.stats);
     },
   });
 
@@ -156,8 +156,9 @@ export default function codebaseIndexPiExtension(pi: ExtensionAPI): void {
     description: "Garbage collect orphaned embeddings/chunks and report health.",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const result = await getIndexHealthCheck(projectRoot(ctx), HOST);
-      return text(formatHealthCheck(result), result);
+      const result = await runIndexHealthCheck(projectRoot(ctx), HOST);
+      if (result.kind === "busy") return text(result.text, { code: "INDEX_BUSY" });
+      return text(formatHealthCheck(result.health), result.health);
     },
   });
 

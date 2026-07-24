@@ -120,6 +120,11 @@ export function formatStatus(status: StatusResult): string {
     }
   }
 
+  if (status.warning) {
+    lines.push("");
+    lines.push(`INDEX WARNING: ${status.warning}`);
+  }
+
   if (status.compatibility && !status.compatibility.compatible) {
     lines.push("");
     lines.push(`COMPATIBILITY WARNING: ${status.compatibility.reason}`);

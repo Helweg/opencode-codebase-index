@@ -20,7 +20,6 @@ import {
   findSimilarCode,
   getCallGraphData,
   getCallGraphPath,
-  getIndexHealthCheck,
   getIndexLogs,
   getIndexMetrics,
   getIndexerForProject as getOperationIndexerForProject,
@@ -31,6 +30,7 @@ import {
   listKnowledgeBases,
   removeKnowledgeBase,
   runIndexCodebase,
+  runIndexHealthCheck,
   searchCodebase,
 } from "./operations.js";
 import { pr_impact } from "./pr-impact.js";
@@ -111,9 +111,9 @@ export const index_codebase: ToolDefinition = tool({
       context.metadata({ title, metadata });
     });
 
-    return result.kind === "estimate"
-      ? formatCostEstimate(result.estimate)
-      : formatIndexStats(result.stats, args.verbose ?? false);
+    if (result.kind === "estimate") return formatCostEstimate(result.estimate);
+    if (result.kind === "busy") return result.text;
+    return formatIndexStats(result.stats, args.verbose ?? false);
   },
 });
 
@@ -131,7 +131,9 @@ export const index_health_check: ToolDefinition = tool({
     "Check index health and remove stale entries from deleted files. Run this to clean up the index after files have been deleted.",
   args: {},
   async execute(_args, context) {
-    return formatHealthCheck(await getIndexHealthCheck(context?.worktree, DEFAULT_HOST));
+    const result = await runIndexHealthCheck(context?.worktree, DEFAULT_HOST);
+    if (result.kind === "busy") return result.text;
+    return formatHealthCheck(result.health);
   },
 });
 
