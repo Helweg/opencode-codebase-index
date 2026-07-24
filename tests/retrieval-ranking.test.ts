@@ -367,6 +367,17 @@ describe("retrieval ranking", () => {
     }
   });
 
+  it("keeps lowercase explicit implementation lookups source-first", () => {
+    const candidates: Candidate[] = [
+      { id: "docs", score: 0.92, metadata: meta({ filePath: "/repo/README.md", name: "validate docs", chunkType: "other" }) },
+      { id: "tests", score: 0.91, metadata: meta({ filePath: "/repo/tests/validate.test.ts", name: "validate", chunkType: "function" }) },
+      { id: "impl", score: 0.85, metadata: meta({ filePath: "/repo/src/validation.ts", name: "validate", chunkType: "function" }) },
+    ];
+
+    const reranked = rerankResults("where is validate implementation", candidates, 10);
+    expect(reranked[0]?.id).toBe("impl");
+  });
+
   it("does not over-route doc phrasing with 'where is ... documentation' to source intent", () => {
     const candidates: Candidate[] = [
       { id: "impl", score: 0.91, metadata: meta({ filePath: "/repo/src/indexer/index.ts", name: "rankHybridResults", chunkType: "function" }) },
@@ -376,6 +387,77 @@ describe("retrieval ranking", () => {
 
     const reranked = rerankResults("where is rankHybridResults documentation", candidates, 10);
     expect(reranked[0]?.id).toBe("docs");
+  });
+
+  it("keeps coherent mixed implementation and test ordering for where-is test queries", () => {
+    const candidates: Candidate[] = [
+      { id: "impl", score: 0.9, metadata: meta({ filePath: "/repo/src/payments/handler.ts", name: "paymentFunction", chunkType: "function" }) },
+      { id: "test", score: 0.89, metadata: meta({ filePath: "/repo/tests/paymentFunction.test.ts", name: "paymentFunction", chunkType: "function" }) },
+      { id: "noise", score: 0.91, metadata: meta({ filePath: "/repo/docs/payments.md", name: "payment docs", chunkType: "other" }) },
+    ];
+
+    const reranked = rerankResults("where is paymentFunction function test", candidates, 10);
+    expect(reranked[0]?.id).toBe("impl");
+    expect(reranked[1]?.id).toBe("test");
+  });
+
+  it("keeps short where-is test queries source-first", () => {
+    const candidates: Candidate[] = [
+      { id: "impl", score: 0.89, metadata: meta({ filePath: "/repo/src/payments/handler.ts", name: "paymentFunction", chunkType: "function" }) },
+      { id: "test", score: 0.9, metadata: meta({ filePath: "/repo/tests/paymentFunction.test.ts", name: "paymentFunction", chunkType: "function" }) },
+      { id: "docs", score: 0.88, metadata: meta({ filePath: "/repo/docs/payments.md", name: "payment docs", chunkType: "other" }) },
+    ];
+
+    const reranked = rerankResults("where is paymentFunction test", candidates, 10);
+    expect(reranked[0]?.id).toBe("impl");
+    expect(reranked[1]?.id).toBe("test");
+  });
+
+  it("penalizes benchmark, fixture, and example paths when a real implementation exists", () => {
+    const candidates: Candidate[] = [
+      { id: "benchmark", score: 0.94, metadata: meta({ filePath: "/repo/benchmarks/run.ts", name: "rankHybridResults benchmark", chunkType: "function" }) },
+      { id: "fixture", score: 0.93, metadata: meta({ filePath: "/repo/tests/fixtures/rankHybridResults.ts", name: "entryPoint", chunkType: "function" }) },
+      { id: "example", score: 0.92, metadata: meta({ filePath: "/repo/examples/rankHybridResults.ts", name: "exampleUsage", chunkType: "function" }) },
+      { id: "impl", score: 0.81, metadata: meta({ filePath: "/repo/src/indexer/index.ts", name: "rankHybridResults", chunkType: "function" }) },
+    ];
+
+    const reranked = rerankResults("where is rankHybridResults implementation", candidates, 10);
+    expect(reranked[0]?.id).toBe("impl");
+    expect(reranked.slice(1).every((candidate) => candidate.id !== "impl")).toBe(true);
+  });
+
+  it("keeps exploratory queries broad instead of forcing definition-first routing", () => {
+    const candidates: Candidate[] = [
+      { id: "impl", score: 0.95, metadata: meta({ filePath: "/repo/src/indexer/index.ts", name: "rankHybridResults", chunkType: "function" }) },
+      { id: "helper", score: 0.94, metadata: meta({ filePath: "/repo/src/ranking/helpers.ts", name: "buildRankingReport", chunkType: "function" }) },
+      { id: "docs", score: 0.93, metadata: meta({ filePath: "/repo/docs/ranking-guide.md", name: "ranking guide", chunkType: "other" }) },
+    ];
+
+    const reranked = rerankResults("ranking report flow", candidates, 10);
+    expect(reranked[0]?.id).toBe("helper");
+    expect(reranked.slice(0, 3).map((candidate) => candidate.id)).toContain("docs");
+  });
+
+  it("keeps source preference for mixed test and implementation phrasing when signals tie", () => {
+    const candidates: Candidate[] = [
+      { id: "testCase", score: 0.92, metadata: meta({ filePath: "/repo/tests/payment.test.ts", name: "payment test", chunkType: "function" }) },
+      { id: "impl", score: 0.89, metadata: meta({ filePath: "/repo/src/payments/handler.ts", name: "paymentFunction", chunkType: "function" }) },
+    ];
+
+    const reranked = rerankResults("test the payment function", candidates, 10);
+    expect(reranked[0]?.id).toBe("impl");
+  });
+
+  it("keeps broad discovery phrasing from over-prioritizing a synthetic exact lookup target", () => {
+    const candidates: Candidate[] = [
+      { id: "impl", score: 0.95, metadata: meta({ filePath: "/repo/src/ranking/flow.ts", name: "buildRankingFlow", chunkType: "function" }) },
+      { id: "docs", score: 0.94, metadata: meta({ filePath: "/repo/docs/ranking-flow.md", name: "ranking flow guide", chunkType: "other" }) },
+      { id: "helper", score: 0.93, metadata: meta({ filePath: "/repo/src/ranking/report.ts", name: "buildRankingReport", chunkType: "function" }) },
+    ];
+
+    const reranked = rerankResults("where does ranking flow happen", candidates, 10);
+    expect(reranked.slice(0, 3).map((candidate) => candidate.id)).toContain("docs");
+    expect(reranked[0]?.id).toBe("impl");
   });
 
   it("extracts file path hint from path-constrained implementation query", () => {
@@ -544,6 +626,61 @@ describe("retrieval ranking", () => {
 
     expect(rerankCalled).toBe(false);
     expect(reranked.map((candidate) => candidate.id)).toEqual(["first", "second", "third"]);
+    globalThis.fetch = fetchSpy;
+  });
+
+  it("skips external reranker for lowercase explicit implementation lookups with primary hints", async () => {
+    const config = parseConfig({
+      embeddingProvider: "custom",
+      customProvider: {
+        baseUrl: "http://localhost:11434/v1",
+        model: "mock-embed",
+        dimensions: 8,
+      },
+      reranker: {
+        enabled: true,
+        provider: "custom",
+        model: "mock-reranker",
+        baseUrl: "https://rerank.example/v1",
+        topN: 3,
+      },
+    });
+    const indexer = new Indexer("/repo", config);
+
+    const fetchSpy = globalThis.fetch;
+    let rerankCalled = false;
+    globalThis.fetch = (async (input) => {
+      if (String(input).includes("/rerank")) {
+        rerankCalled = true;
+        return new Response(JSON.stringify({
+          results: [
+            { index: 2, relevance_score: 0.99 },
+            { index: 0, relevance_score: 0.72 },
+            { index: 1, relevance_score: 0.4 },
+          ],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [{ embedding: Array.from({ length: 8 }, () => 0.1) }], usage: { total_tokens: 1 } }), { status: 200 });
+    }) as typeof fetch;
+
+    const candidates: Candidate[] = [
+      { id: "docs", score: 0.92, metadata: meta({ filePath: "/repo/README.md", name: "validate docs", chunkType: "other", startLine: 1, endLine: 3 }) },
+      { id: "tests", score: 0.91, metadata: meta({ filePath: "/repo/tests/validate.test.ts", name: "validate", chunkType: "function", startLine: 1, endLine: 3 }) },
+      { id: "impl", score: 0.85, metadata: meta({ filePath: "/repo/src/validation.ts", name: "validate", chunkType: "function", startLine: 1, endLine: 3 }) },
+    ];
+
+    const reranked = await (indexer as unknown as {
+      rerankCandidatesWithApi(
+        query: string,
+        items: Candidate[],
+        options?: { definitionIntent?: boolean; hasIdentifierHints?: boolean; hasExplicitLookupHint?: boolean }
+      ): Promise<Candidate[]>;
+    }).rerankCandidatesWithApi("where is validate implementation", candidates, {
+      hasExplicitLookupHint: true,
+    });
+
+    expect(rerankCalled).toBe(false);
+    expect(reranked.map((candidate) => candidate.id)).toEqual(["docs", "tests", "impl"]);
     globalThis.fetch = fetchSpy;
   });
 
