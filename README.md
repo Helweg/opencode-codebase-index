@@ -8,11 +8,12 @@
 
 > **Stop grepping for concepts. Start searching for meaning.**
 
-**opencode-codebase-index** brings semantic understanding to your [OpenCode](https://opencode.ai), [Pi](https://pi.dev), Codex, and MCP-compatible workflows. Instead of guessing function names or grepping for keywords, ask your codebase questions in plain English.
+**opencode-codebase-index** brings semantic understanding to your [OpenCode](https://opencode.ai), [Jcode](https://github.com/1jehuang/jcode), [Pi](https://pi.dev), Codex, and MCP-compatible workflows. Instead of guessing function names or grepping for keywords, ask your codebase questions in plain English.
 
 ## 📌 Quick Navigation
 
 - [⚡ Quick Start](#-quick-start)
+- [🧠 Jcode](#-jcode)
 - [🥧 Pi Package](#-pi-package)
 - [🧩 Codex Plugin](#-codex-plugin)
 - [🧩 Claude Code Plugin](#-claude-code-plugin)
@@ -29,6 +30,7 @@
 ## 👋 Choose Your Path
 
 - **I want to try it now** → go to [Quick Start](#-quick-start)
+- **I use Jcode** → go to [Jcode](#-jcode)
 - **I use Pi** → go to [Pi Package](#-pi-package)
 - **I use Cursor/Claude Code/Windsurf** → go to [MCP Server setup](#-mcp-server-cursor-claude-code-windsurf-etc)
 - **I’m comparing tools and workflows** → go to [When to Use What](#-when-to-use-what)
@@ -42,6 +44,7 @@
 - 🌿 **Branch-Aware**: Seamlessly handles git branch switches — reuses embeddings, filters stale results.
 - 🔒 **Privacy Focused**: Your vector index is stored locally in your project.
 - 🔌 **Model Agnostic**: Works out-of-the-box with GitHub Copilot, OpenAI, Gemini, or local Ollama models.
+- 🧠 **Jcode Host**: One global MCP configuration follows each Jcode session into its active repository.
 - 🥧 **Pi Package**: First-class Pi extension and skill package with native tools.
 - 🌐 **MCP Server**: Use with Cursor, Claude Code, Windsurf, or any MCP-compatible client — index once, search from anywhere.
 
@@ -67,6 +70,37 @@
 4. **Start Searching**
    Ask:
    > "Find the function that handles credit card validation errors"
+
+## 🧠 Jcode
+
+Jcode v0.56.0 and newer starts non-shared MCP servers in each session's working directory. Configure the server once in `~/.jcode/mcp.json` and it will index the repository where each Jcode session is running.
+
+```json
+{
+  "servers": {
+    "codebase-index": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "--package",
+        "opencode-codebase-index@latest",
+        "opencode-codebase-index-mcp",
+        "--host",
+        "jcode"
+      ],
+      "env": {},
+      "shared": false
+    }
+  }
+}
+```
+
+Do not add a fixed `--project` argument. Jcode supplies the active session directory as the MCP process working directory. `shared: false` gives every repository session its own indexer process and prevents cross-repository state from being shared accidentally.
+
+Jcode uses the neutral `.codebase-index/` project storage and falls back to existing OpenCode state when present. Restart Jcode after changing `~/.jcode/mcp.json`, then use `index_codebase`, `index_status`, `codebase_peek`, or `codebase_search`.
+
+The explicit `@latest` keeps `npx` on the published package even when Jcode is opened inside an `opencode-codebase-index` source checkout. For local development of this package instead, run `npm run build:ts && npm run dev:link-mcp` first.
+
 ## 🥧 Pi Package
 
 Install as a Pi package to get first-class `codebase_search`, `index_codebase`, call graph, PR impact, and knowledge-base tools plus the `codebase-search` skill.

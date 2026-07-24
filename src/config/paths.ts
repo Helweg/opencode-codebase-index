@@ -21,6 +21,7 @@ function getProjectConfigRelativePath(host: HostMode): string {
     case "claude":
       return CLAUDE_PROJECT_CONFIG_RELATIVE_PATH;
     default:
+      // Codex, Pi, and Jcode share host-neutral project storage.
       return CODEBASE_PROJECT_CONFIG_RELATIVE_PATH;
   }
 }
@@ -32,6 +33,7 @@ function getProjectIndexRelativePath(host: HostMode): string {
     case "claude":
       return CLAUDE_PROJECT_INDEX_RELATIVE_PATH;
     default:
+      // Codex, Pi, and Jcode share host-neutral project storage.
       return CODEBASE_PROJECT_INDEX_RELATIVE_PATH;
   }
 }
@@ -78,6 +80,7 @@ export function getGlobalIndexPath(host: HostMode = "opencode"): string {
     case "claude":
       return path.join(os.homedir(), ".claude", "global-index");
     default:
+      // Codex, Pi, and Jcode share host-neutral global storage.
       return path.join(os.homedir(), ".codebase-index", "global-index");
   }
 }
@@ -89,6 +92,7 @@ export function getGlobalConfigPath(host: HostMode = "opencode"): string {
     case "claude":
       return path.join(os.homedir(), ".claude", "codebase-index.json");
     default:
+      // Codex, Pi, and Jcode share host-neutral global storage.
       return path.join(os.homedir(), ".config", "codebase-index", "config.json");
   }
 }
